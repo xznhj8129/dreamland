@@ -1,0 +1,149 @@
+{
+    "field_types": {
+        "config": {
+            "name": "str",
+            "vtol": "bool",
+            "tailless": "bool",
+            "canards": "bool",
+            "powered": "bool",
+            "thrust_axis_tilt_deg": "float",
+            "fuselage_od_mm": "float",
+            "fuselage_id_mm": "float",
+            "material_density_g_cm3": "float",
+            "standard_profile": "str",
+            "apply_standard": "bool"
+        },
+        "module": {
+            "name": "str",
+            "type": "str",
+            "len": "float",
+            "mass": "float",
+            "cg": "float",
+            "wings_n": "int",
+            "wing_phase": "float",
+            "wings_ang": "float",
+            "wings_x": "float",
+            "eo": "bool",
+            "ballast": "bool",
+            "battery": "bool",
+            "payload": "bool",
+            "esc": "bool",
+            "motor": "bool",
+            "motor_x_pos": "float",
+            "motor_y_pos": "float",
+            "motor_dir": "str"
+        },
+        "surface": {
+            "name": "str",
+            "type": "str",
+            "semispan": "float",
+            "mass": "float",
+            "cg": "float",
+            "chord_root": "float",
+            "chord_tip": "float",
+            "aoa_ang": "float",
+            "sweep_ang": "float",
+            "airfoil": "str",
+            "motor": "bool",
+            "motor_x_pos": "float",
+            "motor_y_pos": "float",
+            "motor_dir": "str",
+            "pod_diam": "float",
+            "pod_len_flat": "float",
+            "pod_len_curve": "float",
+            "pod_shape": "str",
+            "ctl_surface": "bool",
+            "all_moving": "bool"
+        },
+        "part": {
+            "battery": "str",
+            "payload_mass": "float",
+            "ballast_mass": "float",
+            "motors": "str",
+            "props": "str"
+        }
+    },
+    "module_templates": {
+        "body": {
+            "name": "new-body",
+            "type": "body",
+            "len": 0.1,
+            "mass": 0.05,
+            "cg": 0.5,
+            "ballast": false,
+            "battery": false,
+            "payload": false,
+            "esc": false,
+            "payload_mass": 0.0,
+            "ballast_mass": 0.0
+        },
+        "end": {
+            "name": "new-end",
+            "type": "end",
+            "len": 0.05,
+            "mass": 0.03,
+            "cg": 0.5,
+            "eo": false,
+            "motor": false,
+            "motor_dir": "front"
+        },
+        "coupler": {
+            "name": "new-coupler",
+            "type": "coupler",
+            "len": 0.0,
+            "mass": 0.02,
+            "cg": 0.5
+        },
+        "wingmount": {
+            "name": "new-wingmount",
+            "type": "wingmount",
+            "len": 0.15,
+            "mass": 0.1,
+            "cg": 0.5,
+            "wings_n": 2,
+            "wing_phase": 0.0,
+            "wings_ang": 0.0,
+            "wings_x": 0.5,
+            "ballast": false,
+            "payload": false,
+            "payload_mass": 0.0,
+            "ballast_mass": 0.0
+        }
+    },
+    "surface_templates": {
+        "wing": {
+            "name": "new-wing",
+            "type": "wing",
+            "semispan": 0.15,
+            "mass": 0.05,
+            "cg": 0.5,
+            "chord_root": 0.1,
+            "chord_tip": 0.08,
+            "aoa_ang": 0.0,
+            "sweep_ang": 0.0,
+            "airfoil": "naca0008",
+            "motor": false,
+            "motor_x_pos": 0.0,
+            "motor_y_pos": 0.1,
+            "motor_dir": "front",
+            "pod_diam": 0.028,
+            "pod_len_flat": 0.008,
+            "pod_len_curve": 0.016,
+            "pod_shape": "elliptical",
+            "ctl_surface": false,
+            "all_moving": false
+        }
+    },
+    "part_defaults": {
+        "battery": "",
+        "payload_mass": 0.0,
+        "ballast_mass": 0.0,
+        "motors": "",
+        "props": ""
+    },
+    "config_defaults": {
+        "standard_profile": "",
+        "apply_standard": false
+    },
+    "new_part_module_type": "body"
+}

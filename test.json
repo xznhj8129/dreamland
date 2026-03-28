@@ -1,0 +1,462 @@
+{
+    "assembly_name": "default",
+    "config": {
+        "fuselage_od_mm": 62.0,
+        "fuselage_id_mm": 59.5,
+        "material_density_g_cm3": 1.3,
+        "standard_profile": "",
+        "apply_standard": false,
+        "vtol": true,
+        "tailless": false,
+        "canards": false,
+        "name": "62mm Quad Lancet 7in v1",
+        "thrust_axis_tilt_deg": 90,
+        "powered": true,
+        "parts": [
+            {
+                "battery": "",
+                "payload_mass": 0.0,
+                "ballast_mass": 0.0,
+                "motors": "",
+                "props": "",
+                "module": {
+                    "name": "cam-nose",
+                    "type": "end",
+                    "len": 0.06,
+                    "mass": 0.047,
+                    "cg": 0.5,
+                    "eo": true,
+                    "motor": false,
+                    "motor_dir": "front"
+                }
+            },
+            {
+                "battery": "",
+                "payload_mass": 0.1,
+                "ballast_mass": 0.0,
+                "motors": "",
+                "props": "",
+                "module": {
+                    "name": "payload-1",
+                    "type": "body",
+                    "len": 0.122,
+                    "mass": 0.055,
+                    "cg": 0.5,
+                    "ballast": true,
+                    "battery": false,
+                    "payload": true,
+                    "esc": false
+                }
+            },
+            {
+                "battery": "lipo-6S-2200",
+                "payload_mass": 0.0,
+                "ballast_mass": 0.0,
+                "motors": "",
+                "props": "",
+                "module": {
+                    "name": "batt-1",
+                    "type": "body",
+                    "len": 0.17,
+                    "mass": 0.089,
+                    "cg": 0.5,
+                    "ballast": false,
+                    "battery": true,
+                    "payload": false,
+                    "esc": false
+                }
+            },
+            {
+                "battery": "",
+                "payload_mass": 0.0,
+                "ballast_mass": 0.0,
+                "motors": "Flashobby A2807-1300",
+                "props": "GF7042",
+                "module": {
+                    "name": "quad-wingmount-v3",
+                    "type": "wingmount",
+                    "len": 0.15,
+                    "mass": 0.125,
+                    "cg": 0.5,
+                    "wings_n": 4,
+                    "wing_phase": 45,
+                    "wings_ang": 0,
+                    "wings_x": 0.5,
+                    "ballast": true
+                },
+                "surfaces": {
+                    "name": "saggerwing-7in",
+                    "type": "wing",
+                    "semispan": 0.1,
+                    "mass": 0.059,
+                    "cg": 0.5,
+                    "chord_root": 0.12,
+                    "chord_tip": 0.06,
+                    "aoa_ang": 0.0,
+                    "sweep_ang": 25.0,
+                    "airfoil": "naca0008",
+                    "motor": true,
+                    "motor_x_pos": 0.12,
+                    "motor_y_pos": 0.1,
+                    "motor_dir": "back",
+                    "pod_diam": 0.035,
+                    "pod_len_flat": 0.02,
+                    "pod_len_curve": 0.05,
+                    "pod_shape": "elliptical",
+                    "ctl_surface": false,
+                    "all_moving": false
+                }
+            },
+            {
+                "battery": "",
+                "payload_mass": 0.0,
+                "ballast_mass": 0.0,
+                "motors": "",
+                "props": "",
+                "module": {
+                    "name": "quad-esc-1",
+                    "type": "body",
+                    "len": 0.072,
+                    "mass": 0.055,
+                    "cg": 0.5,
+                    "ballast": false,
+                    "battery": false,
+                    "payload": false,
+                    "esc": true
+                }
+            },
+            {
+                "battery": "",
+                "payload_mass": 0.0,
+                "ballast_mass": 0.0,
+                "motors": "",
+                "props": "",
+                "module": {
+                    "name": "endcap",
+                    "type": "end",
+                    "len": 0.07,
+                    "mass": 0.027,
+                    "cg": 0.5,
+                    "eo": false,
+                    "motor": false,
+                    "motor_dir": "front"
+                }
+            }
+        ]
+    },
+    "analysis": {
+        "assembly_name": "default",
+        "config_name": "62mm Quad Lancet 7in v1",
+        "canards": false,
+        "module_rows": [
+            {
+                "module_name": "cam-nose",
+                "module_type": "end",
+                "x_start": 0.0,
+                "x_end": 0.06,
+                "mass": 0.047,
+                "cg_x": 0.03,
+                "diam": 0.062
+            },
+            {
+                "module_name": "joint-ring-c",
+                "module_type": "coupler",
+                "x_start": 0.06,
+                "x_end": 0.06,
+                "mass": 0.02136,
+                "cg_x": 0.06,
+                "diam": 0.062
+            },
+            {
+                "module_name": "payload-1",
+                "module_type": "body",
+                "x_start": 0.06,
+                "x_end": 0.182,
+                "mass": 0.055,
+                "cg_x": 0.121,
+                "diam": 0.062
+            },
+            {
+                "module_name": "payload",
+                "module_type": "payload",
+                "x_start": 0.06,
+                "x_end": 0.182,
+                "mass": 0.1,
+                "cg_x": 0.121,
+                "diam": 0.062
+            },
+            {
+                "module_name": "ballast",
+                "module_type": "ballast",
+                "x_start": 0.06,
+                "x_end": 0.182,
+                "mass": 0.0,
+                "cg_x": 0.121,
+                "diam": 0.062
+            },
+            {
+                "module_name": "joint-ring-c",
+                "module_type": "coupler",
+                "x_start": 0.182,
+                "x_end": 0.182,
+                "mass": 0.02136,
+                "cg_x": 0.182,
+                "diam": 0.062
+            },
+            {
+                "module_name": "batt-1",
+                "module_type": "body",
+                "x_start": 0.182,
+                "x_end": 0.352,
+                "mass": 0.089,
+                "cg_x": 0.267,
+                "diam": 0.062
+            },
+            {
+                "module_name": "lipo-6S-2200",
+                "module_type": "battery",
+                "x_start": 0.182,
+                "x_end": 0.352,
+                "mass": 0.302,
+                "cg_x": 0.267,
+                "diam": 0.062
+            },
+            {
+                "module_name": "joint-ring-c",
+                "module_type": "coupler",
+                "x_start": 0.352,
+                "x_end": 0.352,
+                "mass": 0.02136,
+                "cg_x": 0.352,
+                "diam": 0.062
+            },
+            {
+                "module_name": "quad-wingmount-v3",
+                "module_type": "wingmount",
+                "x_start": 0.352,
+                "x_end": 0.502,
+                "mass": 0.125,
+                "cg_x": 0.427,
+                "diam": 0.062
+            },
+            {
+                "module_name": "ballast",
+                "module_type": "ballast",
+                "x_start": 0.352,
+                "x_end": 0.502,
+                "mass": 0.0,
+                "cg_x": 0.427,
+                "diam": 0.062
+            },
+            {
+                "module_name": "Flashobby A2807-1300",
+                "module_type": "motor",
+                "x_start": 0.352,
+                "x_end": 0.502,
+                "mass": 0.224,
+                "cg_x": 0.427,
+                "diam": 0.062,
+                "prop_name": "GF7042"
+            },
+            {
+                "module_name": "joint-ring-c",
+                "module_type": "coupler",
+                "x_start": 0.502,
+                "x_end": 0.502,
+                "mass": 0.02136,
+                "cg_x": 0.502,
+                "diam": 0.062
+            },
+            {
+                "module_name": "quad-esc-1",
+                "module_type": "body",
+                "x_start": 0.502,
+                "x_end": 0.574,
+                "mass": 0.055,
+                "cg_x": 0.538,
+                "diam": 0.062
+            },
+            {
+                "module_name": "joint-ring-c",
+                "module_type": "coupler",
+                "x_start": 0.574,
+                "x_end": 0.574,
+                "mass": 0.02136,
+                "cg_x": 0.574,
+                "diam": 0.062
+            },
+            {
+                "module_name": "endcap",
+                "module_type": "end",
+                "x_start": 0.574,
+                "x_end": 0.6439999999999999,
+                "mass": 0.027,
+                "cg_x": 0.609,
+                "diam": 0.062
+            }
+        ],
+        "surface_sets": [
+            {
+                "role": "main",
+                "name": "saggerwing-7in",
+                "module": "quad-wingmount-v3",
+                "count": 4,
+                "span": 0.1,
+                "chord_root": 0.12,
+                "chord_tip": 0.06,
+                "sweep_len": 0.04663076581549986,
+                "x_root_le": 0.367,
+                "body_radius": 0.031,
+                "mount_ang": 45,
+                "aoa": 0.0,
+                "airfoil": "naca0008",
+                "planform_area_total": 0.036
+            }
+        ],
+        "fuselage_length": 0.6439999999999999,
+        "body_x_start": 0.06,
+        "body_x_end": 0.574,
+        "tube_diam": 0.062,
+        "total_mass_kg": 1.3668,
+        "total_moment_kg_m": 0.4560612,
+        "weight_N": 13.408308000000002,
+        "cg_x_m": 0.3336707638279192,
+        "wing_aoa": 0.0,
+        "tail_aoa": 0.0,
+        "wing_airfoil": "naca0008",
+        "tail_airfoil": null,
+        "le_pos_x": 0.367,
+        "s_main_planform": 0.036,
+        "s_tail_planform": 0.0,
+        "wing_loading": 372.4530000000001,
+        "wing_to_tail_ratio": null,
+        "battery_summary": {
+            "s": 6,
+            "p": 1,
+            "mah": 2200,
+            "curr": 154.0,
+            "wh": 48.84000000000001
+        },
+        "total_motor_count": 4,
+        "tot_wingspan": 0.20342135623730953,
+        "nose_length": 0.06,
+        "motor_draw_rows": [
+            {
+                "kind": "surface",
+                "x_m": 0.487,
+                "y_m": -0.09263098833543773,
+                "z_m": -0.09263098833543772,
+                "motor_bell_diam_m": 0.028,
+                "motor_bell_len_m": 0.007,
+                "pod_diam_m": 0.035,
+                "pod_len_flat_m": 0.02,
+                "pod_len_curve_m": 0.05,
+                "pod_shape": "elliptical",
+                "prop_diam_m": 0.17779999999999999,
+                "direction": "back"
+            },
+            {
+                "kind": "surface",
+                "x_m": 0.487,
+                "y_m": -0.09263098833543773,
+                "z_m": 0.09263098833543772,
+                "motor_bell_diam_m": 0.028,
+                "motor_bell_len_m": 0.007,
+                "pod_diam_m": 0.035,
+                "pod_len_flat_m": 0.02,
+                "pod_len_curve_m": 0.05,
+                "pod_shape": "elliptical",
+                "prop_diam_m": 0.17779999999999999,
+                "direction": "back"
+            },
+            {
+                "kind": "surface",
+                "x_m": 0.487,
+                "y_m": 0.09263098833543773,
+                "z_m": -0.09263098833543772,
+                "motor_bell_diam_m": 0.028,
+                "motor_bell_len_m": 0.007,
+                "pod_diam_m": 0.035,
+                "pod_len_flat_m": 0.02,
+                "pod_len_curve_m": 0.05,
+                "pod_shape": "elliptical",
+                "prop_diam_m": 0.17779999999999999,
+                "direction": "back"
+            },
+            {
+                "kind": "surface",
+                "x_m": 0.487,
+                "y_m": 0.09263098833543773,
+                "z_m": 0.09263098833543772,
+                "motor_bell_diam_m": 0.028,
+                "motor_bell_len_m": 0.007,
+                "pod_diam_m": 0.035,
+                "pod_len_flat_m": 0.02,
+                "pod_len_curve_m": 0.05,
+                "pod_shape": "elliptical",
+                "prop_diam_m": 0.17779999999999999,
+                "direction": "back"
+            }
+        ],
+        "motor_summary_rows": [
+            {
+                "label": "Flashobby A2807-1300 x4",
+                "count": 4,
+                "propeller": "GF7042",
+                "kv": 1300.0,
+                "pack_voltage_v": 23.96,
+                "no_load_rpm": 31148.0,
+                "prop_rpm": 19495.0,
+                "thrust_n_per_motor": 17.746290000000002,
+                "thrust_n_total": 70.98516000000001,
+                "current_a_per_motor": 36.35,
+                "current_a_total": 145.4,
+                "input_power_w_per_motor": 870.9,
+                "input_power_w_total": 3483.6,
+                "pitch_speed_kph": 124.783596,
+                "efficiency_g_per_w": 2.1,
+                "warnings": []
+            }
+        ],
+        "total_static_thrust_n": 70.98516000000001,
+        "static_thrust_to_weight": 5.294117647058823,
+        "wing_chord_root": 0.12,
+        "wing_chord_tip": 0.06,
+        "tail_chord_root": 0.0,
+        "tail_chord_tip": 0.0,
+        "wing_span": 0.1,
+        "tail_span": 0.0,
+        "wing_n": 4,
+        "tail_n": 0,
+        "component_rows": [
+            {
+                "component": "nose_tangent_ogive",
+                "role": "body",
+                "cna": 2.0,
+                "x_cp": 0.027960000000000002,
+                "notes": "L=0.060 m"
+            },
+            {
+                "component": "saggerwing-7in",
+                "role": "main",
+                "cna": 20.538099695931418,
+                "x_cp": 0.41105811814022214,
+                "notes": "N=4 span=0.100 m area=0.0360 m^2 MCL=0.101 m"
+            }
+        ],
+        "nose_cna": 2.0,
+        "nose_cp_x": 0.027960000000000002,
+        "total_cna": 22.538099695931418,
+        "x_cp_total": 0.3770625175076294,
+        "main_mac": 0.09333333333333334,
+        "static_margin_m": 0.04339175367971021,
+        "static_margin_pct_mac": 46.49116465683237,
+        "stability_verdict": "stable",
+        "aoa_eval_deg": 0.0,
+        "aoa_cn": 0.0,
+        "aoa_cm": 0.0,
+        "aoa_verdict": "trim",
+        "lift_center_x": null,
+        "report_text": "Airframe: default\n\nOverall Summary\nMain wing incidence   : 0.000 deg\nFuselage length       : 0.6440 m\nMain wingspan         : 0.2034 m\nTotal mass            : 1366.8 g\nTotal weight          : 13.4083 N\nTotal thrust/weight   : 5.294\nTotal moment          : 0.4561 kg*m\nCG                    : 0.3337 m\n\nLifting Surfaces\nMain leading edge pos : 0.3670 m\nReference area        : 0.0360 m^2\nTail planform area    : 0.0000 m^2\nWing loading          : 372.45 N/m^2\nWing/tail area ratio  : nan\n\nBattery\nType                  : 6S1P\nCapacity              : 2200 mAh 48.84 Wh\nCurrent               : 154.00 A\n\nMotors\nMotor count           : 4\nStatic thrust total   : 70.99 N\nConfig                : Flashobby A2807-1300 x4 with GF7042\nPack voltage          : 23.96 V\nMotor KV              : 1300\nNo-load RPM           : 31148\nStatic prop RPM       : 19495\nStatic thrust         : 17.75 N each 70.99 N total\nStatic current        : 36.35 A each 145.40 A total\nStatic input power    : 870.9 W each 3483.6 W total\nPitch speed           : 124.8 km/h\nEfficiency            : 2.10 g/W\n\nStatic Stability\nCombined CP           : 0.3771 m\nStatic margin         : 0.0434 m\nStatic margin % MAC   : 46.49 %\nStatic stability      : stable\n\nAerodynamic Centers\nCG marker             : blue @ 0.3337 m\nCP marker             : red @ 0.3771 m\n\nComponents\nnose_tangent_ogive       role=body   CNa=2.000 x_cp=0.0280 L=0.060 m\nsaggerwing-7in           role=main   CNa=20.538 x_cp=0.4111 N=4 span=0.100 m area=0.0360 m^2 MCL=0.101 m\n\nModules\ncam-nose                 end        x0=0.0000 x1=0.0600 mass=47.0g\njoint-ring-c             coupler    x0=0.0600 x1=0.0600 mass=21.4g\npayload-1                body       x0=0.0600 x1=0.1820 mass=55.0g\npayload                  payload    x0=0.0600 x1=0.1820 mass=100.0g\nballast                  ballast    x0=0.0600 x1=0.1820 mass=0.0g\njoint-ring-c             coupler    x0=0.1820 x1=0.1820 mass=21.4g\nbatt-1                   body       x0=0.1820 x1=0.3520 mass=89.0g\nlipo-6S-2200             battery    x0=0.1820 x1=0.3520 mass=302.0g\njoint-ring-c             coupler    x0=0.3520 x1=0.3520 mass=21.4g\nquad-wingmount-v3        wingmount  x0=0.3520 x1=0.5020 mass=125.0g\nballast                  ballast    x0=0.3520 x1=0.5020 mass=0.0g\nFlashobby A2807-1300     motor      x0=0.3520 x1=0.5020 mass=224.0g\njoint-ring-c             coupler    x0=0.5020 x1=0.5020 mass=21.4g\nquad-esc-1               body       x0=0.5020 x1=0.5740 mass=55.0g\njoint-ring-c             coupler    x0=0.5740 x1=0.5740 mass=21.4g\nendcap                   end        x0=0.5740 x1=0.6440 mass=27.0g\n\nNotes\nBarrowman-style estimate ignores airfoil nonlinearities, trim, thrust, and wing-body interference.\nUse this as a fast first-pass stability screen, not as a forward-flight trim solver."
+    }
+}

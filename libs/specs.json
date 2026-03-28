@@ -1,0 +1,332 @@
+{
+    "standards": {
+        "axes": {
+            "x": "front",
+            "y": "right",
+            "z": "up"
+        },
+        "units": {
+            "length": "mm",
+            "mass": "g",
+            "density": "g/cm^3"
+            
+        },
+        "fasteners": {
+            "M2": { "head_d": 3.7, "nut_w": 4.5 },
+            "M3": { "head_d": 5.5, "nut_w": 5.5 }
+        }
+    },
+
+    "3dp": {
+        "constraints": {
+            "x": 240,
+            "y": 240,
+            "z": 250
+        },
+        "resolution": {
+            "layer_height": 0.2,
+            "nozzle_size": 0.4
+        },
+        "filament": {
+            "brand": "Elegoo",
+            "type": "PLA+"
+        }
+    },
+
+    "specs": {
+        "M62": {
+            "module_size": {
+                "nominal_id": 59.5,
+                "nominal_od": 62,
+                "min_id": 59,
+                "max_id": 59.5,
+                "min_thickness": 1.5,
+                "max_thickness": 3,
+                "min_len": 20,
+                "max_len": 210
+            },
+            "internal_geometry": {
+                "quadrants": 4,
+                "offset": 0
+            },
+            "coupling": {
+                "types": ["male", "female"],
+                "id": 59.5,
+                "od": 62,
+                "hole_size": "M3",
+                "hole_num": 8,
+                "hole_edge_dist": 6,
+                "coupler_depth": 10
+            },
+            "reinforcement": {
+                "type": "cf_rod",
+                "size": 2.5,
+                "radial_dist": 54.75,
+                "id_dist": 2.375,
+                "polar_n": 8,
+                "polar_offset_angle": 30,
+                "polar_split": 2,
+                "polar_split_angle": 15
+            }
+        },
+
+        "M75": {
+            "module_size": {
+                "nominal_id": 76.2,
+                "nominal_od": 78.2,
+                "min_id": 76.0,
+                "max_id": 76.5,
+                "min_thickness": 1.5,
+                "max_thickness": 3,
+                "min_len": 20,
+                "max_len": 210
+            },
+            "internal_geometry": {
+                "quadrants": 4,
+                "offset": 0
+            },
+            "coupling": {
+                "types": ["male", "female"],
+                "id": 59.5,
+                "od": 76,
+                "hole_size": "M3",
+                "hole_num": 8,
+                "hole_edge_dist": 6,
+                "coupler_depth": 10
+            },
+            "reinforcement": {
+                "type": "cf_rod",
+                "size": 6.2,
+                "radial_dist": 68.2,
+                "id_dist": 2.375,
+                "polar_n": 4,
+                "polar_offset_angle": 36,
+                "polar_split": 0,
+                "polar_split_angle": 0
+            }
+        }
+    },
+
+    "types": {
+        "modules": [
+            "nose",
+            "body",
+            "battery",
+            "payload",
+            "aero_mount",
+            "aero_surface",
+            "end"
+        ]
+    },
+
+    "rules": {
+        "size": {
+            "avionics_len": 48
+        },
+        "clearance": {
+            "battery": {
+                "x+": 2, 
+                "x-": 35, 
+                "y": 5, 
+                "z": 2
+            }
+        }
+    },
+
+    "openings": {
+        "hatch": {
+            "shape": "square",
+            "params": ["angle","length"]
+        },
+        "sma_antenna": {
+            "shape": "circular",
+            "dir": "z",
+            "size": 7.3
+        },
+        "camera_opening": {
+            "shape": "circular",
+            "dir": "x",
+            "size": 13
+        }
+    },
+
+    "hole_patterns": {
+        "motor_fpv": { 
+            "hole": "M3",
+            "hole_n": 4,
+            "pattern": "radial",
+            "dist_center": 19
+        }
+    },
+
+    "sockets": {
+        "socket_wing": {
+            "shape": "rounded_rectangle",
+            "len": 75,
+            "height": 10,
+            "corner_radius": 2.5
+        }
+    },
+
+    "antennas": {
+        "elrs_2400": {},
+        "elrs_915": {},
+        "vtx_5800": {},
+        "lora_915": {}
+    },
+
+    "connectors": {
+        "XT60_panel": {},
+        "USB_C_panel": {}
+    },
+
+    "wire_paths": {
+        "batt_to_esc": {
+            "start": "batt",
+            "end": "esc",
+            "wires_n": 2,
+            "wires_ga": 14,
+            "wires_list": {
+                "V_BATT": "red", 
+                "G_BATT": "black"
+            },
+            "plug_start": "XT60",
+            "plug_mid": "XT60",
+            "plug_end": "soldered",
+            "shielded": false,
+            "high_current": true
+        },
+        "esc_to_motor": {
+            "start": "esc",
+            "end": "motor",
+            "wires_n": 3,
+            "wires_ga": 18,
+            "wires_list": {"A":"black", "B":"black", "C":"black"},
+            "plug_start": "soldered",
+            "plug_mid": "MR60",
+            "plug_end": "soldered",
+            "shielded": false,
+            "high_current": true
+        },
+        "fc_to_esc": {
+            "start": "fc",
+            "end": "esc",
+            "wires_n": 8,
+            "wires_ga": 30,
+            "wires_list": {
+                "V_BATT": "red", 
+                "G_BATT": "black", 
+                "CURR": "yellow", 
+                "M1": "white", 
+                "M2": "white", 
+                "M3": "white", 
+                "M4": "white"
+            },
+            "plug_start": "JST_SH",
+            "plug_mid": "",
+            "plug_end": "JST_SH",
+            "shielded": false,
+            "high_current": false
+        },
+        "fc_to_cam": {
+            "start": "fc",
+            "end": "cam",
+            "wires_n": 3,
+            "wires_ga": 30,
+            "wires_list": {
+                "5V": "red", 
+                "G_FC": "black", 
+                "VIDEO": "yellow"
+            },
+            "plug_start": "FC_PLUG",
+            "plug_mid": "Molex_Picoblade",
+            "plug_end": "Molex_Picoblade",
+            "shielded": true,
+            "high_current": false
+        },
+        "fc_to_vtx": {
+            "start": "fc",
+            "end": "vtx",
+            "wires_n": 4,
+            "wires_ga": 30,
+            "wires_list": {
+                "V_VTX": "red", 
+                "G_FC": "black", 
+                "UART_TX": "blue", 
+                "VIDEO": "yellow"
+            },
+            "plug_start": "FC_PLUG",
+            "plug_mid": "",
+            "plug_end": "JST_SH",
+            "shielded": false,
+            "high_current": false
+        },
+        "fc_to_rx": {
+            "start": "fc",
+            "end": "rx",
+            "wires_n": 4,
+            "wires_ga": 30,
+            "wires_list": {
+                "4V5": "red", 
+                "G_FC": "black", 
+                "UART_TX": "blue", 
+                "UART_RX": "white"
+            },
+            "plug_start": "FC_PLUG",
+            "plug_mid": "Molex_Picoblade",
+            "plug_end": "RX_PLUG",
+            "shielded": true,
+            "high_current": false
+        },
+        "fc_to_gps": {
+            "start": "fc",
+            "end": "gps",
+            "wires_n": 6,
+            "wires_ga": 30,
+            "wires_list": {
+                "4V5": "red", 
+                "G_FC": "black", 
+                "UART_TX": "blue", 
+                "UART_RX": "white", 
+                "I2C_SCL": "yellow", 
+                "I2C_SDA": "green"
+            },
+            "plug_start": "FC_PLUG",
+            "plug_mid": "Molex_Picoblade",
+            "plug_end": "JST_SH",
+            "shielded": true,
+            "high_current": false
+        },
+        "fc_pwm": {
+            "start": "fc",
+            "end": "servo",
+            "wires_n": 2,
+            "wires_ga": 30,
+            "wires_list": {
+                "PWM":"yellow", 
+                "G_FC":"black"},
+            "plug_start": "soldered",
+            "plug_mid": "",
+            "plug_end": "soldered",
+            "shielded": false,
+            "high_current": false
+        },
+        "servo_pwm":{
+            "start": "fc",
+            "end": "servo",
+            "wires_n": 2,
+            "wires_ga": 30,
+            "wires_list": {
+                "PWM": "yellow", 
+                "5V": "red", 
+                "G_FC":"brown"
+            },
+            "plug_start": "soldered",
+            "plug_mid": "",
+            "plug_end": "servo",
+            "shielded": false,
+            "high_current": true,
+            "max_len": 240
+        }
+    }
+}

@@ -1,0 +1,64 @@
+{
+    "fuselage_od_mm": 62.0,
+    "fuselage_id_mm": 59.5,
+    "material_density_g_cm3": 1.3,
+    "standard_profile": "",
+    "apply_standard": false,
+    "vtol": true,
+    "tailless": false,
+    "canards": false,
+    "name": "62mm Quad Lancet 7in v1",
+    "thrust_axis_tilt_deg": 90,
+    "powered": true,
+    "parts": [
+        {
+            "module": "cam-nose",
+            "battery": "",
+            "payload_mass": 0.0,
+            "ballast_mass": 0.0,
+            "motors": "",
+            "props": ""
+        },
+        {
+            "module": "payload-1",
+            "battery": "",
+            "payload_mass": 0.1,
+            "ballast_mass": 0.0,
+            "motors": "",
+            "props": ""
+        },
+        {
+            "module": "batt-1",
+            "battery": "lipo-6S-2200",
+            "payload_mass": 0.0,
+            "ballast_mass": 0.0,
+            "motors": "",
+            "props": ""
+        },
+        {
+            "module": "quad-wingmount-v3",
+            "battery": "",
+            "payload_mass": 0.0,
+            "ballast_mass": 0.0,
+            "surfaces": "saggerwing-7in",
+            "motors": "Flashobby A2807-1300",
+            "props": "GF7042"
+        },
+        {
+            "module": "quad-esc-1",
+            "battery": "",
+            "payload_mass": 0.0,
+            "ballast_mass": 0.0,
+            "motors": "",
+            "props": ""
+        },
+        {
+            "module": "endcap",
+            "battery": "",
+            "payload_mass": 0.0,
+            "ballast_mass": 0.0,
+            "motors": "",
+            "props": ""
+        }
+    ]
+}
