@@ -7,7 +7,11 @@
             "p": 1,
             "mah": 2200,
             "c": 50,
-            "dimensions": {"l": 108, "h": 32, "w": 34}
+            "dimensions": {
+                "l": 108,
+                "h": 32,
+                "w": 34
+            }
         },
         "lipo-6S-2200": {
             "type": "lipo",
@@ -16,7 +20,11 @@
             "p": 1,
             "mah": 2200,
             "c": 70,
-            "dimensions": {"l": 110, "h": 49, "w": 35.5}
+            "dimensions": {
+                "l": 110,
+                "h": 49,
+                "w": 35.5
+            }
         },
         "GNB-5300mah-6S": {
             "type": "lipo",
@@ -25,7 +33,11 @@
             "p": 1,
             "mah": 5300,
             "c": 70,
-            "dimensions": {"l": 141, "h": 44, "w": 45}
+            "dimensions": {
+                "l": 141,
+                "h": 44,
+                "w": 45
+            }
         },
         "GNB-4000mah-6S": {
             "type": "lipo",
@@ -34,7 +46,11 @@
             "p": 1,
             "mah": 4000,
             "c": 70,
-            "dimensions": {"l": 141, "h": 44, "w": 35}
+            "dimensions": {
+                "l": 141,
+                "h": 44,
+                "w": 35
+            }
         },
         "Tattu-Gtech-6000mah-6S": {
             "type": "lipo",
@@ -43,7 +59,11 @@
             "p": 1,
             "mah": 6000,
             "c": 150,
-            "dimensions": {"l": 161, "h": 45, "w": 61}
+            "dimensions": {
+                "l": 161,
+                "h": 45,
+                "w": 61
+            }
         },
         "Tattu-4500mah-6S": {
             "type": "lipo",
@@ -52,30 +72,49 @@
             "p": 1,
             "mah": 4500,
             "c": 25,
-            "dimensions": {"l": 138, "h": 42.5, "w": 52}
+            "dimensions": {
+                "l": 138,
+                "h": 42.5,
+                "w": 52
+            }
         },
         "liion-6S1P-1": {
             "type": "liion",
-            "cell": ["Molicel","P45B","21700"],
+            "cell": [
+                "Molicel",
+                "P45B",
+                "21700"
+            ],
             "s": 6,
             "p": 1
         },
         "liion-4S2P-1": {
             "type": "liion",
-            "cell": ["Molicel","P45B","21700"],
+            "cell": [
+                "Molicel",
+                "P45B",
+                "21700"
+            ],
             "s": 4,
             "p": 2
         },
         "liion-4S3P-1": {
             "type": "liion",
-            "cell": ["Molicel","P45B","21700"],
+            "cell": [
+                "Molicel",
+                "P45B",
+                "21700"
+            ],
             "s": 4,
             "p": 3
         },
-
         "liion-6S2P-1": {
             "type": "liion",
-            "cell": ["Molicel","P45B","21700"],
+            "cell": [
+                "Molicel",
+                "P45B",
+                "21700"
+            ],
             "s": 6,
             "p": 2
         }

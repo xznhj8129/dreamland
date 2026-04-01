@@ -5,7 +5,22 @@
         "len": 0.043,
         "diam": 0.062,
         "mass": 0.029,
-        "cg": 0.5
+        "cg": 0.5,
+        "wings_n": 2,
+        "wing_phase": 0,
+        "wings_ang": 0,
+        "wings_x": 0.5,
+        "pointed_shape": {
+            "shape": "conic",
+            "k_prime": 1.0,
+            "exponent": 0.66,
+            "c": 0.0,
+            "nose_radius": 0.00465,
+            "rho_factor": 1.25,
+            "break_fraction": 0.5,
+            "break_radius_fraction": 0.5
+        },
+        "fins": false
     },
     "dome-nose": {
         "type": "end",
@@ -14,7 +29,21 @@
         "diam": 0.062,
         "mass": 0.031,
         "cg": 0.5,
-        "eo": true
+        "wings_n": 2,
+        "wing_phase": 0,
+        "wings_ang": 0,
+        "wings_x": 0.5,
+        "pointed_shape": {
+            "shape": "tangent_ogive",
+            "k_prime": 1.0,
+            "exponent": 0.66,
+            "c": 0.0,
+            "nose_radius": 0.00465,
+            "rho_factor": 1.25,
+            "break_fraction": 0.5,
+            "break_radius_fraction": 0.5
+        },
+        "fins": false
     },
     "cam-nose": {
         "type": "end",
@@ -23,7 +52,21 @@
         "diam": 0.062,
         "mass": 0.047,
         "cg": 0.5,
-        "eo": true
+        "wings_n": 2,
+        "wing_phase": 0,
+        "wings_ang": 0,
+        "wings_x": 0.5,
+        "pointed_shape": {
+            "shape": "tangent_ogive",
+            "k_prime": 1.0,
+            "exponent": 0.66,
+            "c": 0.0,
+            "nose_radius": 0.00465,
+            "rho_factor": 1.25,
+            "break_fraction": 0.5,
+            "break_radius_fraction": 0.5
+        },
+        "fins": false
     },
     "avionics-1": {
         "type": "body",
@@ -381,7 +424,7 @@
     "vestawing": {
         "type": "wing",
         "model": "xm62",
-        "semispan": 0.100,
+        "semispan": 0.1,
         "mass": 0.02,
         "cg": 0.5,
         "chord_root": 0.14,
@@ -430,10 +473,10 @@
     "saggerwing-7in-back-v2": {
         "type": "wing",
         "model": "xm62",
-        "semispan": 0.10,
+        "semispan": 0.1,
         "mass": 0.059,
         "cg": 0.5,
-        "chord_root": 0.120,
+        "chord_root": 0.12,
         "chord_tip": 0.06,
         "aoa_ang": 0.0,
         "sweep_ang": 20.0,
@@ -498,6 +541,21 @@
         "diam": 0.062,
         "mass": 0.027,
         "cg": 0.5,
+        "wings_n": 2,
+        "wing_phase": 0,
+        "wings_ang": 0,
+        "wings_x": 0.5,
+        "pointed_shape": {
+            "shape": "conic",
+            "k_prime": 1.0,
+            "exponent": 0.66,
+            "c": 0.0,
+            "nose_radius": 0.00465,
+            "rho_factor": 1.25,
+            "break_fraction": 0.5,
+            "break_radius_fraction": 0.5
+        },
+        "fins": false,
         "motor": false
     },
     "vtail": {
@@ -507,6 +565,21 @@
         "diam": 0.062,
         "mass": 0.059,
         "cg": 0.5,
+        "wings_n": 2,
+        "wing_phase": 0,
+        "wings_ang": 0,
+        "wings_x": 0.5,
+        "pointed_shape": {
+            "shape": "conic",
+            "k_prime": 1.0,
+            "exponent": 0.66,
+            "c": 0.0,
+            "nose_radius": 0.00465,
+            "rho_factor": 1.25,
+            "break_fraction": 0.5,
+            "break_radius_fraction": 0.5
+        },
+        "fins": false,
         "motor": true,
         "motor_n": 1,
         "motor_x_pos": 1.0
@@ -518,6 +591,21 @@
         "diam": 0.062,
         "mass": 0.03,
         "cg": 0.5,
+        "wings_n": 2,
+        "wing_phase": 0,
+        "wings_ang": 0,
+        "wings_x": 0.5,
+        "pointed_shape": {
+            "shape": "conic",
+            "k_prime": 1.0,
+            "exponent": 0.66,
+            "c": 0.0,
+            "nose_radius": 0.00465,
+            "rho_factor": 1.2500000000000002,
+            "break_fraction": 0.5,
+            "break_radius_fraction": 0.5
+        },
+        "fins": false,
         "motor": true,
         "motor_n": 1,
         "motor_x_pos": 1.0
@@ -529,6 +617,21 @@
         "diam": 0.062,
         "mass": 0.032,
         "cg": 0.5,
+        "wings_n": 2,
+        "wing_phase": 0,
+        "wings_ang": 0,
+        "wings_x": 0.5,
+        "pointed_shape": {
+            "shape": "conic",
+            "k_prime": 1.0,
+            "exponent": 0.66,
+            "c": 0.0,
+            "nose_radius": 0.00465,
+            "rho_factor": 1.2500000000000002,
+            "break_fraction": 0.5,
+            "break_radius_fraction": 0.5
+        },
+        "fins": false,
         "motor": true,
         "motor_n": 1,
         "motor_x_pos": 0.0

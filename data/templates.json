@@ -3,15 +3,21 @@
         "config": {
             "name": "str",
             "vtol": "bool",
-            "tailless": "bool",
-            "canards": "bool",
             "powered": "bool",
             "thrust_axis_tilt_deg": "float",
             "fuselage_od_mm": "float",
             "fuselage_id_mm": "float",
             "material_density_g_cm3": "float",
             "standard_profile": "str",
-            "apply_standard": "bool"
+            "apply_standard": "bool",
+            "battery": "str",
+            "motors": "str",
+            "props": "str"
+        },
+        "config_force": {
+            "aoa_deg": "float",
+            "airspeed_m_s": "float",
+            "altitude_m": "float"
         },
         "module": {
             "name": "str",
@@ -23,15 +29,26 @@
             "wing_phase": "float",
             "wings_ang": "float",
             "wings_x": "float",
-            "eo": "bool",
+            "fins": "bool",
             "ballast": "bool",
             "battery": "bool",
             "payload": "bool",
             "esc": "bool",
             "motor": "bool",
+            "pointed_shape": "dict",
             "motor_x_pos": "float",
             "motor_y_pos": "float",
             "motor_dir": "str"
+        },
+        "pointed_shape": {
+            "shape": "str",
+            "k_prime": "float",
+            "rho_factor": "float",
+            "exponent": "float",
+            "c": "float",
+            "break_fraction": "float",
+            "break_radius_fraction": "float",
+            "nose_radius": "float"
         },
         "surface": {
             "name": "str",
@@ -56,11 +73,14 @@
             "all_moving": "bool"
         },
         "part": {
-            "battery": "str",
+            "x": "float",
+            "y": "float",
+            "z": "float",
+            "pitch": "float",
+            "yaw": "float",
+            "roll": "float",
             "payload_mass": "float",
-            "ballast_mass": "float",
-            "motors": "str",
-            "props": "str"
+            "ballast_mass": "float"
         }
     },
     "module_templates": {
@@ -83,7 +103,21 @@
             "len": 0.05,
             "mass": 0.03,
             "cg": 0.5,
-            "eo": false,
+            "wings_n": 2,
+            "wing_phase": 0.0,
+            "wings_ang": 0.0,
+            "wings_x": 0.5,
+            "pointed_shape": {
+                "shape": "tangent_ogive",
+                "k_prime": 1.0,
+                "rho_factor": 1.0,
+                "exponent": 0.66,
+                "c": 0.0,
+                "break_fraction": 0.5,
+                "break_radius_fraction": 0.5,
+                "nose_radius": 0.004
+            },
+            "fins": false,
             "motor": false,
             "motor_dir": "front"
         },
@@ -135,15 +169,21 @@
         }
     },
     "part_defaults": {
-        "battery": "",
+        "x": 0.0,
+        "y": 0.0,
+        "z": 0.0,
+        "pitch": 0.0,
+        "yaw": 0.0,
+        "roll": 0.0,
         "payload_mass": 0.0,
-        "ballast_mass": 0.0,
-        "motors": "",
-        "props": ""
+        "ballast_mass": 0.0
     },
     "config_defaults": {
         "standard_profile": "",
-        "apply_standard": false
+        "apply_standard": false,
+        "battery": "",
+        "motors": "",
+        "props": ""
     },
     "new_part_module_type": "body"
 }

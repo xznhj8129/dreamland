@@ -9,15 +9,17 @@ import argparse
 import json
 from pathlib import Path
 
-from analysis import json_safe_data, load_builder_data, recompute_analysis
+from libs.analysis import json_safe_data, load_builder_data, recompute_analysis
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Run guibuilder analysis without Tk.")
-    parser.add_argument("--config", type=Path, default=None, help="Path to saved aircraft JSON. Defaults to libs/default.json.")
+    parser.add_argument("--config", type=Path, default=None, help="Path to saved aircraft JSON. Defaults to data/default.json.")
     parser.add_argument("--aoa", type=float, default=0.0, help="AoA in degrees for the linear aero pass.")
+    parser.add_argument("--airspeed", type=float, default=10.0, help="Operating airspeed in m/s for dimensional surface-force reporting.")
+    parser.add_argument("--altitude", type=float, default=0.0, help="Operating altitude in meters for dimensional surface-force reporting.")
     parser.add_argument("--dump-analysis", type=Path, default=None, help="Optional path to write the full computed analysis JSON.")
     args = parser.parse_args()
 
@@ -47,12 +49,19 @@ def main() -> None:
         standards_data=standards_data,
         motor_data_df=motor_data_df,
         aoa_eval_deg=args.aoa,
+        force_eval_airspeed_m_s=args.airspeed,
+        force_eval_altitude_m=args.altitude,
     )
     print(analysis["report_text"])
 
     if args.dump_analysis is not None:
+        analysis_dump = {
+            key: value
+            for key, value in analysis.items()
+            if key != "report_text"
+        }
         with open(args.dump_analysis, "w") as file:
-            json.dump(json_safe_data(analysis), file, indent=4, allow_nan=False)
+            json.dump(json_safe_data(analysis_dump), file, indent=4, allow_nan=False)
 
 
 if __name__ == "__main__":

@@ -1,6 +1,6 @@
 """
 Usage:
-from analysis import load_builder_data, recompute_analysis, run_vlm_sweep
+from libs.analysis import load_builder_data, recompute_analysis, run_vlm_sweep
 """
 
 import concurrent.futures
@@ -13,19 +13,25 @@ from pathlib import Path
 import aerosandbox as asb
 import numpy as np
 import pandas as pd
-from simlib import prop_performance_summary
+from libs.pointed_shapes import pointed_shape_param_values, sample_pointed_profile
+from libs.simlib2 import TestedMotorData
 
 SCRIPT_DIR = Path(__file__).resolve().parent
-LIBS_DIR = SCRIPT_DIR / "libs"
+DATA_DIR = SCRIPT_DIR.parent / "data"
 MOTORDATA_PATH = SCRIPT_DIR / "motordata.csv"
-MODULES_PATH = LIBS_DIR / "modules.json"
-PARTS_PATH = LIBS_DIR / "parts.json"
-DEFAULT_CONFIG_PATH = LIBS_DIR / "default.json"
-STANDARDS_PATH = LIBS_DIR / "specs.json"
-
-POD_DIAM_TO_ROOT_CHORD = 0.28
-POD_LEN_FLAT_TO_ROOT_CHORD = 0.08
-POD_LEN_CURVE_TO_ROOT_CHORD = 0.16
+BATTERYDATA_PATH = SCRIPT_DIR / "batterydata.csv"
+MODULES_PATH = DATA_DIR / "modules.json"
+PARTS_PATH = DATA_DIR / "parts.json"
+DEFAULT_CONFIG_PATH = DATA_DIR / "default.json"
+STANDARDS_PATH = DATA_DIR / "specs.json"
+PROP_SHAFT_LEN_M = 0.015
+STANDARD_GRAVITY_M_S2 = 9.80665
+GRAMS_FORCE_PER_NEWTON = 1000.0 / STANDARD_GRAVITY_M_S2
+SURFACE_FORCE_N_CRIT = 9.0
+SURFACE_FORCE_XTR_UPPER = 1.0
+SURFACE_FORCE_XTR_LOWER = 1.0
+SURFACE_FORCE_MODEL_SIZE = "large"
+SURFACE_FORCE_INCLUDE_360_DEG_EFFECTS = False
 
 
 def json_safe_data(value):
@@ -93,8 +99,14 @@ def finite_wing_lift_slope(span: float, chord_root: float, chord_tip: float) -> 
     e = 0.9
     return a0 / (1.0 + a0 / (math.pi * e * aspect_ratio))
 
-
-def surface_panel_layout(count: int, root_radius: float, span: float, wing_phase_deg: float, dihedral_deg: float) -> list[dict]:
+def surface_panel_layout(
+    count: int,
+    root_radius: float,
+    span: float,
+    wing_phase_deg: float,
+    dihedral_deg: float,
+    centerline_root: bool = False,
+) -> list[dict]:
     panels = []
     dihedral_rad = math.radians(dihedral_deg)
     phase_eps = 1e-9
@@ -117,6 +129,10 @@ def surface_panel_layout(count: int, root_radius: float, span: float, wing_phase
         dir_norm = math.hypot(dir_y, dir_z)
         dir_y /= dir_norm
         dir_z /= dir_norm
+        root_y = 0.0 if centerline_root else root_radius * math.cos(panel_phase_rad)
+        root_z = 0.0 if centerline_root else root_radius * math.sin(panel_phase_rad)
+        tip_y = dir_y * span if centerline_root else root_y + span * dir_y
+        tip_z = dir_z * span if centerline_root else root_z + span * dir_z
         panels.append(
             {
                 "index": panel_index,
@@ -124,8 +140,8 @@ def surface_panel_layout(count: int, root_radius: float, span: float, wing_phase
                 "dihedral_sign": dihedral_sign,
                 "root_y": root_y,
                 "root_z": root_z,
-                "tip_y": root_y + span * dir_y,
-                "tip_z": root_z + span * dir_z,
+                "tip_y": tip_y,
+                "tip_z": tip_z,
                 "dir_y": dir_y,
                 "dir_z": dir_z,
             }
@@ -166,10 +182,13 @@ def create_asb_surface(
         twist=aoa_deg,
         airfoil=base_airfoil,
     )
+    xsecs = [root, tip]
+    if y_tip < y_le or (abs(y_tip - y_le) < 1e-9 and z_tip < z_le):
+        xsecs = [tip, root]
     return asb.Wing(
         name=f"{name_prefix}_{idx + 1}",
         symmetric=False,
-        xsecs=[root, tip],
+        xsecs=xsecs,
     )
 
 
@@ -178,19 +197,6 @@ def build_asb_airplane(analysis: dict) -> asb.Airplane:
     eps = 1e-6
     structural_rows = [row for row in analysis["module_rows"] if row["module_type"] in {"body", "end", "coupler", "wingmount"}]
     tube_radius = analysis["tube_diam"] / 2.0
-
-    def ogive_radius(r_value: float, length_value: float) -> float:
-        return (r_value * r_value + length_value * length_value) / (2.0 * r_value)
-
-    def nose_radius(x_value: float, r_value: float, length_value: float) -> float:
-        rho = ogive_radius(r_value, length_value)
-        value = rho * rho - (length_value - x_value) * (length_value - x_value)
-        return math.sqrt(value) + (r_value - rho) if value > 0.0 else 0.0
-
-    def tail_radius(s_value: float, r_value: float, length_value: float) -> float:
-        rho = ogive_radius(r_value, length_value)
-        value = rho * rho - s_value * s_value
-        return math.sqrt(value) + (r_value - rho) if value > 0.0 else 0.0
 
     xsecs = []
 
@@ -203,28 +209,35 @@ def build_asb_airplane(analysis: dict) -> asb.Airplane:
     for row in structural_rows:
         module_len = row["x_end"] - row["x_start"]
         if row["module_type"] == "end" and end_count == 0:
-            add_xsec(row["x_start"], 0.0)
-            for xi in np.linspace(0.0, module_len, n_cap + 2)[1:-1]:
-                add_xsec(row["x_start"] + float(xi), nose_radius(float(xi), tube_radius, module_len))
-            add_xsec(row["x_end"], tube_radius)
+            for x_local, radius_value in sample_pointed_profile(
+                row["pointed_shape"]["shape"],
+                module_len,
+                tube_radius,
+                n_cap + 2,
+                pointed_shape_param_values(row["pointed_shape"]),
+            ):
+                add_xsec(row["x_start"] + x_local, radius_value)
             end_count += 1
             continue
         if row["module_type"] == "end" and end_count == 1:
-            add_xsec(row["x_start"], tube_radius)
-            for si in np.linspace(0.0, module_len, n_cap + 2)[1:-1]:
-                add_xsec(row["x_start"] + float(si), tail_radius(float(si), tube_radius, module_len))
-            add_xsec(row["x_end"], 0.0)
+            tail_profile = sample_pointed_profile(
+                row["pointed_shape"]["shape"],
+                module_len,
+                tube_radius,
+                n_cap + 2,
+                pointed_shape_param_values(row["pointed_shape"]),
+            )
+            for x_local, radius_value in reversed(tail_profile):
+                add_xsec(row["x_end"] - x_local, radius_value)
             end_count += 1
             continue
         add_xsec(row["x_start"], tube_radius)
         add_xsec(row["x_end"], tube_radius)
 
-    fuselage = asb.Fuselage(name="Fuselage", xsecs=xsecs)
+    fuselages = [asb.Fuselage(name="Fuselage", xsecs=xsecs)]
 
-    main_wings = []
-    tail_wings = []
-    main_index = 0
-    tail_index = 0
+    wings = []
+    wing_index = 0
     for surface in analysis["surface_sets"]:
         x_le = surface["x_root_le"]
         for panel in surface["panels"]:
@@ -242,30 +255,70 @@ def build_asb_airplane(analysis: dict) -> asb.Airplane:
                 name_prefix=surface["name"],
                 airfoil_name=surface["airfoil"],
             )
-            if surface["role"] == "main":
-                wing.name = f"{surface['name']}_main_{main_index + 1}"
-                main_wings.append(wing)
-                main_index += 1
-            elif surface["role"] in {"tail", "canard"}:
-                wing.name = f"{surface['name']}_{surface['role']}_{tail_index + 1}"
-                tail_wings.append(wing)
-                tail_index += 1
-            else:
-                wing.name = f"{surface['name']}_aux_{tail_index + 1}"
-                tail_wings.append(wing)
-                tail_index += 1
+            wing.name = f"{surface['name']}_{wing_index + 1}"
+            wings.append(wing)
+            wing_index += 1
 
-    c_ref = (analysis["wing_chord_root"] + analysis["wing_chord_tip"]) / 2.0 if (analysis["wing_chord_root"] + analysis["wing_chord_tip"]) > 0.0 else analysis["tube_diam"]
+    c_ref = analysis["reference_chord_m"] if math.isfinite(analysis["reference_chord_m"]) and analysis["reference_chord_m"] > 0.0 else analysis["tube_diam"]
     b_ref = analysis["tot_wingspan"]
+    propulsors = []
+    for index, motor in enumerate(analysis["motor_draw_rows"]):
+        front_sign = -1.0 if motor["direction"] == "front" else 1.0
+        pod_sign = -front_sign
+        motor_radius = motor["motor_bell_diam_m"] / 2.0
+        pod_radius = motor["pod_diam_m"] / 2.0
+        motor_x0 = motor["x_m"] - motor["motor_bell_len_m"] / 2.0
+        motor_x1 = motor["x_m"] + motor["motor_bell_len_m"] / 2.0
+        fuselages.append(
+            asb.Fuselage(
+                name=f"motor_{index + 1}",
+                xsecs=[
+                    asb.FuselageXSec(xyz_c=[motor_x0, motor["y_m"], motor["z_m"]], radius=motor_radius),
+                    asb.FuselageXSec(xyz_c=[motor_x1, motor["y_m"], motor["z_m"]], radius=motor_radius),
+                ],
+            )
+        )
+        if motor["pod_len_flat_m"] > 0.0 or motor["pod_len_curve_m"] > 0.0:
+            pod_xsecs = []
+            pod_x0 = motor["x_m"] + pod_sign * (motor["motor_bell_len_m"] / 2.0)
+            pod_xsecs.append(asb.FuselageXSec(xyz_c=[pod_x0, motor["y_m"], motor["z_m"]], radius=pod_radius))
+            if motor["pod_len_flat_m"] > 0.0:
+                pod_x1 = pod_x0 + pod_sign * motor["pod_len_flat_m"]
+                pod_xsecs.append(asb.FuselageXSec(xyz_c=[pod_x1, motor["y_m"], motor["z_m"]], radius=pod_radius))
+            else:
+                pod_x1 = pod_x0
+            if motor["pod_len_curve_m"] > 0.0:
+                curve_profile = sample_pointed_profile(motor["pod_shape"], motor["pod_len_curve_m"], pod_radius, n_cap + 2)
+                for curve_x, curve_radius in reversed(curve_profile[:-1]):
+                    pod_xsecs.append(
+                        asb.FuselageXSec(
+                            xyz_c=[pod_x1 + pod_sign * (motor["pod_len_curve_m"] - curve_x), motor["y_m"], motor["z_m"]],
+                            radius=curve_radius,
+                        )
+                    )
+            fuselages.append(asb.Fuselage(name=f"pod_{index + 1}", xsecs=pod_xsecs))
+        propulsors.append(
+            asb.Propulsor(
+                name=f"propulsor_{index + 1}",
+                xyz_c=[
+                    motor["x_m"] + front_sign * (motor["motor_bell_len_m"] / 2.0 + PROP_SHAFT_LEN_M),
+                    motor["y_m"],
+                    motor["z_m"],
+                ],
+                xyz_normal=[front_sign, 0.0, 0.0],
+                radius=motor["prop_diam_m"] / 2.0,
+                length=0.0,
+            )
+        )
     return asb.Airplane(
         name=analysis["config_name"],
         xyz_ref=[analysis["cg_x_m"], 0.0, 0.0],
-        s_ref=analysis["s_main_planform"],
+        s_ref=analysis["surface_planform_total"],
         c_ref=c_ref,
         b_ref=b_ref,
-        wings=main_wings + tail_wings,
-        fuselages=[fuselage],
-        propulsors=[],
+        wings=wings,
+        fuselages=fuselages,
+        propulsors=propulsors,
     )
 
 
@@ -306,6 +359,12 @@ def resolve_named_block(block, modules_data: dict) -> tuple[str, dict]:
     return block, copy.deepcopy(modules_data[block])
 
 
+def part_has_lifting_surfaces(module_data: dict, module_entry: dict) -> bool:
+    if module_data["type"] == "wingmount":
+        return True
+    return module_data["type"] == "end" and module_data.get("fins", False)
+
+
 def parse_motor_name(motor_entry) -> tuple[str, str, str, str]:
     brand_override = None
     if type(motor_entry) is dict:
@@ -342,7 +401,9 @@ def find_motor_group(motor_name: str, brand: str, model: str, kv_val: str, prop_
     ]
     if group.empty:
         raise RuntimeError(f"No simlib data found for {motor_name} with {prop_name} on {batt_s}S")
-    return group.sort_values("T")
+    group = group.copy()
+    group["ThrottlePct"] = group["T"].astype(str).str.rstrip("%").astype(float)
+    return group.sort_values("ThrottlePct")
 
 
 def motor_mass_kg(motor_name: str, brand: str, model: str, kv_val: str, prop_name: str, batt_s: int, motor_data_df: pd.DataFrame) -> float:
@@ -362,7 +423,14 @@ def parse_prop_diameter_m(prop_name: str) -> float:
     digits_match = re.search(r"(\d{4,5})", prop_name)
     if digits_match:
         digits = digits_match.group(1)
-        diameter_in = float(digits[:-3])
+        if len(digits) == 4:
+            first_two = int(digits[:2])
+            if first_two <= 20:
+                diameter_in = float(first_two)
+            else:
+                diameter_in = float(digits[0])
+        else:
+            diameter_in = float(digits[:2])
         return diameter_in * 0.0254
     raise RuntimeError(f"Could not parse prop diameter from {prop_name}")
 
@@ -372,80 +440,81 @@ def build_report_text(analysis: dict) -> str:
     lines.append(f"Airframe: {analysis['assembly_name']}")
     lines.append("")
     lines.append("Overall Summary")
-    lines.append(f"Main wing incidence   : {analysis['wing_aoa']:.3f} deg")
-    if analysis["tail_airfoil"] is not None:
-        aft_label = "Canard incidence" if analysis["canards"] else "Tail AoA"
-        lines.append(f"{aft_label:<21}: {analysis['tail_aoa']:.3f} deg")
     lines.append(f"Fuselage length       : {analysis['fuselage_length']:.4f} m")
-    lines.append(f"Main wingspan         : {analysis['tot_wingspan']:.4f} m")
+    lines.append(f"Overall span          : {analysis['tot_wingspan']:.4f} m")
     lines.append(f"Total mass            : {analysis['total_mass_kg'] * 1000.0:.1f} g")
     lines.append(f"Total weight          : {analysis['weight_N']:.4f} N")
-    if analysis["total_motor_count"] > 0:
-        lines.append(f"Total thrust/weight   : {analysis['static_thrust_to_weight']:.3f}")
     lines.append(f"Total moment          : {analysis['total_moment_kg_m']:.4f} kg*m")
     lines.append(f"CG                    : {analysis['cg_x_m']:.4f} m")
     lines.append("")
     lines.append("Lifting Surfaces")
-    lines.append(f"Main leading edge pos : {analysis['le_pos_x']:.4f} m")
-    lines.append(f"Reference area        : {analysis['s_main_planform']:.4f} m^2")
-    lines.append(f"Tail planform area    : {analysis['s_tail_planform']:.4f} m^2")
-    lines.append(f"Wing loading          : {analysis['wing_loading']:.2f} N/m^2")
-    lines.append(f"Wing/tail area ratio  : {analysis['wing_to_tail_ratio']:.2f}")
+    lines.append(f"Surface area total    : {analysis['surface_planform_total']:.4f} m^2")
+    lines.append(f"Surface loading       : {analysis['surface_loading']:.2f} N/m^2")
+    if analysis["surface_force_rows"]:
+        lines.append("")
+        lines.append("Surface Forces")
+        lines.append(
+            f"Operating point       : AoA {analysis['force_eval_aoa_deg']:.1f} deg  V {analysis['force_eval_airspeed_m_s']:.1f} m/s  Alt {analysis['force_eval_altitude_m']:.1f} m"
+        )
+        lines.append(f"Air density           : {analysis['force_eval_density_kg_m3']:.4f} kg/m^3")
+        lines.append(f"Dynamic pressure      : {analysis['force_eval_dynamic_pressure_pa']:.2f} Pa")
+        lines.append(
+            f"Surface vertical total: {analysis['surface_vertical_force_n']:.3f} N  {analysis['surface_vertical_force_g']:.1f} g  {analysis['surface_vertical_load_pct']:.1f} % weight"
+        )
+        for row in analysis["surface_force_rows"]:
+            lines.append(
+                f"{row['name']:<18} airfoil={row['airfoil']:<10} alpha={row['alpha_eff_deg']:.2f} deg "
+                f"area={row['area_m2']:.4f} m^2 CL={row['cl']:.3f} CD={row['cd']:.4f} "
+                f"vertical={row['vertical_force_n']:.3f} N {row['vertical_force_g']:.1f} g "
+                f"lift={row['lift_n']:.3f} N drag={row['drag_n']:.3f} N Re={row['reynolds']:.0f} conf={row['confidence']:.3f}"
+            )
     if analysis["battery_summary"] is not None:
         battery_summary = analysis["battery_summary"]
         lines.append("")
         lines.append("Battery")
+        lines.append(f"Selected              : {battery_summary['name']}")
         lines.append(f"Type                  : {battery_summary['s']}S{battery_summary['p']}P")
         lines.append(f"Capacity              : {battery_summary['mah']:.0f} mAh {battery_summary['wh']:.2f} Wh")
         lines.append(f"Current               : {battery_summary['curr']:.2f} A")
     if analysis["total_motor_count"] > 0:
         lines.append("")
-        lines.append("Motors")
+        lines.append("Propulsion")
         lines.append(f"Motor count           : {analysis['total_motor_count']}")
-        lines.append(f"Static thrust total   : {analysis['total_static_thrust_n']:.2f} N")
-        for row in analysis["motor_summary_rows"]:
-            lines.append(f"Config                : {row['label']} with {row['propeller']}")
-            lines.append(f"Pack voltage          : {row['pack_voltage_v']:.2f} V")
-            lines.append(f"Motor KV              : {row['kv']:.0f}")
-            lines.append(f"No-load RPM           : {row['no_load_rpm']:.0f}")
-            lines.append(f"Static prop RPM       : {row['prop_rpm']:.0f}")
-            lines.append(f"Static thrust         : {row['thrust_n_per_motor']:.2f} N each {row['thrust_n_total']:.2f} N total")
-            lines.append(f"Static current        : {row['current_a_per_motor']:.2f} A each {row['current_a_total']:.2f} A total")
-            lines.append(f"Static input power    : {row['input_power_w_per_motor']:.1f} W each {row['input_power_w_total']:.1f} W total")
-            lines.append(f"Pitch speed           : {row['pitch_speed_kph']:.1f} km/h")
-            lines.append(f"Efficiency            : {row['efficiency_g_per_w']:.2f} g/W")
-            if row["warnings"]:
-                lines.append(f"Warnings              : {', '.join(row['warnings'])}")
+        lines.append(f"Max thrust total      : {analysis['total_static_thrust_n']:.2f} N")
+        lines.append(f"Max current total     : {analysis['motor_summary_rows'][0]['current_a_total']:.2f} A")
+        lines.append(f"Max input power total : {analysis['motor_summary_rows'][0]['input_power_w_total'] / 1000.0:.2f} kW")
+        lines.append(f"Total thrust/weight   : {analysis['static_thrust_to_weight']:.3f}")
+        lines.append(f"Hover throttle        : {analysis['hover_throttle_pct']:.1f} %" if math.isfinite(analysis["hover_throttle_pct"]) else "Hover throttle        : n/a")
+        lines.append(f"Hover time            : {analysis['hover_time_min']:.1f} min" if math.isfinite(analysis["hover_time_min"]) else "Hover time            : n/a")
+        lines.append(f"Full throttle time    : {analysis['full_throttle_time_min']:.1f} min" if math.isfinite(analysis["full_throttle_time_min"]) else "Full throttle time    : n/a")
     lines.append("")
     lines.append("Static Stability")
-    lines.append(f"Combined CP           : {analysis['x_cp_total']:.4f} m")
-    lines.append(f"Static margin         : {analysis['static_margin_m']:.4f} m")
-    lines.append(f"Static margin % MAC   : {analysis['static_margin_pct_mac']:.2f} %")
+    lines.append(f"Static CP (Barrowman) : {analysis['x_cp_total']:.4f} m")
+    lines.append(f"Static offset         : {analysis['static_margin_m']:.4f} m")
     lines.append(f"Static stability      : {analysis['stability_verdict']}")
     lines.append("")
-    lines.append("Aerodynamic Centers")
+    lines.append("Markers")
     lines.append(f"CG marker             : blue @ {analysis['cg_x_m']:.4f} m")
-    lines.append(f"CP marker             : red @ {analysis['x_cp_total']:.4f} m")
-    if math.isfinite(analysis["lift_center_x"]):
-        lines.append(f"CL marker             : green @ {analysis['lift_center_x']:.4f} m @ AoA {analysis['aoa_eval_deg']:.2f} deg")
-        lines.append(f"CN / Cm               : {analysis['aoa_cn']:.4f} / {analysis['aoa_cm']:.4f}")
-        lines.append(f"AoA verdict           : {analysis['aoa_verdict']}")
+    lines.append(f"Static CP marker      : red @ {analysis['x_cp_total']:.4f} m")
+    if math.isfinite(analysis["force_center_x"]):
+        lines.append(f"Lift marker           : green @ {analysis['force_center_x']:.4f} m @ AoA {analysis['force_eval_aoa_deg']:.2f} deg")
+    lines.append("")
+    lines.append("AoA Sweep")
+    header = f"{'AoA':<5} | {'CN':<9} | {'Cm':<9} | {'Lift x m':<10} | {'Offset m':<8} | {'Verdict':<9}"
+    lines.append(header)
+    lines.append("-" * len(header))
+    for row in analysis["aoa_sweep_rows"]:
+        cl_x_text = f"{row['lift_center_x']:.4f}" if math.isfinite(row["lift_center_x"]) else "nan"
+        sm_text = f"{row['lift_static_offset_m']:.4f}" if math.isfinite(row["lift_static_offset_m"]) else "nan"
+        lines.append(
+            f"{row['aoa_eval_deg']:<5.0f} | {row['aoa_cn']:<9.4f} | {row['aoa_cm']:<9.4f} | {cl_x_text:<10} | {sm_text:<8} | {row['aoa_verdict']:<9}"
+        )
     lines.append("")
     lines.append("Components")
     for row in analysis["component_rows"]:
         lines.append(
-            f"{row['component']:<24} role={row['role']:<6} CNa={row['cna']:.3f} x_cp={row['x_cp']:.4f} {row['notes']}"
+            f"{row['component']:<24} CNa={row['cna']:.3f} x_cp={row['x_cp']:.4f} {row['notes']}"
         )
-    lines.append("")
-    lines.append("Modules")
-    for row in analysis["module_rows"]:
-        lines.append(
-            f"{row['module_name']:<24} {row['module_type']:<10} x0={row['x_start']:.4f} x1={row['x_end']:.4f} mass={row['mass'] * 1000.0:.1f}g"
-        )
-    lines.append("")
-    lines.append("Notes")
-    lines.append("Barrowman-style estimate ignores airfoil nonlinearities, trim, thrust, and wing-body interference.")
-    lines.append("Use this as a fast first-pass stability screen, not as a forward-flight trim solver.")
     return "\n".join(lines)
 
 
@@ -501,10 +570,15 @@ def build_vlm_report_text(vlm_results: dict) -> str:
     return "\n".join(lines)
 
 
+def vlm_point_key(altitude_m: float, aoa_deg: float, airspeed_m_s: float) -> tuple[float, float, float]:
+    return (round(float(altitude_m), 6), round(float(aoa_deg), 6), round(float(airspeed_m_s), 6))
+
+
 def run_vlm_sweep(
     analysis: dict,
     settings: dict,
     progress_callback=None,
+    include_vlm_objects: bool = False,
 ) -> dict:
     airplane = build_asb_airplane(analysis)
     aoa_values = build_range_values(settings["aoa_start"], settings["aoa_end"], settings["aoa_increment"])
@@ -514,8 +588,9 @@ def run_vlm_sweep(
     total_points = len(aoa_values) * len(airspeed_values) * len(altitude_values)
     completed_points = 0
     rows = []
+    vlm_cache = {}
 
-    def solve_point(point: tuple[float, float, float]) -> dict:
+    def solve_point(point: tuple[float, float, float]) -> tuple[dict, asb.VortexLatticeMethod]:
         altitude_m, aoa_deg, airspeed_m_s = point
         op_point = asb.OperatingPoint(
             atmosphere=asb.Atmosphere(altitude=altitude_m),
@@ -553,7 +628,7 @@ def run_vlm_sweep(
             "cma_per_deg": cma_rad * (math.pi / 180.0),
             "load_pct": lift_n / analysis["weight_N"] * 100.0,
             "static_margin_pct_mac": static_margin_pct_mac,
-        }
+        }, vlm
 
     def update_progress(row: dict) -> None:
         nonlocal completed_points
@@ -570,13 +645,17 @@ def run_vlm_sweep(
             points = [(altitude_m, aoa_deg, airspeed_m_s) for airspeed_m_s in airspeed_values]
             if int(settings["vlm_threads"]) > 1:
                 with concurrent.futures.ThreadPoolExecutor(max_workers=int(settings["vlm_threads"])) as executor:
-                    for row in executor.map(solve_point, points):
+                    for row, vlm in executor.map(solve_point, points):
                         rows.append(row)
+                        if include_vlm_objects:
+                            vlm_cache[vlm_point_key(row["altitude_m"], row["aoa_deg"], row["airspeed_m_s"])] = vlm
                         update_progress(row)
             else:
                 for point in points:
-                    row = solve_point(point)
+                    row, vlm = solve_point(point)
                     rows.append(row)
+                    if include_vlm_objects:
+                        vlm_cache[vlm_point_key(row["altitude_m"], row["aoa_deg"], row["airspeed_m_s"])] = vlm
                     update_progress(row)
 
     rows.sort(key=lambda row: (row["altitude_m"], row["aoa_deg"], row["airspeed_m_s"]))
@@ -584,13 +663,17 @@ def run_vlm_sweep(
         "airframe_name": analysis["config_name"],
         "settings": copy.deepcopy(settings),
         "rows": rows,
+        "aoa_values": aoa_values,
+        "airspeed_values": airspeed_values,
+        "altitude_values": altitude_values,
     }
+    if include_vlm_objects:
+        vlm_results["vlm_cache"] = vlm_cache
     vlm_results["report_text"] = build_vlm_report_text(vlm_results)
     return vlm_results
 
 
 def _static_motor_summary(
-    motor_data_df: pd.DataFrame,
     motor_name: str,
     brand: str,
     model: str,
@@ -599,40 +682,173 @@ def _static_motor_summary(
     count: int,
     batt_s: int,
 ) -> dict:
-    group = find_motor_group(motor_name, brand, model, kv_val, prop_name, batt_s, motor_data_df)
-    static_row = group.iloc[-1]
-    measured_thrust_n = float(static_row["Thrust g"]) / 1000.0 * 9.81
-    measured_voltage_v = float(static_row["V"])
-    summary = prop_performance_summary(
-        {
-            "diameter_in": float(static_row["Data P size"]),
-            "pitch_in": float(static_row["Data P pitch"]),
-            "kv": float(static_row["KV"]),
-            "cells": float(static_row["Data Batt S"]),
-            "volts_per_cell": measured_voltage_v / float(static_row["Data Batt S"]),
-            "measured_rpm": float(static_row["RPM"]),
-            "measured_input_w": float(static_row["W"]),
-            "measured_thrust_n": measured_thrust_n,
-            "measured_v_bus": measured_voltage_v,
-        }
-    )
+    motor = TestedMotorData(brand=brand, motor=model, kv=int(kv_val), batt_s=batt_s, csv_path=MOTORDATA_PATH)
+    zero_op = motor.from_throttle(prop_name, 0.0)
+    static_op = motor.from_throttle(prop_name, 100.0)
     return {
         "label": f"{motor_name} x{count}",
         "count": count,
         "propeller": prop_name,
-        "kv": float(static_row["KV"]),
-        "pack_voltage_v": measured_voltage_v,
-        "no_load_rpm": measured_voltage_v * float(static_row["KV"]),
-        "prop_rpm": float(static_row["RPM"]),
-        "thrust_n_per_motor": measured_thrust_n,
-        "thrust_n_total": measured_thrust_n * count,
-        "current_a_per_motor": float(static_row["A"]),
-        "current_a_total": float(static_row["A"]) * count,
-        "input_power_w_per_motor": float(static_row["W"]),
-        "input_power_w_total": float(static_row["W"]) * count,
-        "pitch_speed_kph": float(summary["pitch_speed_kmh"]),
-        "efficiency_g_per_w": float(static_row["Efficiency"]),
+        "kv": float(kv_val),
+        "pack_voltage_v": zero_op.voltage,
+        "no_load_rpm": zero_op.voltage * float(kv_val),
+        "prop_rpm": static_op.rpm,
+        "thrust_n_per_motor": static_op.thrust_n,
+        "thrust_n_total": static_op.thrust_n * count,
+        "current_a_per_motor": static_op.current_a,
+        "current_a_total": static_op.current_a * count,
+        "input_power_w_per_motor": static_op.power_w,
+        "input_power_w_total": static_op.power_w * count,
+        "pitch_speed_kph": static_op.pitch_speed_mps * 3.6,
+        "efficiency_g_per_w": static_op.efficiency_gw,
         "warnings": [],
+    }
+
+
+def resolve_battery_summary(parts_data: dict, battery_name: str) -> dict:
+    battery_part_data = parts_data["battery"][battery_name]
+    if battery_part_data["type"] == "liion":
+        battery_data_df = pd.read_csv(BATTERYDATA_PATH)
+        battery_data = battery_data_df[
+            (battery_data_df["Brand"].astype(str) == str(battery_part_data["cell"][0]))
+            & (battery_data_df["Name"].astype(str) == str(battery_part_data["cell"][1]))
+            & (battery_data_df["Format"].astype(str) == str(battery_part_data["cell"][2]))
+        ].iloc[0]
+        return {
+            "name": battery_name,
+            "type": battery_part_data["type"],
+            "mass": float(battery_data["Weight"]) / 1000.0 * battery_part_data["s"] * battery_part_data["p"],
+            "s": battery_part_data["s"],
+            "p": battery_part_data["p"],
+            "mah": float(battery_data["CapacityA"]) * 1000.0 * battery_part_data["p"],
+            "curr": float(battery_data["C-rating"]) * float(battery_data["CapacityA"]) * battery_part_data["p"],
+            "wh": float(battery_data["CapacityWh"]) * battery_part_data["s"] * battery_part_data["p"],
+            "dimensions": None,
+        }
+    batt_mah = battery_part_data["mah"]
+    return {
+        "name": battery_name,
+        "type": battery_part_data["type"],
+        "mass": battery_part_data["mass"],
+        "s": battery_part_data["s"],
+        "p": battery_part_data["p"],
+        "mah": batt_mah,
+        "curr": (batt_mah / 1000.0) * battery_part_data["c"],
+        "wh": (batt_mah / 1000.0) * (battery_part_data["s"] * 3.7),
+        "dimensions": {
+            "l": battery_part_data["dimensions"]["l"] / 1000.0,
+            "h": battery_part_data["dimensions"]["h"] / 1000.0,
+            "w": battery_part_data["dimensions"]["w"] / 1000.0,
+        },
+    }
+
+
+def build_propulsion_summary(
+    motor_name: str,
+    prop_name: str,
+    battery_summary: dict,
+    total_motor_count: int,
+    weight_n: float,
+) -> dict:
+    _motor_name, brand, model, kv = parse_motor_name(motor_name)
+    summary = _static_motor_summary(
+        motor_name,
+        brand,
+        model,
+        kv,
+        prop_name,
+        total_motor_count,
+        battery_summary["s"],
+    )
+    motor = TestedMotorData(brand=brand, motor=model, kv=int(kv), batt_s=int(battery_summary["s"]), csv_path=MOTORDATA_PATH)
+    curve_ops = [motor.from_throttle(prop_name, float(throttle_pct)) for throttle_pct in range(0, 101)]
+    throttle_pct = np.array([op.throttle_pct for op in curve_ops])
+    thrust_g = np.array([op.thrust_g for op in curve_ops])
+    thrust_n = np.array([op.thrust_n for op in curve_ops])
+    current_a = np.array([op.current_a for op in curve_ops])
+    rpm = np.array([op.rpm for op in curve_ops])
+    watts = np.array([op.power_w for op in curve_ops])
+    efficiency = np.array([op.efficiency_gw for op in curve_ops])
+    summary["curve"] = {
+        "throttle_pct": throttle_pct.tolist(),
+        "thrust_n": thrust_n.tolist(),
+        "rpm": rpm.tolist(),
+        "watts": watts.tolist(),
+        "efficiency_g_per_w": efficiency.tolist(),
+    }
+    if total_motor_count > 0 and weight_n <= summary["thrust_n_total"]:
+        hover_thrust_g_per_motor = (weight_n / total_motor_count) / 9.81 * 1000.0
+        hover_op = motor.from_thrust(prop_name, hover_thrust_g_per_motor)
+        summary["hover_throttle_pct"] = hover_op.throttle_pct
+        summary["hover_current_a_total"] = hover_op.current_a * total_motor_count
+        summary["hover_power_w_total"] = hover_op.power_w * total_motor_count
+        summary["hover_time_min"] = battery_summary["wh"] / summary["hover_power_w_total"] * 60.0
+    else:
+        summary["hover_throttle_pct"] = float("nan")
+        summary["hover_current_a_total"] = float("nan")
+        summary["hover_power_w_total"] = float("nan")
+        summary["hover_time_min"] = float("nan")
+    summary["full_throttle_time_min"] = battery_summary["wh"] / summary["input_power_w_total"] * 60.0
+    return summary
+
+
+def linear_aero_state(analysis: dict, aoa_eval_deg: float) -> dict:
+    s_ref = analysis["surface_planform_total"] if analysis["surface_planform_total"] > 0.0 else math.pi * (analysis["tube_diam"] / 2.0) ** 2
+    c_ref = analysis["reference_chord_m"] if math.isfinite(analysis["reference_chord_m"]) and analysis["reference_chord_m"] > 0.0 else analysis["fuselage_length"]
+    surface_aero = []
+    for surface in analysis["surface_sets"]:
+        slope = finite_wing_lift_slope(surface["span"], surface["chord_root"], surface["chord_tip"])
+        mount_factor = surface["mount_factor"]
+        area_ratio = surface["planform_area_total"] / s_ref
+        x_ac = trapezoid_ac_x(
+            x_root_le=surface["x_root_le"],
+            span=surface["span"],
+            chord_root=surface["chord_root"],
+            chord_tip=surface["chord_tip"],
+            sweep_len=surface["sweep_len"],
+        )
+        surface_aero.append(
+            {
+                "x_ac": x_ac,
+                "incidence_deg": surface["aoa"],
+                "mount_factor": mount_factor,
+                "slope": slope,
+                "area_ratio": area_ratio,
+            }
+        )
+    body_ref_area = math.pi * (analysis["tube_diam"] / 2.0) ** 2
+    body_area_ratio = body_ref_area / s_ref
+    body_slope = analysis["nose_cna"] * body_area_ratio
+    aoa_rad = math.radians(aoa_eval_deg)
+    cn_total = body_slope * aoa_rad
+    cm_total = -body_slope * (analysis["nose_cp_x"] - analysis["cg_x_m"]) / c_ref * aoa_rad
+    for surface in surface_aero:
+        alpha_eff_rad = math.radians(aoa_eval_deg + surface["incidence_deg"])
+        cn_i = surface["slope"] * alpha_eff_rad * surface["mount_factor"] * surface["area_ratio"]
+        cm_i = -cn_i * (surface["x_ac"] - analysis["cg_x_m"]) / c_ref
+        cn_total += cn_i
+        cm_total += cm_i
+    if abs(cn_total) > 1e-9:
+        lift_center_x = analysis["cg_x_m"] - (cm_total / cn_total) * c_ref
+    else:
+        lift_center_x = float("nan")
+    if cm_total > 0.0:
+        aoa_verdict = "nose-up"
+    elif cm_total < 0.0:
+        aoa_verdict = "nose-down"
+    else:
+        aoa_verdict = "trim"
+    if math.isfinite(lift_center_x):
+        static_offset_m = lift_center_x - analysis["cg_x_m"]
+    else:
+        static_offset_m = float("nan")
+    return {
+        "aoa_eval_deg": aoa_eval_deg,
+        "aoa_cn": cn_total,
+        "aoa_cm": cm_total,
+        "aoa_verdict": aoa_verdict,
+        "lift_center_x": lift_center_x,
+        "lift_static_offset_m": static_offset_m,
     }
 
 
@@ -646,46 +862,65 @@ def build_full_assembly_json(
 ) -> dict:
     config = resolve_config_with_standard(config, standards_data)
     tube_diam = config["fuselage_od_mm"] / 1000.0
+    battery_name = config["battery"]
+    motor_name = config["motors"]
+    prop_name = config["props"]
     assembly = []
     for part in config["parts"]:
         assembly.append(part)
-        assembly.append({"module": "joint-ring-c"})
+        assembly.append(
+            {
+                "module": "joint-ring-c",
+                "x": 0.0,
+                "y": 0.0,
+                "z": 0.0,
+                "pitch": 0.0,
+                "yaw": 0.0,
+                "roll": 0.0,
+                "payload_mass": 0.0,
+                "ballast_mass": 0.0,
+            }
+        )
     assembly.pop()
 
-    canards = config["canards"]
     surface_sets = []
     module_rows = []
     fuselage_length = 0.0
     total_mass_kg = 0.0
     total_moment_kg_m = 0.0
     current_x_fuselage_m = 0.0
-    batt_s = None
-    batt_p = None
     battery_summary = None
-    wing_aoa = 0.0
-    tail_aoa = 0.0
-    wing_airfoil = None
-    tail_airfoil = None
-    wing_chord_root = 0.0
-    wing_chord_tip = 0.0
-    wing_span = 0.0
-    wing_n = 0
-    tail_chord_root = 0.0
-    tail_chord_tip = 0.0
-    tail_span = 0.0
-    tail_n = 0
-    le_pos_x = 0.0
+    surface_airfoils = []
     total_motor_count = 0
     nose_length = 0.0
+    nose_shape = ""
     motor_draw_rows = []
+    internal_draw_rows = []
     motor_summary_rows = []
+    if battery_name:
+        battery_summary = resolve_battery_summary(parts_data, battery_name)
+        batt_s = battery_summary["s"]
+    else:
+        batt_s = None
 
-    for item_in_assembly in assembly:
+    x = 0.0
+    module_x_mount_map = []
+    for module_entry in assembly:
+        _, module_data = resolve_named_block(module_entry["module"], modules_data)
+        length = module_data["len"]
+        module_x_mount_map.append(x + length * module_data.get("wings_x", 0.5))
+        x += length
+
+    for assembly_index, item_in_assembly in enumerate(assembly):
         module_name, module_data = resolve_named_block(item_in_assembly["module"], modules_data)
         module_mass = module_data["mass"]
         module_len = module_data["len"]
         module_cg_offset_from_module_front_m = module_data["cg"] * module_len
         module_structure_cg_global_x_m = current_x_fuselage_m + module_cg_offset_from_module_front_m
+        internal_part_x_m = item_in_assembly["x"]
+        internal_part_cg_global_x_m = current_x_fuselage_m + module_len * 0.5 + internal_part_x_m
+        internal_part_y_m = item_in_assembly["y"]
+        internal_part_z_m = item_in_assembly["z"]
         module_rows.append(
             {
                 "module_name": module_name,
@@ -695,30 +930,16 @@ def build_full_assembly_json(
                 "mass": module_mass,
                 "cg_x": module_structure_cg_global_x_m,
                 "diam": tube_diam,
+                "pointed_shape": copy.deepcopy(module_data["pointed_shape"]) if module_data["type"] == "end" else {},
             }
         )
         total_mass_kg += module_mass
         total_moment_kg_m += module_mass * module_structure_cg_global_x_m
-        attached_part_cg_global_x_m = module_structure_cg_global_x_m
 
         if module_data.get("battery", False):
-            battery_name = item_in_assembly["battery"]
-            battery_part_data = parts_data["battery"][battery_name]
-            batt_s = battery_part_data["s"]
-            batt_p = battery_part_data["p"]
-            batt_mah = battery_part_data["mah"]
-            battery_mass = battery_part_data["mass"]
-            batt_curr = (battery_part_data["mah"] / 1000.0) * battery_part_data["c"]
-            batt_wh = (batt_mah / 1000.0) * (batt_s * 3.7)
-            battery_summary = {
-                "s": batt_s,
-                "p": batt_p,
-                "mah": batt_mah,
-                "curr": batt_curr,
-                "wh": batt_wh,
-            }
+            battery_mass = battery_summary["mass"]
             total_mass_kg += battery_mass
-            total_moment_kg_m += battery_mass * attached_part_cg_global_x_m
+            total_moment_kg_m += battery_mass * internal_part_cg_global_x_m
             module_rows.append(
                 {
                     "module_name": battery_name,
@@ -726,15 +947,28 @@ def build_full_assembly_json(
                     "x_start": current_x_fuselage_m,
                     "x_end": current_x_fuselage_m + module_len,
                     "mass": battery_mass,
-                    "cg_x": attached_part_cg_global_x_m,
+                    "cg_x": internal_part_cg_global_x_m,
                     "diam": tube_diam,
                 }
             )
+            if battery_summary["dimensions"] is not None:
+                internal_draw_rows.append(
+                    {
+                        "kind": "battery",
+                        "name": battery_name,
+                        "x_m": internal_part_cg_global_x_m,
+                        "y_m": internal_part_y_m,
+                        "z_m": internal_part_z_m,
+                        "len_m": battery_summary["dimensions"]["l"],
+                        "height_m": battery_summary["dimensions"]["h"],
+                        "width_m": battery_summary["dimensions"]["w"],
+                    }
+                )
 
         if module_data.get("payload", False):
             payload_mass = item_in_assembly["payload_mass"]
             total_mass_kg += payload_mass
-            total_moment_kg_m += payload_mass * attached_part_cg_global_x_m
+            total_moment_kg_m += payload_mass * internal_part_cg_global_x_m
             module_rows.append(
                 {
                     "module_name": "payload",
@@ -742,7 +976,7 @@ def build_full_assembly_json(
                     "x_start": current_x_fuselage_m,
                     "x_end": current_x_fuselage_m + module_len,
                     "mass": payload_mass,
-                    "cg_x": attached_part_cg_global_x_m,
+                    "cg_x": internal_part_cg_global_x_m,
                     "diam": tube_diam,
                 }
             )
@@ -750,7 +984,7 @@ def build_full_assembly_json(
         if module_data.get("ballast", False):
             ballast_mass = item_in_assembly["ballast_mass"]
             total_mass_kg += ballast_mass
-            total_moment_kg_m += ballast_mass * attached_part_cg_global_x_m
+            total_moment_kg_m += ballast_mass * internal_part_cg_global_x_m
             module_rows.append(
                 {
                     "module_name": "ballast",
@@ -758,27 +992,35 @@ def build_full_assembly_json(
                     "x_start": current_x_fuselage_m,
                     "x_end": current_x_fuselage_m + module_len,
                     "mass": ballast_mass,
-                    "cg_x": attached_part_cg_global_x_m,
+                    "cg_x": internal_part_cg_global_x_m,
                     "diam": tube_diam,
                 }
             )
 
-        if module_data["type"] == "wingmount":
+        if part_has_lifting_surfaces(module_data, item_in_assembly):
             wing_spec_name, wing_data = resolve_named_block(item_in_assembly["surfaces"], modules_data)
             num_wings = module_data["wings_n"]
+            wing_mount_x_m = module_x_mount_map[assembly_index]
+            wing_root_le_x_m = wing_mount_x_m - wing_data["chord_root"] / 2.0
+            wing_sweep_len_m = wing_data["semispan"] * math.tan(math.radians(wing_data["sweep_ang"]))
+            wing_mac_m = trapezoid_mac(wing_data["chord_root"], wing_data["chord_tip"])
+            wing_taper = wing_data["chord_tip"] / wing_data["chord_root"] if wing_data["chord_root"] > 0.0 else 0.0
+            wing_y_mac_m = wing_data["semispan"] * (1.0 + 2.0 * wing_taper) / (3.0 * (1.0 + wing_taper))
+            wing_x_mac_le_m = wing_root_le_x_m + wing_sweep_len_m * wing_y_mac_m / wing_data["semispan"] if wing_data["semispan"] > 0.0 else wing_root_le_x_m
+            wing_surface_cg_global_x_m = wing_x_mac_le_m + wing_data["cg"] * wing_mac_m
             total_wings_mass = num_wings * wing_data["mass"]
             total_mass_kg += total_wings_mass
-            total_moment_kg_m += total_wings_mass * attached_part_cg_global_x_m
+            total_moment_kg_m += total_wings_mass * wing_surface_cg_global_x_m
 
             if wing_data.get("motor", False):
-                motor_name, brand, model, kv = parse_motor_name(item_in_assembly["motors"])
-                prop_name = item_in_assembly["props"]
                 total_motor_count += num_wings
+                _motor_name, brand, model, kv = parse_motor_name(motor_name)
                 motor_mass_each = motor_mass_kg(motor_name, brand, model, kv, prop_name, batt_s, motor_data_df)
                 motor_bell_diam_m, motor_bell_len_m = motor_bell_geometry_m(motor_name, brand, model, kv, prop_name, batt_s, motor_data_df)
+                wing_motor_cg_global_x_m = wing_root_le_x_m + wing_data["motor_x_pos"]
                 total_wing_motors_mass = num_wings * motor_mass_each
                 total_mass_kg += total_wing_motors_mass
-                total_moment_kg_m += total_wing_motors_mass * attached_part_cg_global_x_m
+                total_moment_kg_m += total_wing_motors_mass * wing_motor_cg_global_x_m
                 module_rows.append(
                     {
                         "module_name": motor_name,
@@ -786,28 +1028,15 @@ def build_full_assembly_json(
                         "x_start": current_x_fuselage_m,
                         "x_end": current_x_fuselage_m + module_len,
                         "mass": total_wing_motors_mass,
-                        "cg_x": attached_part_cg_global_x_m,
+                        "cg_x": wing_motor_cg_global_x_m,
                         "diam": tube_diam,
                         "prop_name": prop_name,
                     }
                 )
-                motor_summary_rows.append(
-                    _static_motor_summary(
-                        motor_data_df,
-                        motor_name,
-                        brand,
-                        model,
-                        kv,
-                        prop_name,
-                        num_wings,
-                        batt_s,
-                    )
-                )
 
         if module_data["type"] == "end" and module_data.get("motor", False):
-            motor_name, brand, model, kv = parse_motor_name(item_in_assembly["motors"])
-            prop_name = item_in_assembly["props"]
             total_motor_count += 1
+            _motor_name, brand, model, kv = parse_motor_name(motor_name)
             motor_mass_each = motor_mass_kg(motor_name, brand, model, kv, prop_name, batt_s, motor_data_df)
             motor_bell_diam_m, motor_bell_len_m = motor_bell_geometry_m(motor_name, brand, model, kv, prop_name, batt_s, motor_data_df)
             motor_cg_offset_from_module_front_m = module_len * 0.5
@@ -843,24 +1072,16 @@ def build_full_assembly_json(
                     "direction": module_data["motor_dir"],
                 }
             )
-            motor_summary_rows.append(_static_motor_summary(motor_data_df, motor_name, brand, model, kv, prop_name, 1, batt_s))
 
         if module_data["type"] == "end" and nose_length == 0.0:
             nose_length = module_len
+            nose_shape = module_data["pointed_shape"]["shape"]
 
         fuselage_length += module_len
         current_x_fuselage_m += module_len
 
     cg_x_m = total_moment_kg_m / total_mass_kg
     weight_n = total_mass_kg * 9.81
-
-    x = 0.0
-    module_x_map = []
-    for module_entry in assembly:
-        _, module_data = resolve_named_block(module_entry["module"], modules_data)
-        length = module_data["len"]
-        module_x_map.append(x + length / 2.0)
-        x += length
 
     body_x_start = 0.0
     body_x_end = 0.0
@@ -875,52 +1096,38 @@ def build_full_assembly_json(
                 body_x_end = x_cursor
             end_count += 1
         x_cursor += module_data["len"]
-
-    n_wing_modules = 0
-    main_role_label = "main"
-    tail_role_label = "canard" if canards else "tail"
+    lifting_module_motor_flags = []
+    for module_entry in assembly:
+        _, module_data = resolve_named_block(module_entry["module"], modules_data)
+        if not part_has_lifting_surfaces(module_data, module_entry):
+            continue
+        _, wing_data = resolve_named_block(module_entry["surfaces"], modules_data)
+        lifting_module_motor_flags.append(wing_data["motor"])
     tot_wingspan = None
+    overall_min_y = -tube_diam / 2.0
+    overall_max_y = tube_diam / 2.0
     for index, module_entry in enumerate(assembly):
         _, module_data = resolve_named_block(module_entry["module"], modules_data)
-        if module_data["type"] != "wingmount":
+        if not part_has_lifting_surfaces(module_data, module_entry):
             continue
         spec_name, wing_data = resolve_named_block(module_entry["surfaces"], modules_data)
+        if wing_data["airfoil"] not in surface_airfoils:
+            surface_airfoils.append(wing_data["airfoil"])
+        centerline_root = module_data["type"] == "end"
         panel_layout = surface_panel_layout(
             count=module_data["wings_n"],
             root_radius=tube_diam / 2.0,
             span=wing_data["semispan"],
             wing_phase_deg=module_data["wing_phase"],
             dihedral_deg=module_data["wings_ang"],
+            centerline_root=centerline_root,
         )
-        n_wing_modules += 1
-        role = "aux"
-        if (n_wing_modules == 1 and not canards) or (n_wing_modules == 2 and canards):
-            role = main_role_label
-            wing_chord_root = wing_data["chord_root"]
-            wing_chord_tip = wing_data["chord_tip"]
-            wing_span = wing_data["semispan"]
-            wing_n = module_data["wings_n"]
-            wing_aoa = wing_data["aoa_ang"]
-            wing_airfoil = wing_data["airfoil"]
-            min_y = -tube_diam / 2.0
-            max_y = tube_diam / 2.0
-            for panel in panel_layout:
-                min_y = min(min_y, panel["root_y"], panel["tip_y"])
-                max_y = max(max_y, panel["root_y"], panel["tip_y"])
-            tot_wingspan = max_y - min_y
-            le_pos_x = module_x_map[index] - wing_data["chord_root"] / 2.0
-        elif (n_wing_modules == 1 and canards) or (n_wing_modules == 2 and not canards):
-            role = tail_role_label
-            tail_chord_root = wing_data["chord_root"]
-            tail_chord_tip = wing_data["chord_tip"]
-            tail_span = wing_data["semispan"]
-            tail_n = module_data["wings_n"]
-            tail_aoa = wing_data["aoa_ang"]
-            tail_airfoil = wing_data["airfoil"]
+        for panel in panel_layout:
+            overall_min_y = min(overall_min_y, panel["root_y"], panel["tip_y"])
+            overall_max_y = max(overall_max_y, panel["root_y"], panel["tip_y"])
         sweep_len = wing_data["semispan"] * math.tan(math.radians(wing_data["sweep_ang"]))
         surface_sets.append(
             {
-                "role": role,
                 "name": spec_name,
                 "module": module_entry["module"] if type(module_entry["module"]) is str else module_entry["module"]["name"],
                 "count": module_data["wings_n"],
@@ -928,7 +1135,7 @@ def build_full_assembly_json(
                 "chord_root": wing_data["chord_root"],
                 "chord_tip": wing_data["chord_tip"],
                 "sweep_len": sweep_len,
-                "x_root_le": module_x_map[index] - wing_data["chord_root"] / 2.0,
+                "x_root_le": module_x_mount_map[index] - wing_data["chord_root"] / 2.0,
                 "body_radius": tube_diam / 2.0,
                 "wing_phase": module_data["wing_phase"],
                 "dihedral_deg": module_data["wings_ang"],
@@ -940,9 +1147,8 @@ def build_full_assembly_json(
             }
         )
         if wing_data["motor"]:
-            prop_name = module_entry["props"]
             prop_diam_m = parse_prop_diameter_m(prop_name)
-            x_motor = module_x_map[index] - wing_data["chord_root"] / 2.0 + wing_data["motor_x_pos"]
+            x_motor = module_x_mount_map[index] - wing_data["chord_root"] / 2.0 + wing_data["motor_x_pos"]
             for panel in panel_layout:
                 motor_draw_rows.append(
                     {
@@ -962,18 +1168,29 @@ def build_full_assembly_json(
                 )
 
     if tot_wingspan is None:
-        tot_wingspan = tube_diam
+        tot_wingspan = overall_max_y - overall_min_y
 
-    s_main_planform = float(wing_n * wing_span * (wing_chord_root + wing_chord_tip) / 2.0) if wing_n else 0.0
-    s_tail_planform = float(tail_n * tail_span * (tail_chord_root + tail_chord_tip) / 2.0) if tail_n else 0.0
-    wing_loading = float(weight_n / s_main_planform) if s_main_planform > 0.0 else float("nan")
-    wing_to_tail_ratio = float(s_main_planform / s_tail_planform) if s_tail_planform > 0.0 else float("nan")
+    surface_planform_total = sum(surface["planform_area_total"] for surface in surface_sets)
+    reference_chord_area_sum = 0.0
+    for surface in surface_sets:
+        reference_chord_area_sum += surface["planform_area_total"] * trapezoid_mac(surface["chord_root"], surface["chord_tip"])
+    reference_chord_m = reference_chord_area_sum / surface_planform_total if surface_planform_total > 0.0 else float("nan")
+    surface_loading = float(weight_n / surface_planform_total) if surface_planform_total > 0.0 else float("nan")
+    if total_motor_count > 0:
+        motor_summary_rows = [
+            build_propulsion_summary(
+                motor_name,
+                prop_name,
+                battery_summary,
+                total_motor_count,
+                weight_n,
+            )
+        ]
     total_static_thrust_n = sum(row["thrust_n_total"] for row in motor_summary_rows)
     static_thrust_to_weight = total_static_thrust_n / weight_n if total_motor_count > 0 else float("nan")
     return {
         "assembly_name": assembly_name,
         "config_name": config.get("name", assembly_name),
-        "canards": canards,
         "assembly": assembly,
         "module_rows": module_rows,
         "surface_sets": surface_sets,
@@ -985,31 +1202,23 @@ def build_full_assembly_json(
         "total_moment_kg_m": total_moment_kg_m,
         "weight_N": weight_n,
         "cg_x_m": cg_x_m,
-        "wing_aoa": wing_aoa,
-        "tail_aoa": tail_aoa,
-        "wing_airfoil": wing_airfoil,
-        "tail_airfoil": tail_airfoil,
-        "le_pos_x": le_pos_x,
-        "s_main_planform": s_main_planform,
-        "s_tail_planform": s_tail_planform,
-        "wing_loading": wing_loading,
-        "wing_to_tail_ratio": wing_to_tail_ratio,
+        "surface_airfoils": surface_airfoils,
+        "surface_planform_total": surface_planform_total,
+        "surface_loading": surface_loading,
+        "reference_chord_m": reference_chord_m,
         "battery_summary": battery_summary,
         "total_motor_count": total_motor_count,
         "tot_wingspan": tot_wingspan,
         "nose_length": nose_length,
+        "nose_shape": nose_shape,
         "motor_draw_rows": motor_draw_rows,
+        "internal_draw_rows": internal_draw_rows,
         "motor_summary_rows": motor_summary_rows,
         "total_static_thrust_n": total_static_thrust_n,
         "static_thrust_to_weight": static_thrust_to_weight,
-        "wing_chord_root": wing_chord_root,
-        "wing_chord_tip": wing_chord_tip,
-        "tail_chord_root": tail_chord_root,
-        "tail_chord_tip": tail_chord_tip,
-        "wing_span": wing_span,
-        "tail_span": tail_span,
-        "wing_n": wing_n,
-        "tail_n": tail_n,
+        "hover_throttle_pct": motor_summary_rows[0]["hover_throttle_pct"] if total_motor_count > 0 else float("nan"),
+        "hover_time_min": motor_summary_rows[0]["hover_time_min"] if total_motor_count > 0 else float("nan"),
+        "full_throttle_time_min": motor_summary_rows[0]["full_throttle_time_min"] if total_motor_count > 0 else float("nan"),
     }
 
 
@@ -1019,11 +1228,10 @@ def apply_barrowman_analysis(analysis: dict) -> dict:
     nose_cp_x = 0.466 * analysis["nose_length"]
     component_rows.append(
         {
-            "component": "nose_tangent_ogive",
-            "role": "body",
+            "component": f"nose_{analysis['nose_shape']}",
             "cna": nose_cna,
             "x_cp": nose_cp_x,
-            "notes": f"L={analysis['nose_length']:.3f} m",
+            "notes": f"shape={analysis['nose_shape']} L={analysis['nose_length']:.3f} m",
         }
     )
     for surface in analysis["surface_sets"]:
@@ -1040,7 +1248,6 @@ def apply_barrowman_analysis(analysis: dict) -> dict:
         component_rows.append(
             {
                 "component": surface["name"],
-                "role": surface["role"],
                 "cna": cna,
                 "x_cp": x_cp,
                 "notes": (
@@ -1052,9 +1259,12 @@ def apply_barrowman_analysis(analysis: dict) -> dict:
 
     total_cna = sum(row["cna"] for row in component_rows)
     x_cp_total = sum(row["cna"] * row["x_cp"] for row in component_rows) / total_cna
-    main_mac = trapezoid_mac(analysis["wing_chord_root"], analysis["wing_chord_tip"]) if (analysis["wing_chord_root"] + analysis["wing_chord_tip"]) > 0.0 else float("nan")
     static_margin_m = x_cp_total - analysis["cg_x_m"]
-    static_margin_pct_mac = static_margin_m / main_mac * 100.0 if math.isfinite(main_mac) and main_mac > 0.0 else float("nan")
+    static_margin_pct_mac = (
+        static_margin_m / analysis["reference_chord_m"] * 100.0
+        if math.isfinite(analysis["reference_chord_m"]) and analysis["reference_chord_m"] > 0.0
+        else float("nan")
+    )
     if static_margin_pct_mac <= 0.0:
         stability_verdict = "unstable"
     elif static_margin_pct_mac < 5.0:
@@ -1067,70 +1277,103 @@ def apply_barrowman_analysis(analysis: dict) -> dict:
     analysis["nose_cp_x"] = nose_cp_x
     analysis["total_cna"] = total_cna
     analysis["x_cp_total"] = x_cp_total
-    analysis["main_mac"] = main_mac
     analysis["static_margin_m"] = static_margin_m
     analysis["static_margin_pct_mac"] = static_margin_pct_mac
     analysis["stability_verdict"] = stability_verdict
     return analysis
 
 
-def apply_linear_aero_analysis(analysis: dict, aoa_eval_deg: float) -> dict:
-    s_ref = analysis["s_main_planform"] if analysis["s_main_planform"] > 0.0 else math.pi * (analysis["tube_diam"] / 2.0) ** 2
-    c_ref = analysis["main_mac"] if math.isfinite(analysis["main_mac"]) and analysis["main_mac"] > 0.0 else analysis["fuselage_length"]
-    surface_aero = []
+def apply_linear_aero_analysis(
+    analysis: dict,
+    aoa_eval_deg: float,
+    force_eval_airspeed_m_s: float,
+    force_eval_altitude_m: float,
+) -> dict:
+    sweep_rows = []
+    for sweep_aoa_deg in range(-45, 46):
+        sweep_rows.append(linear_aero_state(analysis, float(sweep_aoa_deg)))
+    analysis["aoa_sweep_rows"] = sweep_rows
+    eval_row = linear_aero_state(analysis, aoa_eval_deg)
+    analysis.update(eval_row)
+    atmosphere = asb.Atmosphere(altitude=force_eval_altitude_m)
+    density_kg_m3 = float(atmosphere.density())
+    dynamic_viscosity_pa_s = float(atmosphere.dynamic_viscosity())
+    speed_of_sound_m_s = float(atmosphere.speed_of_sound())
+    dynamic_pressure_pa = 0.5 * density_kg_m3 * force_eval_airspeed_m_s * force_eval_airspeed_m_s
+    mach = force_eval_airspeed_m_s / speed_of_sound_m_s
+    body_aoa_rad = math.radians(aoa_eval_deg)
+    flow_dir = np.array([math.cos(body_aoa_rad), 0.0, -math.sin(body_aoa_rad)], dtype=float)
+    surface_force_rows = []
+    surface_vertical_force_n = 0.0
+    surface_vertical_moment_n_m = 0.0
     for surface in analysis["surface_sets"]:
-        slope = finite_wing_lift_slope(surface["span"], surface["chord_root"], surface["chord_tip"])
-        mount_factor = surface["mount_factor"]
-        area_ratio = surface["planform_area_total"] / s_ref
-        x_ac = trapezoid_ac_x(
+        area_m2 = surface["planform_area_total"]
+        mac_m = trapezoid_mac(surface["chord_root"], surface["chord_tip"])
+        reynolds = density_kg_m3 * force_eval_airspeed_m_s * mac_m / dynamic_viscosity_pa_s
+        alpha_eff_deg = aoa_eval_deg + surface["aoa"]
+        x_force_m = trapezoid_ac_x(
             x_root_le=surface["x_root_le"],
             span=surface["span"],
             chord_root=surface["chord_root"],
             chord_tip=surface["chord_tip"],
             sweep_len=surface["sweep_len"],
         )
-        surface_aero.append(
+        aero = asb.Airfoil(surface["airfoil"]).get_aero_from_neuralfoil(
+            alpha=alpha_eff_deg,
+            Re=reynolds,
+            mach=mach,
+            n_crit=SURFACE_FORCE_N_CRIT,
+            xtr_upper=SURFACE_FORCE_XTR_UPPER,
+            xtr_lower=SURFACE_FORCE_XTR_LOWER,
+            model_size=SURFACE_FORCE_MODEL_SIZE,
+            include_360_deg_effects=SURFACE_FORCE_INCLUDE_360_DEG_EFFECTS,
+        )
+        cl = float(aero["CL"])
+        cd = float(aero["CD"])
+        confidence = float(aero["analysis_confidence"])
+        lift_n = dynamic_pressure_pa * area_m2 * cl
+        drag_n = dynamic_pressure_pa * area_m2 * cd
+        panel_area_m2 = area_m2 / surface["count"]
+        vertical_force_n = 0.0
+        for panel in surface["panels"]:
+            span_dir = np.array([0.0, panel["dir_y"], panel["dir_z"]], dtype=float)
+            lift_dir = np.cross(flow_dir, span_dir)
+            lift_dir = lift_dir / np.linalg.norm(lift_dir)
+            panel_lift_n = dynamic_pressure_pa * panel_area_m2 * cl
+            panel_drag_n = dynamic_pressure_pa * panel_area_m2 * cd
+            vertical_force_n += panel_lift_n * abs(lift_dir[2]) + panel_drag_n * flow_dir[2]
+        surface_vertical_force_n += vertical_force_n
+        surface_vertical_moment_n_m += vertical_force_n * x_force_m
+        surface_force_rows.append(
             {
                 "name": surface["name"],
-                "role": surface["role"],
-                "x_ac": x_ac,
-                "incidence_deg": surface["aoa"],
-                "mount_factor": mount_factor,
-                "slope": slope,
-                "area_ratio": area_ratio,
+                "module": surface["module"],
+                "airfoil": surface["airfoil"],
+                "alpha_eff_deg": alpha_eff_deg,
+                "area_m2": area_m2,
+                "x_force_m": x_force_m,
+                "reynolds": reynolds,
+                "mach": mach,
+                "cl": cl,
+                "cd": cd,
+                "confidence": confidence,
+                "lift_n": lift_n,
+                "drag_n": drag_n,
+                "vertical_force_n": vertical_force_n,
+                "vertical_force_g": vertical_force_n * GRAMS_FORCE_PER_NEWTON,
+                "load_pct": vertical_force_n / analysis["weight_N"] * 100.0,
             }
         )
-
-    body_ref_area = math.pi * (analysis["tube_diam"] / 2.0) ** 2
-    body_area_ratio = body_ref_area / s_ref
-    body_slope = analysis["nose_cna"] * body_area_ratio
-    aoa_rad = math.radians(aoa_eval_deg)
-    cn_total = body_slope * aoa_rad
-    cm_total = -body_slope * (analysis["nose_cp_x"] - analysis["cg_x_m"]) / c_ref * aoa_rad
-    for surface in surface_aero:
-        alpha_eff_rad = math.radians(aoa_eval_deg + surface["incidence_deg"])
-        cn_i = surface["slope"] * alpha_eff_rad * surface["mount_factor"] * surface["area_ratio"]
-        cm_i = -cn_i * (surface["x_ac"] - analysis["cg_x_m"]) / c_ref
-        cn_total += cn_i
-        cm_total += cm_i
-
-    if abs(cn_total) > 1e-9:
-        lift_center_x = analysis["cg_x_m"] - (cm_total / cn_total) * c_ref
-    else:
-        lift_center_x = float("nan")
-
-    if cm_total > 0.0:
-        aoa_verdict = "nose-up"
-    elif cm_total < 0.0:
-        aoa_verdict = "nose-down"
-    else:
-        aoa_verdict = "trim"
-
-    analysis["aoa_eval_deg"] = aoa_eval_deg
-    analysis["aoa_cn"] = cn_total
-    analysis["aoa_cm"] = cm_total
-    analysis["aoa_verdict"] = aoa_verdict
-    analysis["lift_center_x"] = lift_center_x
+    analysis["force_eval_aoa_deg"] = aoa_eval_deg
+    analysis["force_eval_airspeed_m_s"] = force_eval_airspeed_m_s
+    analysis["force_eval_altitude_m"] = force_eval_altitude_m
+    analysis["force_eval_density_kg_m3"] = density_kg_m3
+    analysis["force_eval_dynamic_pressure_pa"] = dynamic_pressure_pa
+    analysis["surface_force_rows"] = surface_force_rows
+    analysis["surface_vertical_force_n"] = surface_vertical_force_n
+    analysis["surface_vertical_force_g"] = surface_vertical_force_n * GRAMS_FORCE_PER_NEWTON
+    analysis["surface_vertical_load_pct"] = surface_vertical_force_n / analysis["weight_N"] * 100.0
+    analysis["force_center_x"] = surface_vertical_moment_n_m / surface_vertical_force_n if abs(surface_vertical_force_n) > 1e-9 else float("nan")
     return analysis
 
 
@@ -1142,6 +1385,8 @@ def analyze_config(
     standards_data: dict,
     motor_data_df: pd.DataFrame,
     aoa_eval_deg: float,
+    force_eval_airspeed_m_s: float,
+    force_eval_altitude_m: float,
 ) -> dict:
     analysis = build_full_assembly_json(
         assembly_name=assembly_name,
@@ -1152,7 +1397,7 @@ def analyze_config(
         motor_data_df=motor_data_df,
     )
     analysis = apply_barrowman_analysis(analysis)
-    analysis = apply_linear_aero_analysis(analysis, aoa_eval_deg)
+    analysis = apply_linear_aero_analysis(analysis, aoa_eval_deg, force_eval_airspeed_m_s, force_eval_altitude_m)
     analysis["report_text"] = build_report_text(analysis)
     return analysis
 
@@ -1165,6 +1410,8 @@ def recompute_analysis(
     standards_data: dict,
     motor_data_df: pd.DataFrame,
     aoa_eval_deg: float,
+    force_eval_airspeed_m_s: float,
+    force_eval_altitude_m: float,
 ) -> dict:
     return analyze_config(
         assembly_name=assembly_name,
@@ -1174,4 +1421,6 @@ def recompute_analysis(
         standards_data=standards_data,
         motor_data_df=motor_data_df,
         aoa_eval_deg=aoa_eval_deg,
+        force_eval_airspeed_m_s=force_eval_airspeed_m_s,
+        force_eval_altitude_m=force_eval_altitude_m,
     )

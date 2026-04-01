@@ -1,11 +1,11 @@
 """
 Usage:
-from cad import build_airframe_params_export, build_freecad_exports
+from libs.cad import build_airframe_params_export, build_freecad_exports
 """
 
 import math
 
-from analysis import resolve_config_with_standard
+from libs.analysis import resolve_config_with_standard
 
 
 def freecad_property(prop_type: str, value, unit: str | None = None, expr: str | None = None) -> dict:
@@ -22,6 +22,14 @@ def freecad_property(prop_type: str, value, unit: str | None = None, expr: str |
 
 def build_airframe_params_export(config: dict, analysis: dict, standards_data: dict) -> dict:
     resolved_config = resolve_config_with_standard(config, standards_data)
+    surfaces_export = {
+        "SurfaceSetNum": freecad_property("App::PropertyInteger", str(len(analysis["surface_sets"]))),
+    }
+    for surface_index, surface in enumerate(analysis["surface_sets"], start=1):
+        surface_name = f"Surface{surface_index}"
+        surfaces_export[f"{surface_name}Phase"] = freecad_property("App::PropertyAngle", surface["wing_phase"], "deg")
+        surfaces_export[f"{surface_name}Count"] = freecad_property("App::PropertyInteger", str(surface["count"]))
+        surfaces_export[f"{surface_name}Span"] = freecad_property("App::PropertyDistance", surface["span"] * 1000.0, "mm")
     export = {
         "Fuselage": {
             "ID": freecad_property("App::PropertyLength", resolved_config["fuselage_id_mm"], "mm"),
@@ -39,17 +47,8 @@ def build_airframe_params_export(config: dict, analysis: dict, standards_data: d
                 f"Vector ({standards_data['3dp']['constraints']['x']}.0, {standards_data['3dp']['constraints']['y']}.0, {standards_data['3dp']['constraints']['z']}.0)",
             ),
         },
-        "Surfaces": {
-            "Canards": freecad_property("App::PropertyBool", str(config["canards"])),
-            "WingAngle": freecad_property("App::PropertyAngle", analysis["surface_sets"][0]["wing_phase"], "deg"),
-            "WingNum": freecad_property("App::PropertyInteger", str(analysis["wing_n"])),
-            "WingSpan": freecad_property("App::PropertyDistance", analysis["wing_span"] * 1000.0, "mm"),
-        },
+        "Surfaces": surfaces_export,
     }
-    if analysis["tail_n"] > 0:
-        export["Surfaces"]["FinAngle"] = freecad_property("App::PropertyAngle", analysis["surface_sets"][-1]["wing_phase"], "deg")
-        export["Surfaces"]["FinNum"] = freecad_property("App::PropertyInteger", str(analysis["tail_n"]))
-        export["Surfaces"]["FinSpan"] = freecad_property("App::PropertyDistance", analysis["tail_span"] * 1000.0, "mm")
     if analysis["motor_draw_rows"]:
         export["Propulsion"] = {
             "MotorDiameter": freecad_property("App::PropertyLength", analysis["motor_draw_rows"][0]["motor_bell_diam_m"] * 1000.0, "mm"),

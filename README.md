@@ -103,10 +103,10 @@ That is why this tool is bottom-up rather than top-down. It is for modular real-
 The configuration is assembled from modular sections rather than one monolithic airframe description.
 
 The current data flow is:
-- `libs/default.json` defines the active aircraft configuration
-- `libs/modules.json` defines reusable structural module blocks
-- `libs/parts.json` defines named batteries and other part-library data
-- `libs/templates.json` defines editable templates and field types used by the GUI
+- `data/default.json` defines the active aircraft configuration
+- `data/modules.json` defines reusable structural module blocks
+- `data/parts.json` defines named batteries and other part-library data
+- `data/templates.json` defines editable templates and field types used by the GUI
 
 From that, the analysis stage expands the full aircraft into one concrete internal object containing:
 - resolved fuselage modules in order
