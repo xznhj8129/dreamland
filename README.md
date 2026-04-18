@@ -62,16 +62,17 @@ It can represent something that looks like a normal airplane, but that is not th
 
 It is meant for early configuration work:
 - stack fuselage modules
-- attach wing and tail fin sets
+- attach lifting-surface sets and fins
 - place motors, props, batteries, payload, and ballast
 - see the shape immediately in orthographic views
 - get a fast first-pass stability readout without waiting for VLM
 
 This is not the detailed aerodynamic solver. It is the fast front-end that answers the first practical questions:
 - where is the CG?
-- where is the approximate CP?
+- where is the approximate static CP?
 - is the layout statically stable, marginal, or unstable?
-- at a chosen AoA, does the simplified model tend nose-up or nose-down?
+- at a chosen operating point, how much upward force are the surfaces contributing and where is that force acting?
+- across a cheap AoA sweep, how do the simplified `CN`, `Cm`, and lift trend move?
 
 The output is therefore meant to be CAD-relevant:
 - geometry that is explicit enough to parametrize
@@ -153,7 +154,7 @@ This stage computes:
 - module positions along x
 - total mass and total moment
 - CG location
-- wing and tail surface sets
+- lifting-surface sets
 - planform areas
 - main-wing MAC
 - battery summary
@@ -172,7 +173,7 @@ This is the first aerodynamic pass. It exists to answer the OpenRocket-style que
 
 ### What It Uses
 
-The current implementation in [`analysis.py`](analysis.py) does a Barrowman-like component buildup:
+The current implementation in [`libs/analysis.py`](libs/analysis.py) does a Barrowman-like component buildup:
 - a tangent-ogive-like nose contribution
 - one fin-set contribution per lifting-surface set
 - a weighted combined CP from component `CNa` values
@@ -212,18 +213,18 @@ The logic is inspired by the same kind of quick rocket-style normal-force buildu
 That makes it useful for early screening, but it also means you should read it correctly:
 - it is a first-pass CP/static-margin estimate
 - it is not a trim solution
-- it is not a nonlinear wing-body-tail interaction model
+- it is not a nonlinear multi-surface interaction model
 - it does not know about stall or downwash
 
 In short: it tells you whether the shape looks sane before you spend time on anything more expensive.
 
-## Stage 3: Linear Aero Analysis After Barrowman
+## Stage 3: Linear Pre-Stall AoA Sweep After Barrowman
 
 After the quick CP/static-margin pass, the tool runs a second simplified aerodynamic stage.
 
 This stage answers a different question:
 
-“At a chosen AoA, does the simplified model tend nose-up or nose-down?”
+“Across a cheap AoA sweep, which way does the simplified model trend?”
 
 ### What It Computes
 
@@ -241,15 +242,23 @@ It also includes a crude body normal-force term based on:
 From that it sums:
 - total `CN`
 - total `Cm`
-- lift-center x-location
-- AoA verdict: `nose-up`, `nose-down`, or `trim`
+- dimensional lift at the current airspeed / altitude operating point
+- the corresponding `% weight` carried by that lift
+
+The current summary prints this as a fixed `-45` to `+45 deg` sweep in `1 deg` steps with:
+- `AoA`
+- `CN`
+- `Cm`
+- `Lift N`
+- `Weight %`
 
 ### Why This Stage Exists
 
 Static margin alone is not enough once you start asking:
 - what happens if I change wing incidence?
 - what happens if I evaluate 0°, 5°, or 10° AoA?
-- is the current setup tending toward nose-up or restoring nose-down behavior?
+- is the current setup building or shedding lift in a useful direction?
+- is the pitching trend moving the right way as AoA changes?
 - if I am brute-forcing the transition from vertical-thrust support into forward lift support, is the added wing area starting to matter in a useful way?
 
 The linear pass is there to give immediate directional insight without reaching for VLM.
@@ -274,10 +283,29 @@ Its limitations are substantial:
 So this stage is useful for trend and sign, not for claiming flight-quality aerodynamic truth.
 
 Read it as:
-- “which way does the simplified model push?”
+- “which way does the simplified model trend?”
 
 Not as:
 - “this is the final airplane answer.”
+
+## Separate Operating-Point Surface Force Estimate
+
+In addition to the cheap linear sweep, the summary also includes a dimensional surface-force block at the current Configuration operating point.
+
+This operating-point block uses:
+- the configured surface geometry
+- the configured airfoil on each surface set
+- the chosen AoA, airspeed, and altitude
+
+It reports:
+- per-surface lift, drag, and vertical force
+- Reynolds number at the operating point
+- equivalent upward-projected lift area
+- the total vertical force from all lifting surfaces
+
+The green marker in the simple view comes from this block. It is the x-location of the current vertical-force center, not the Barrowman static CP and not a VLM result.
+
+This is still not a full 3D aircraft solution. It is a dimensional, airfoil-aware operating-point estimate meant for configuration sanity checks and early design iteration.
 
 ## Why No VLM Here
 
@@ -307,15 +335,16 @@ In other words:
 The summary pane currently emphasizes:
 - geometry and mass properties
 - battery and motor static information
-- static thrust-to-weight
+- static thrust-to-weight and simple propulsion sanity checks
 - Barrowman-like CP/static margin
-- linear `CN` / `Cm` / lift-center behavior at the chosen AoA
+- dimensional per-surface force estimates at the chosen operating point
+- linear pre-stall `CN` / `Cm` / `Lift N` / `Weight %` behavior over AoA
 
 The center view shows:
 - orthographic geometry
 - `CG` marker in blue
-- `CP` marker in red
-- `CL@AoA` marker in green when the linear pass yields one
+- static `CP` marker in red
+- lift marker in green from the current operating-point surface-force estimate
 
 ## Practical Interpretation
 
@@ -323,8 +352,9 @@ Use the results in this order:
 
 1. Check the assembled geometry and masses.
 2. Check CG.
-3. Check static margin and stability verdict.
-4. Check the linear AoA `Cm` sign and lift-center movement.
-5. Only then decide whether the configuration deserves a more detailed aerodynamic pass.
+3. Check static offset and stability verdict.
+4. Check the dimensional surface-force block and the green lift marker at the chosen operating point.
+5. Check the cheap AoA sweep for `CN` / `Cm` / lift trend over AoA.
+6. Only then decide whether the configuration deserves a more detailed aerodynamic pass.
 
 That is the intended workflow of this program.

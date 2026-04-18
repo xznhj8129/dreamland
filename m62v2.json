@@ -1,5 +1,5 @@
 {
-    "assembly_name": "m62v2",
+    "assembly_name": "default",
     "config": {
         "fuselage_od_mm": 62,
         "fuselage_id_mm": 59.5,
@@ -246,295 +246,8 @@
         ]
     },
     "analysis": {
-        "assembly_name": "m62v2",
-        "config_name": "62mm Quad Lancet 7in v1",
-        "assembly": [
-            {
-                "x": 0.0,
-                "y": 0.0,
-                "z": 0.0,
-                "pitch": 0.0,
-                "yaw": 0.0,
-                "roll": 0.0,
-                "payload_mass": 0.0,
-                "ballast_mass": 0.0,
-                "module": {
-                    "name": "cam-nose",
-                    "type": "end",
-                    "len": 0.06,
-                    "mass": 0.047,
-                    "cg": 0.5,
-                    "wings_n": 2,
-                    "wing_phase": 0,
-                    "wings_ang": 0,
-                    "wings_x": 0.5,
-                    "pointed_shape": {
-                        "shape": "elliptical",
-                        "k_prime": 1.0,
-                        "exponent": 0.66,
-                        "c": 0.0,
-                        "nose_radius": 0.00465,
-                        "rho_factor": 1.25,
-                        "break_fraction": 0.5,
-                        "break_radius_fraction": 0.5
-                    },
-                    "fins": false,
-                    "motor": false,
-                    "motor_dir": "front"
-                }
-            },
-            {
-                "module": "joint-ring-c",
-                "x": 0.0,
-                "y": 0.0,
-                "z": 0.0,
-                "pitch": 0.0,
-                "yaw": 0.0,
-                "roll": 0.0,
-                "payload_mass": 0.0,
-                "ballast_mass": 0.0
-            },
-            {
-                "x": 0.0,
-                "y": 0.0,
-                "z": 0.0,
-                "pitch": 0.0,
-                "yaw": 0.0,
-                "roll": 0.0,
-                "payload_mass": 0.0,
-                "ballast_mass": 0.0,
-                "module": {
-                    "name": "batt-1",
-                    "type": "body",
-                    "len": 0.17,
-                    "mass": 0.065,
-                    "cg": 0.5,
-                    "ballast": false,
-                    "battery": true,
-                    "payload": false,
-                    "esc": false,
-                    "payload_mass": 0.0,
-                    "ballast_mass": 0.0
-                }
-            },
-            {
-                "module": "joint-ring-c",
-                "x": 0.0,
-                "y": 0.0,
-                "z": 0.0,
-                "pitch": 0.0,
-                "yaw": 0.0,
-                "roll": 0.0,
-                "payload_mass": 0.0,
-                "ballast_mass": 0.0
-            },
-            {
-                "x": 0.0,
-                "y": 0.0,
-                "z": 0.0,
-                "pitch": 0.0,
-                "yaw": 0.0,
-                "roll": 0.0,
-                "payload_mass": 0.0,
-                "ballast_mass": 0.0,
-                "module": {
-                    "name": "mainwing",
-                    "type": "wingmount",
-                    "len": 0.15,
-                    "mass": 0.05,
-                    "cg": 0.5,
-                    "wings_n": 2,
-                    "wing_phase": 0.0,
-                    "wings_ang": 0.0,
-                    "wings_x": 0.5,
-                    "ballast": false,
-                    "payload": false,
-                    "payload_mass": 0.0,
-                    "ballast_mass": 0.0
-                },
-                "surfaces": {
-                    "name": "new-wing",
-                    "type": "wing",
-                    "semispan": 0.12,
-                    "mass": 0.025,
-                    "cg": 0.5,
-                    "chord_root": 0.12,
-                    "chord_tip": 0.065,
-                    "aoa_ang": 0.0,
-                    "sweep_ang": 15.0,
-                    "airfoil": "naca2412",
-                    "motor": false,
-                    "motor_x_pos": 0.0,
-                    "motor_y_pos": 0.1,
-                    "motor_dir": "front",
-                    "pod_diam": 0.028,
-                    "pod_len_flat": 0.008,
-                    "pod_len_curve": 0.016,
-                    "pod_shape": "elliptical",
-                    "ctl_surface": false,
-                    "all_moving": false
-                }
-            },
-            {
-                "module": "joint-ring-c",
-                "x": 0.0,
-                "y": 0.0,
-                "z": 0.0,
-                "pitch": 0.0,
-                "yaw": 0.0,
-                "roll": 0.0,
-                "payload_mass": 0.0,
-                "ballast_mass": 0.0
-            },
-            {
-                "x": 0.0,
-                "y": 0.0,
-                "z": 0.0,
-                "pitch": 0.0,
-                "yaw": 0.0,
-                "roll": 0.0,
-                "payload_mass": 0.0,
-                "ballast_mass": 0.0,
-                "module": {
-                    "name": "quad-wingmount-v3",
-                    "type": "wingmount",
-                    "len": 0.15,
-                    "mass": 0.122,
-                    "cg": 0.5,
-                    "wings_n": 4,
-                    "wing_phase": 45,
-                    "wings_ang": 0,
-                    "wings_x": 0.5,
-                    "ballast": true,
-                    "payload": false,
-                    "payload_mass": 0.0,
-                    "ballast_mass": 0.0
-                },
-                "surfaces": {
-                    "name": "saggerwing-7in",
-                    "type": "wing",
-                    "semispan": 0.1,
-                    "mass": 0.025,
-                    "cg": 0.5,
-                    "chord_root": 0.12,
-                    "chord_tip": 0.06,
-                    "aoa_ang": 0.0,
-                    "sweep_ang": 25.0,
-                    "airfoil": "naca0008",
-                    "motor": true,
-                    "motor_x_pos": 0.12,
-                    "motor_y_pos": 0.1,
-                    "motor_dir": "back",
-                    "pod_diam": 0.035,
-                    "pod_len_flat": 0.02,
-                    "pod_len_curve": 0.05,
-                    "pod_shape": "elliptical",
-                    "ctl_surface": false,
-                    "all_moving": false
-                }
-            },
-            {
-                "module": "joint-ring-c",
-                "x": 0.0,
-                "y": 0.0,
-                "z": 0.0,
-                "pitch": 0.0,
-                "yaw": 0.0,
-                "roll": 0.0,
-                "payload_mass": 0.0,
-                "ballast_mass": 0.0
-            },
-            {
-                "x": 0.0,
-                "y": 0.0,
-                "z": 0.0,
-                "pitch": 0.0,
-                "yaw": 0.0,
-                "roll": 0.0,
-                "payload_mass": 0.0,
-                "ballast_mass": 0.0,
-                "module": {
-                    "name": "quad-esc-1",
-                    "type": "body",
-                    "len": 0.072,
-                    "mass": 0.055,
-                    "cg": 0.5,
-                    "ballast": false,
-                    "battery": false,
-                    "payload": false,
-                    "esc": true,
-                    "payload_mass": 0.0,
-                    "ballast_mass": 0.0
-                }
-            },
-            {
-                "module": "joint-ring-c",
-                "x": 0.0,
-                "y": 0.0,
-                "z": 0.0,
-                "pitch": 0.0,
-                "yaw": 0.0,
-                "roll": 0.0,
-                "payload_mass": 0.0,
-                "ballast_mass": 0.0
-            },
-            {
-                "x": 0.0,
-                "y": 0.0,
-                "z": 0.0,
-                "pitch": 0.0,
-                "yaw": 0.0,
-                "roll": 0.0,
-                "payload_mass": 0.0,
-                "ballast_mass": 0.0,
-                "module": {
-                    "name": "endcap",
-                    "type": "end",
-                    "len": 0.07,
-                    "mass": 0.015,
-                    "cg": 0.5,
-                    "wings_n": 4,
-                    "wing_phase": 0,
-                    "wings_ang": 0.0,
-                    "wings_x": 0.3,
-                    "pointed_shape": {
-                        "shape": "parabolic",
-                        "k_prime": 1.0,
-                        "exponent": 0.66,
-                        "c": 0.0,
-                        "nose_radius": 0.00465,
-                        "rho_factor": 1.25,
-                        "break_fraction": 0.5,
-                        "break_radius_fraction": 0.5
-                    },
-                    "fins": true,
-                    "motor": false,
-                    "motor_dir": "front"
-                },
-                "surfaces": {
-                    "name": "new-wing",
-                    "type": "wing",
-                    "semispan": 0.055,
-                    "mass": 0.001,
-                    "cg": 0.5,
-                    "chord_root": 0.1,
-                    "chord_tip": 0.005,
-                    "aoa_ang": 0.0,
-                    "sweep_ang": 60.0,
-                    "airfoil": "naca0008",
-                    "motor": false,
-                    "motor_x_pos": 0.0,
-                    "motor_y_pos": 0.1,
-                    "motor_dir": "front",
-                    "pod_diam": 0.028,
-                    "pod_len_flat": 0.008,
-                    "pod_len_curve": 0.016,
-                    "pod_shape": "elliptical",
-                    "ctl_surface": false,
-                    "all_moving": false
-                }
-            }
-        ],
+        "assembly_name": "default",
+        "config_name": "62mm Quad 7in v2",
         "module_rows": [
             {
                 "module_name": "cam-nose",
@@ -1551,742 +1264,652 @@
                 "aoa_eval_deg": -45.0,
                 "aoa_cn": -1.749055086966941,
                 "aoa_cm": 0.6232889493855106,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -7.472286130410478,
+                "aoa_load_pct": -66.76901566662161
             },
             {
                 "aoa_eval_deg": -44.0,
                 "aoa_cn": -1.7101871961454538,
                 "aoa_cm": 0.6094380838436104,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -7.306235327512469,
+                "aoa_load_pct": -65.28525976291891
             },
             {
                 "aoa_eval_deg": -43.0,
                 "aoa_cn": -1.671319305323966,
                 "aoa_cm": 0.5955872183017101,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -7.140184524614458,
+                "aoa_load_pct": -63.80150385921621
             },
             {
                 "aoa_eval_deg": -42.0,
                 "aoa_cn": -1.6324514145024787,
                 "aoa_cm": 0.58173635275981,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -6.974133721716448,
+                "aoa_load_pct": -62.31774795551351
             },
             {
                 "aoa_eval_deg": -41.0,
                 "aoa_cn": -1.593583523680991,
                 "aoa_cm": 0.5678854872179097,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -6.808082918818437,
+                "aoa_load_pct": -60.8339920518108
             },
             {
                 "aoa_eval_deg": -40.0,
                 "aoa_cn": -1.5547156328595033,
                 "aoa_cm": 0.5540346216760095,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -6.642032115920426,
+                "aoa_load_pct": -59.3502361481081
             },
             {
                 "aoa_eval_deg": -39.0,
                 "aoa_cn": -1.5158477420380156,
                 "aoa_cm": 0.5401837561341092,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -6.475981313022415,
+                "aoa_load_pct": -57.866480244405395
             },
             {
                 "aoa_eval_deg": -38.0,
                 "aoa_cn": -1.4769798512165282,
                 "aoa_cm": 0.526332890592209,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -6.3099305101244045,
+                "aoa_load_pct": -56.382724340702694
             },
             {
                 "aoa_eval_deg": -37.0,
                 "aoa_cn": -1.4381119603950405,
                 "aoa_cm": 0.5124820250503087,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -6.143879707226394,
+                "aoa_load_pct": -54.89896843699999
             },
             {
                 "aoa_eval_deg": -36.0,
                 "aoa_cn": -1.399244069573553,
                 "aoa_cm": 0.4986311595084084,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -5.977828904328383,
+                "aoa_load_pct": -53.41521253329729
             },
             {
                 "aoa_eval_deg": -35.0,
                 "aoa_cn": -1.3603761787520654,
                 "aoa_cm": 0.48478029396650824,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -5.811778101430373,
+                "aoa_load_pct": -51.931456629594585
             },
             {
                 "aoa_eval_deg": -34.0,
                 "aoa_cn": -1.3215082879305777,
                 "aoa_cm": 0.4709294284246081,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -5.645727298532361,
+                "aoa_load_pct": -50.447700725891885
             },
             {
                 "aoa_eval_deg": -33.0,
                 "aoa_cn": -1.2826403971090903,
                 "aoa_cm": 0.4570785628827078,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -5.479676495634352,
+                "aoa_load_pct": -48.963944822189184
             },
             {
                 "aoa_eval_deg": -32.0,
                 "aoa_cn": -1.2437725062876026,
                 "aoa_cm": 0.44322769734080764,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -5.31362569273634,
+                "aoa_load_pct": -47.480188918486476
             },
             {
                 "aoa_eval_deg": -31.0,
                 "aoa_cn": -1.204904615466115,
                 "aoa_cm": 0.42937683179890723,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -5.14757488983833,
+                "aoa_load_pct": -45.996433014783776
             },
             {
                 "aoa_eval_deg": -30.0,
                 "aoa_cn": -1.1660367246446275,
                 "aoa_cm": 0.41552596625700705,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -4.981524086940319,
+                "aoa_load_pct": -44.512677111081075
             },
             {
                 "aoa_eval_deg": -29.0,
                 "aoa_cn": -1.12716883382314,
                 "aoa_cm": 0.40167510071510687,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -4.81547328404231,
+                "aoa_load_pct": -43.02892120737838
             },
             {
                 "aoa_eval_deg": -28.0,
                 "aoa_cn": -1.0883009430016524,
                 "aoa_cm": 0.38782423517320663,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -4.649422481144298,
+                "aoa_load_pct": -41.54516530367567
             },
             {
                 "aoa_eval_deg": -27.0,
                 "aoa_cn": -1.0494330521801647,
                 "aoa_cm": 0.37397336963130634,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -4.483371678246288,
+                "aoa_load_pct": -40.061409399972966
             },
             {
                 "aoa_eval_deg": -26.0,
                 "aoa_cn": -1.0105651613586772,
                 "aoa_cm": 0.3601225040894061,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -4.317320875348277,
+                "aoa_load_pct": -38.57765349627027
             },
             {
                 "aoa_eval_deg": -25.0,
                 "aoa_cn": -0.9716972705371897,
                 "aoa_cm": 0.3462716385475059,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -4.1512700724502665,
+                "aoa_load_pct": -37.093897592567565
             },
             {
                 "aoa_eval_deg": -24.0,
                 "aoa_cn": -0.9328293797157021,
                 "aoa_cm": 0.33242077300560563,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -3.985219269552256,
+                "aoa_load_pct": -35.610141688864864
             },
             {
                 "aoa_eval_deg": -23.0,
                 "aoa_cn": -0.8939614888942145,
                 "aoa_cm": 0.3185699074637055,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -3.819168466654245,
+                "aoa_load_pct": -34.126385785162164
             },
             {
                 "aoa_eval_deg": -22.0,
                 "aoa_cn": -0.8550935980727269,
                 "aoa_cm": 0.3047190419218052,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -3.6531176637562344,
+                "aoa_load_pct": -32.642629881459456
             },
             {
                 "aoa_eval_deg": -21.0,
                 "aoa_cn": -0.8162257072512393,
                 "aoa_cm": 0.290868176379905,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -3.487066860858224,
+                "aoa_load_pct": -31.158873977756755
             },
             {
                 "aoa_eval_deg": -20.0,
                 "aoa_cn": -0.7773578164297517,
                 "aoa_cm": 0.27701731083800474,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -3.321016057960213,
+                "aoa_load_pct": -29.67511807405405
             },
             {
                 "aoa_eval_deg": -19.0,
                 "aoa_cn": -0.7384899256082641,
                 "aoa_cm": 0.2631664452961045,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -3.1549652550622023,
+                "aoa_load_pct": -28.191362170351347
             },
             {
                 "aoa_eval_deg": -18.0,
                 "aoa_cn": -0.6996220347867765,
                 "aoa_cm": 0.2493155797542042,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -2.9889144521641917,
+                "aoa_load_pct": -26.707606266648646
             },
             {
                 "aoa_eval_deg": -17.0,
                 "aoa_cn": -0.6607541439652889,
                 "aoa_cm": 0.23546471421230405,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -2.8228636492661807,
+                "aoa_load_pct": -25.223850362945942
             },
             {
                 "aoa_eval_deg": -16.0,
                 "aoa_cn": -0.6218862531438013,
                 "aoa_cm": 0.22161384867040382,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -2.65681284636817,
+                "aoa_load_pct": -23.740094459243238
             },
             {
                 "aoa_eval_deg": -15.0,
                 "aoa_cn": -0.5830183623223137,
                 "aoa_cm": 0.20776298312850353,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -2.4907620434701596,
+                "aoa_load_pct": -22.256338555540538
             },
             {
                 "aoa_eval_deg": -14.0,
                 "aoa_cn": -0.5441504715008262,
                 "aoa_cm": 0.19391211758660332,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -2.324711240572149,
+                "aoa_load_pct": -20.772582651837833
             },
             {
                 "aoa_eval_deg": -13.0,
                 "aoa_cn": -0.5052825806793386,
                 "aoa_cm": 0.18006125204470305,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -2.1586604376741385,
+                "aoa_load_pct": -19.288826748135136
             },
             {
                 "aoa_eval_deg": -12.0,
                 "aoa_cn": -0.46641468985785106,
                 "aoa_cm": 0.16621038650280281,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -1.992609634776128,
+                "aoa_load_pct": -17.805070844432432
             },
             {
                 "aoa_eval_deg": -11.0,
                 "aoa_cn": -0.42754679903636345,
                 "aoa_cm": 0.1523595209609026,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -1.8265588318781172,
+                "aoa_load_pct": -16.321314940729728
             },
             {
                 "aoa_eval_deg": -10.0,
                 "aoa_cn": -0.38867890821487583,
                 "aoa_cm": 0.13850865541900237,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -1.6605080289801064,
+                "aoa_load_pct": -14.837559037027026
             },
             {
                 "aoa_eval_deg": -9.0,
                 "aoa_cn": -0.34981101739338827,
                 "aoa_cm": 0.1246577898771021,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -1.4944572260820959,
+                "aoa_load_pct": -13.353803133324323
             },
             {
                 "aoa_eval_deg": -8.0,
                 "aoa_cn": -0.31094312657190065,
                 "aoa_cm": 0.11080692433520191,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -1.328406423184085,
+                "aoa_load_pct": -11.870047229621619
             },
             {
                 "aoa_eval_deg": -7.0,
                 "aoa_cn": -0.2720752357504131,
                 "aoa_cm": 0.09695605879330166,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -1.1623556202860745,
+                "aoa_load_pct": -10.386291325918917
             },
             {
                 "aoa_eval_deg": -6.0,
                 "aoa_cn": -0.23320734492892553,
                 "aoa_cm": 0.08310519325140141,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -0.996304817388064,
+                "aoa_load_pct": -8.902535422216216
             },
             {
                 "aoa_eval_deg": -5.0,
                 "aoa_cn": -0.19433945410743791,
                 "aoa_cm": 0.06925432770950118,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -0.8302540144900532,
+                "aoa_load_pct": -7.418779518513513
             },
             {
                 "aoa_eval_deg": -4.0,
                 "aoa_cn": -0.15547156328595033,
                 "aoa_cm": 0.055403462167600954,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -0.6642032115920425,
+                "aoa_load_pct": -5.9350236148108095
             },
             {
                 "aoa_eval_deg": -3.0,
                 "aoa_cn": -0.11660367246446277,
                 "aoa_cm": 0.041552596625700704,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -0.498152408694032,
+                "aoa_load_pct": -4.451267711108108
             },
             {
                 "aoa_eval_deg": -2.0,
                 "aoa_cn": -0.07773578164297516,
                 "aoa_cm": 0.027701731083800477,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -0.33210160579602127,
+                "aoa_load_pct": -2.9675118074054048
             },
             {
                 "aoa_eval_deg": -1.0,
                 "aoa_cn": -0.03886789082148758,
                 "aoa_cm": 0.013850865541900239,
-                "aoa_verdict": "nose-up",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": -0.16605080289801064,
+                "aoa_load_pct": -1.4837559037027024
             },
             {
                 "aoa_eval_deg": 0.0,
                 "aoa_cn": 0.0,
                 "aoa_cm": 0.0,
-                "aoa_verdict": "trim",
-                "lift_center_x": null,
-                "lift_static_offset_m": null
+                "aoa_lift_n": 0.0,
+                "aoa_load_pct": 0.0
             },
             {
                 "aoa_eval_deg": 1.0,
                 "aoa_cn": 0.03886789082148758,
                 "aoa_cm": -0.013850865541900239,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 0.16605080289801064,
+                "aoa_load_pct": 1.4837559037027024
             },
             {
                 "aoa_eval_deg": 2.0,
                 "aoa_cn": 0.07773578164297516,
                 "aoa_cm": -0.027701731083800477,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 0.33210160579602127,
+                "aoa_load_pct": 2.9675118074054048
             },
             {
                 "aoa_eval_deg": 3.0,
                 "aoa_cn": 0.11660367246446277,
                 "aoa_cm": -0.041552596625700704,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 0.498152408694032,
+                "aoa_load_pct": 4.451267711108108
             },
             {
                 "aoa_eval_deg": 4.0,
                 "aoa_cn": 0.15547156328595033,
                 "aoa_cm": -0.055403462167600954,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 0.6642032115920425,
+                "aoa_load_pct": 5.9350236148108095
             },
             {
                 "aoa_eval_deg": 5.0,
                 "aoa_cn": 0.19433945410743791,
                 "aoa_cm": -0.06925432770950118,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 0.8302540144900532,
+                "aoa_load_pct": 7.418779518513513
             },
             {
                 "aoa_eval_deg": 6.0,
                 "aoa_cn": 0.23320734492892553,
                 "aoa_cm": -0.08310519325140141,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 0.996304817388064,
+                "aoa_load_pct": 8.902535422216216
             },
             {
                 "aoa_eval_deg": 7.0,
                 "aoa_cn": 0.2720752357504131,
                 "aoa_cm": -0.09695605879330166,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 1.1623556202860745,
+                "aoa_load_pct": 10.386291325918917
             },
             {
                 "aoa_eval_deg": 8.0,
                 "aoa_cn": 0.31094312657190065,
                 "aoa_cm": -0.11080692433520191,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 1.328406423184085,
+                "aoa_load_pct": 11.870047229621619
             },
             {
                 "aoa_eval_deg": 9.0,
                 "aoa_cn": 0.34981101739338827,
                 "aoa_cm": -0.1246577898771021,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 1.4944572260820959,
+                "aoa_load_pct": 13.353803133324323
             },
             {
                 "aoa_eval_deg": 10.0,
                 "aoa_cn": 0.38867890821487583,
                 "aoa_cm": -0.13850865541900237,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 1.6605080289801064,
+                "aoa_load_pct": 14.837559037027026
             },
             {
                 "aoa_eval_deg": 11.0,
                 "aoa_cn": 0.42754679903636345,
                 "aoa_cm": -0.1523595209609026,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 1.8265588318781172,
+                "aoa_load_pct": 16.321314940729728
             },
             {
                 "aoa_eval_deg": 12.0,
                 "aoa_cn": 0.46641468985785106,
                 "aoa_cm": -0.16621038650280281,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 1.992609634776128,
+                "aoa_load_pct": 17.805070844432432
             },
             {
                 "aoa_eval_deg": 13.0,
                 "aoa_cn": 0.5052825806793386,
                 "aoa_cm": -0.18006125204470305,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 2.1586604376741385,
+                "aoa_load_pct": 19.288826748135136
             },
             {
                 "aoa_eval_deg": 14.0,
                 "aoa_cn": 0.5441504715008262,
                 "aoa_cm": -0.19391211758660332,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 2.324711240572149,
+                "aoa_load_pct": 20.772582651837833
             },
             {
                 "aoa_eval_deg": 15.0,
                 "aoa_cn": 0.5830183623223137,
                 "aoa_cm": -0.20776298312850353,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 2.4907620434701596,
+                "aoa_load_pct": 22.256338555540538
             },
             {
                 "aoa_eval_deg": 16.0,
                 "aoa_cn": 0.6218862531438013,
                 "aoa_cm": -0.22161384867040382,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 2.65681284636817,
+                "aoa_load_pct": 23.740094459243238
             },
             {
                 "aoa_eval_deg": 17.0,
                 "aoa_cn": 0.6607541439652889,
                 "aoa_cm": -0.23546471421230405,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 2.8228636492661807,
+                "aoa_load_pct": 25.223850362945942
             },
             {
                 "aoa_eval_deg": 18.0,
                 "aoa_cn": 0.6996220347867765,
                 "aoa_cm": -0.2493155797542042,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 2.9889144521641917,
+                "aoa_load_pct": 26.707606266648646
             },
             {
                 "aoa_eval_deg": 19.0,
                 "aoa_cn": 0.7384899256082641,
                 "aoa_cm": -0.2631664452961045,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 3.1549652550622023,
+                "aoa_load_pct": 28.191362170351347
             },
             {
                 "aoa_eval_deg": 20.0,
                 "aoa_cn": 0.7773578164297517,
                 "aoa_cm": -0.27701731083800474,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 3.321016057960213,
+                "aoa_load_pct": 29.67511807405405
             },
             {
                 "aoa_eval_deg": 21.0,
                 "aoa_cn": 0.8162257072512393,
                 "aoa_cm": -0.290868176379905,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 3.487066860858224,
+                "aoa_load_pct": 31.158873977756755
             },
             {
                 "aoa_eval_deg": 22.0,
                 "aoa_cn": 0.8550935980727269,
                 "aoa_cm": -0.3047190419218052,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 3.6531176637562344,
+                "aoa_load_pct": 32.642629881459456
             },
             {
                 "aoa_eval_deg": 23.0,
                 "aoa_cn": 0.8939614888942145,
                 "aoa_cm": -0.3185699074637055,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 3.819168466654245,
+                "aoa_load_pct": 34.126385785162164
             },
             {
                 "aoa_eval_deg": 24.0,
                 "aoa_cn": 0.9328293797157021,
                 "aoa_cm": -0.33242077300560563,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 3.985219269552256,
+                "aoa_load_pct": 35.610141688864864
             },
             {
                 "aoa_eval_deg": 25.0,
                 "aoa_cn": 0.9716972705371897,
                 "aoa_cm": -0.3462716385475059,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 4.1512700724502665,
+                "aoa_load_pct": 37.093897592567565
             },
             {
                 "aoa_eval_deg": 26.0,
                 "aoa_cn": 1.0105651613586772,
                 "aoa_cm": -0.3601225040894061,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 4.317320875348277,
+                "aoa_load_pct": 38.57765349627027
             },
             {
                 "aoa_eval_deg": 27.0,
                 "aoa_cn": 1.0494330521801647,
                 "aoa_cm": -0.37397336963130634,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 4.483371678246288,
+                "aoa_load_pct": 40.061409399972966
             },
             {
                 "aoa_eval_deg": 28.0,
                 "aoa_cn": 1.0883009430016524,
                 "aoa_cm": -0.38782423517320663,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 4.649422481144298,
+                "aoa_load_pct": 41.54516530367567
             },
             {
                 "aoa_eval_deg": 29.0,
                 "aoa_cn": 1.12716883382314,
                 "aoa_cm": -0.40167510071510687,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 4.81547328404231,
+                "aoa_load_pct": 43.02892120737838
             },
             {
                 "aoa_eval_deg": 30.0,
                 "aoa_cn": 1.1660367246446275,
                 "aoa_cm": -0.41552596625700705,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 4.981524086940319,
+                "aoa_load_pct": 44.512677111081075
             },
             {
                 "aoa_eval_deg": 31.0,
                 "aoa_cn": 1.204904615466115,
                 "aoa_cm": -0.42937683179890723,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 5.14757488983833,
+                "aoa_load_pct": 45.996433014783776
             },
             {
                 "aoa_eval_deg": 32.0,
                 "aoa_cn": 1.2437725062876026,
                 "aoa_cm": -0.44322769734080764,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 5.31362569273634,
+                "aoa_load_pct": 47.480188918486476
             },
             {
                 "aoa_eval_deg": 33.0,
                 "aoa_cn": 1.2826403971090903,
                 "aoa_cm": -0.4570785628827078,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 5.479676495634352,
+                "aoa_load_pct": 48.963944822189184
             },
             {
                 "aoa_eval_deg": 34.0,
                 "aoa_cn": 1.3215082879305777,
                 "aoa_cm": -0.4709294284246081,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 5.645727298532361,
+                "aoa_load_pct": 50.447700725891885
             },
             {
                 "aoa_eval_deg": 35.0,
                 "aoa_cn": 1.3603761787520654,
                 "aoa_cm": -0.48478029396650824,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 5.811778101430373,
+                "aoa_load_pct": 51.931456629594585
             },
             {
                 "aoa_eval_deg": 36.0,
                 "aoa_cn": 1.399244069573553,
                 "aoa_cm": -0.4986311595084084,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 5.977828904328383,
+                "aoa_load_pct": 53.41521253329729
             },
             {
                 "aoa_eval_deg": 37.0,
                 "aoa_cn": 1.4381119603950405,
                 "aoa_cm": -0.5124820250503087,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 6.143879707226394,
+                "aoa_load_pct": 54.89896843699999
             },
             {
                 "aoa_eval_deg": 38.0,
                 "aoa_cn": 1.4769798512165282,
                 "aoa_cm": -0.526332890592209,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 6.3099305101244045,
+                "aoa_load_pct": 56.382724340702694
             },
             {
                 "aoa_eval_deg": 39.0,
                 "aoa_cn": 1.5158477420380156,
                 "aoa_cm": -0.5401837561341092,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 6.475981313022415,
+                "aoa_load_pct": 57.866480244405395
             },
             {
                 "aoa_eval_deg": 40.0,
                 "aoa_cn": 1.5547156328595033,
                 "aoa_cm": -0.5540346216760095,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 6.642032115920426,
+                "aoa_load_pct": 59.3502361481081
             },
             {
                 "aoa_eval_deg": 41.0,
                 "aoa_cn": 1.593583523680991,
                 "aoa_cm": -0.5678854872179097,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 6.808082918818437,
+                "aoa_load_pct": 60.8339920518108
             },
             {
                 "aoa_eval_deg": 42.0,
                 "aoa_cn": 1.6324514145024787,
                 "aoa_cm": -0.58173635275981,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 6.974133721716448,
+                "aoa_load_pct": 62.31774795551351
             },
             {
                 "aoa_eval_deg": 43.0,
                 "aoa_cn": 1.671319305323966,
                 "aoa_cm": -0.5955872183017101,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 7.140184524614458,
+                "aoa_load_pct": 63.80150385921621
             },
             {
                 "aoa_eval_deg": 44.0,
                 "aoa_cn": 1.7101871961454538,
                 "aoa_cm": -0.6094380838436104,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 7.306235327512469,
+                "aoa_load_pct": 65.28525976291891
             },
             {
                 "aoa_eval_deg": 45.0,
                 "aoa_cn": 1.749055086966941,
                 "aoa_cm": -0.6232889493855106,
-                "aoa_verdict": "nose-down",
-                "lift_center_x": 0.3685806210666852,
-                "lift_static_offset_m": 0.03191039046638644
+                "aoa_lift_n": 7.472286130410478,
+                "aoa_load_pct": 66.76901566662161
             }
         ],
         "aoa_eval_deg": 0.0,
         "aoa_cn": 0.0,
         "aoa_cm": 0.0,
-        "aoa_verdict": "trim",
-        "lift_center_x": null,
-        "lift_static_offset_m": null,
+        "aoa_lift_n": 0.0,
+        "aoa_load_pct": 0.0,
         "force_eval_aoa_deg": 0.0,
         "force_eval_airspeed_m_s": 10.0,
         "force_eval_altitude_m": 0.0,
         "force_eval_density_kg_m3": 1.2249991558877176,
         "force_eval_dynamic_pressure_pa": 61.24995779438588,
+        "force_eval_reynolds_min": 45748.27145793813,
+        "force_eval_reynolds_max": 65190.62602245954,
         "surface_force_rows": [
             {
                 "name": "new-wing",
@@ -2302,6 +1925,7 @@
                 "confidence": 0.9731646371460912,
                 "lift_n": 0.13239310686930306,
                 "drag_n": 0.03000173770915378,
+                "vertical_lift_area_m2": 0.022199999999999998,
                 "vertical_force_n": 0.13239310686930306,
                 "vertical_force_g": 13.500339756114787,
                 "load_pct": 1.183005745823013
@@ -2320,6 +1944,7 @@
                 "confidence": 0.9782353743699622,
                 "lift_n": 7.923542278687299e-16,
                 "drag_n": 0.030534963539590173,
+                "vertical_lift_area_m2": 0.02545584412271571,
                 "vertical_force_n": 5.602790476278097e-16,
                 "vertical_force_g": 5.713256286579105e-14,
                 "load_pct": 5.006403643524026e-15
@@ -2338,14 +1963,18 @@
                 "confidence": 0.9849949212021604,
                 "lift_n": 1.368842720580915e-16,
                 "drag_n": 0.01135049670650177,
+                "vertical_lift_area_m2": 0.0057750000000000015,
                 "vertical_force_n": 6.844213602904576e-17,
                 "vertical_force_g": 6.979155575965877e-15,
                 "load_pct": 6.115683972783531e-16
             }
         ],
+        "surface_vertical_lift_area_m2": 0.05343084412271571,
         "surface_vertical_force_n": 0.13239310686930367,
         "surface_vertical_force_g": 13.50033975611485,
         "surface_vertical_load_pct": 1.1830057458230185,
-        "force_center_x": 0.28329004643771916
-    }
+        "force_center_x": 0.28329004643771916,
+        "max_thrust_hover_min_aoa_deg": 0.0
+    },
+    "vlm_results": null
 }

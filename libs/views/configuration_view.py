@@ -649,7 +649,9 @@ class ConfigurationMainView:
         app = self.app
         visible_keys = [key for key in app.ordered_keys(data, preferred_order) if key not in exclude_keys]
         if path == () and schema_name == "module" and data["type"] == "end" and not data.get("fins", False):
-            visible_keys = [key for key in visible_keys if key not in {"wings_n", "wing_phase", "wings_ang", "wings_x"}]
+            visible_keys = [key for key in visible_keys if key not in {"wings_n", "wing_phase", "wings_layout", "wings_fin_pos", "wings_ang", "wings_x", "wings_y_offset"}]
+        if path == () and schema_name == "module" and data.get("wings_layout", "H") not in {"1", "3"}:
+            visible_keys = [key for key in visible_keys if key != "wings_fin_pos"]
         if path == ("pointed_shape",):
             active_shape_param_keys = set(app.pointed_shape_param_keys[data["shape"]])
             visible_keys = [key for key in visible_keys if key == "shape" or key in active_shape_param_keys]
@@ -675,6 +677,20 @@ class ConfigurationMainView:
                     widget.bind("<<ComboboxSelected>>", lambda event, p=owner_part, v=variable: app.on_module_type_changed(p, v))
                 else:
                     widget.bind("<<ComboboxSelected>>", lambda event, p=owner_part, v=variable: app.on_surface_type_changed(p, v))
+                next_row += 1
+                continue
+            if key == "wings_layout":
+                variable = tk.StringVar(value=str(value))
+                widget = ttk.Combobox(frame, values=app.wings_layout_options, textvariable=variable, state="readonly")
+                widget.grid(row=next_row, column=1, sticky="ew", padx=(8, 0), pady=2)
+                widget.bind("<<ComboboxSelected>>", lambda event, d=data, v=variable: app.on_select_value(d, "wings_layout", v, True))
+                next_row += 1
+                continue
+            if key == "wings_fin_pos":
+                variable = tk.StringVar(value=str(value))
+                widget = ttk.Combobox(frame, values=app.wings_fin_pos_options, textvariable=variable, state="readonly")
+                widget.grid(row=next_row, column=1, sticky="ew", padx=(8, 0), pady=2)
+                widget.bind("<<ComboboxSelected>>", lambda event, d=data, v=variable: app.on_select_value(d, "wings_fin_pos", v, True))
                 next_row += 1
                 continue
             if key == "motor_dir":

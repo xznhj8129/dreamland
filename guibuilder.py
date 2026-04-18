@@ -30,6 +30,8 @@ from libs.views.vlm_view import VLMMainView
 MODULE_TYPE_OPTIONS = ["body", "end", "coupler", "wingmount"]
 SURFACE_TYPE_OPTIONS = ["wing"]
 MOTOR_DIRECTION_OPTIONS = ["front", "back"]
+WINGS_LAYOUT_OPTIONS = ["H", "V", "1", "3", "+", "X"]
+WINGS_FIN_POS_OPTIONS = ["top", "bottom"]
 STANDARD_NONE_OPTION = "None"
 MODULE_FIELD_ORDER = [
     "name",
@@ -37,10 +39,11 @@ MODULE_FIELD_ORDER = [
     "len",
     "mass",
     "cg",
-    "wings_n",
-    "wing_phase",
+    "wings_layout",
+    "wings_fin_pos",
     "wings_ang",
     "wings_x",
+    "wings_y_offset",
     "pointed_shape",
     "fins",
     "ballast",
@@ -205,10 +208,16 @@ def format_field_value(key: str, value):
 def field_label(key: str) -> str:
     if key == "wing_phase":
         return "wing_phase / around tube (deg)"
+    if key == "wings_layout":
+        return "layout (H V 1 3 + X)"
+    if key == "wings_fin_pos":
+        return "fin position (top / bottom)"
     if key == "wings_ang":
         return "dihedral (deg)"
     if key == "wings_x":
         return "fore/aft mount (0=front, 1=back)"
+    if key == "wings_y_offset":
+        return "y-offset on tube (-1=bottom, 0=mid, 1=top)"
     if key == "pointed_shape":
         return "pointed shape"
     if key == "shape":
@@ -347,6 +356,8 @@ class BuilderV3TkApp:
         self.module_type_options = MODULE_TYPE_OPTIONS
         self.surface_type_options = SURFACE_TYPE_OPTIONS
         self.motor_direction_options = MOTOR_DIRECTION_OPTIONS
+        self.wings_layout_options = WINGS_LAYOUT_OPTIONS
+        self.wings_fin_pos_options = WINGS_FIN_POS_OPTIONS
         self.pod_shape_options = POD_SHAPE_OPTIONS
         self.pointed_shape_options = POINTED_SHAPE_OPTIONS
         self.pointed_shape_param_keys = POINTED_SHAPE_PARAM_KEYS

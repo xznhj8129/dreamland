@@ -99,53 +99,89 @@ def finite_wing_lift_slope(span: float, chord_root: float, chord_tip: float) -> 
     e = 0.9
     return a0 / (1.0 + a0 / (math.pi * e * aspect_ratio))
 
+
+def layout_wing_count(layout: str) -> int:
+    return {"1": 1, "H": 2, "V": 2, "3": 3, "+": 4, "X": 4}.get(layout, 2)
+
+
+def derive_wings_layout(module_data: dict) -> str:
+    """Backward-compat: infer layout from old wings_n / wing_phase fields."""
+    n = module_data.get("wings_n", 2)
+    phase = module_data.get("wing_phase", 0.0) % 360
+    if n == 1:
+        return "1"
+    if n == 2:
+        if 80 <= phase <= 100 or 260 <= phase <= 280:
+            return "V"
+        return "H"
+    if n == 3:
+        return "3"
+    if n >= 4:
+        if 35 <= phase % 90 <= 55:
+            return "X"
+        return "+"
+    return "H"
+
+
 def surface_panel_layout(
-    count: int,
+    layout: str,
     root_radius: float,
     span: float,
-    wing_phase_deg: float,
     dihedral_deg: float,
+    y_offset: float = 0.0,
+    fin_pos: str = "top",
     centerline_root: bool = False,
 ) -> list[dict]:
+    """
+    Layout defines the wing configuration:
+      H  — 2 horizontal wings, roots positioned by y_offset (-1=bottom, 0=equator, 1=top)
+      V  — 2 vertical fins, fixed at tube top and bottom
+      1  — single fin, position set by fin_pos ("top" or "bottom")
+      3  — H pair + single fin at fin_pos
+      +  — H pair + top and bottom fins
+      X  — biplane: upper H pair at +y_offset, lower H pair at -y_offset
+
+    Wing direction is always horizontal (±Y) for H-type panels.
+    Fin direction is always vertical (±Z) for fin-type panels.
+    Dihedral tilts H-type wings from horizontal; fins are unaffected.
+    """
+    d = math.radians(dihedral_deg)
+    cos_d = math.cos(d)
+    sin_d = math.sin(d)
+    oz = max(-root_radius, min(root_radius, y_offset * root_radius))
+    oy = math.sqrt(max(0.0, root_radius ** 2 - oz ** 2))
+    fin_z = root_radius if fin_pos == "top" else -root_radius
+    fin_dz = 1.0 if fin_pos == "top" else -1.0
+
+    # (root_y, root_z, dir_y, dir_z) — fully explicit, no angles
+    if layout == "1":
+        specs = [(0.0, fin_z, 0.0, fin_dz)]
+    elif layout == "V":
+        specs = [(0.0, +root_radius, 0.0, +1.0), (0.0, -root_radius, 0.0, -1.0)]
+    elif layout == "3":
+        specs = [(+oy, oz, +cos_d, +sin_d), (-oy, oz, -cos_d, +sin_d), (0.0, fin_z, 0.0, fin_dz)]
+    elif layout == "+":
+        specs = [(+oy, oz, +cos_d, +sin_d), (-oy, oz, -cos_d, +sin_d),
+                 (0.0, +root_radius, 0.0, +1.0), (0.0, -root_radius, 0.0, -1.0)]
+    elif layout == "X":
+        specs = [(+oy, +oz, +cos_d, +sin_d), (-oy, +oz, -cos_d, +sin_d),
+                 (+oy, -oz, +cos_d, -sin_d), (-oy, -oz, -cos_d, -sin_d)]
+    else:  # "H" and fallback
+        specs = [(+oy, oz, +cos_d, +sin_d), (-oy, oz, -cos_d, +sin_d)]
+
     panels = []
-    dihedral_rad = math.radians(dihedral_deg)
-    phase_eps = 1e-9
-    for panel_index in range(count):
-        panel_phase_deg = wing_phase_deg + panel_index * 360.0 / count
-        panel_phase_rad = math.radians(panel_phase_deg)
-        root_y = root_radius * math.cos(panel_phase_rad)
-        root_z = root_radius * math.sin(panel_phase_rad)
-        dihedral_sign = 1.0
-        if count > 2:
-            if root_z > phase_eps:
-                dihedral_sign = 1.0
-            elif root_z < -phase_eps:
-                dihedral_sign = -1.0
-            else:
-                dihedral_sign = 0.0
-        panel_dihedral_rad = dihedral_rad * dihedral_sign
-        dir_y = math.cos(panel_dihedral_rad) * math.cos(panel_phase_rad)
-        dir_z = math.cos(panel_dihedral_rad) * math.sin(panel_phase_rad) + math.sin(panel_dihedral_rad)
-        dir_norm = math.hypot(dir_y, dir_z)
-        dir_y /= dir_norm
-        dir_z /= dir_norm
-        root_y = 0.0 if centerline_root else root_radius * math.cos(panel_phase_rad)
-        root_z = 0.0 if centerline_root else root_radius * math.sin(panel_phase_rad)
-        tip_y = dir_y * span if centerline_root else root_y + span * dir_y
-        tip_z = dir_z * span if centerline_root else root_z + span * dir_z
-        panels.append(
-            {
-                "index": panel_index,
-                "phase_deg": panel_phase_deg,
-                "dihedral_sign": dihedral_sign,
-                "root_y": root_y,
-                "root_z": root_z,
-                "tip_y": tip_y,
-                "tip_z": tip_z,
-                "dir_y": dir_y,
-                "dir_z": dir_z,
-            }
-        )
+    for index, (ry, rz, dy, dz) in enumerate(specs):
+        norm = math.hypot(dy, dz)
+        if norm > 1e-9:
+            dy /= norm
+            dz /= norm
+        if centerline_root:
+            ry, rz = 0.0, 0.0
+        ty = dy * span if centerline_root else ry + span * dy
+        tz = dz * span if centerline_root else rz + span * dz
+        panels.append({"index": index, "phase_deg": 0.0, "dihedral_sign": 1.0,
+                        "root_y": ry, "root_z": rz, "tip_y": ty, "tip_z": tz,
+                        "dir_y": dy, "dir_z": dz})
     return panels
 
 
@@ -999,7 +1035,7 @@ def build_full_assembly_json(
 
         if part_has_lifting_surfaces(module_data, item_in_assembly):
             wing_spec_name, wing_data = resolve_named_block(item_in_assembly["surfaces"], modules_data)
-            num_wings = module_data["wings_n"]
+            num_wings = layout_wing_count(module_data.get("wings_layout") or derive_wings_layout(module_data))
             wing_mount_x_m = module_x_mount_map[assembly_index]
             wing_root_le_x_m = wing_mount_x_m - wing_data["chord_root"] / 2.0
             wing_sweep_len_m = wing_data["semispan"] * math.tan(math.radians(wing_data["sweep_ang"]))
@@ -1114,12 +1150,14 @@ def build_full_assembly_json(
         if wing_data["airfoil"] not in surface_airfoils:
             surface_airfoils.append(wing_data["airfoil"])
         centerline_root = module_data["type"] == "end"
+        _layout = module_data.get("wings_layout") or derive_wings_layout(module_data)
         panel_layout = surface_panel_layout(
-            count=module_data["wings_n"],
+            layout=_layout,
             root_radius=tube_diam / 2.0,
             span=wing_data["semispan"],
-            wing_phase_deg=module_data["wing_phase"],
             dihedral_deg=module_data["wings_ang"],
+            y_offset=module_data.get("wings_y_offset", 0.0),
+            fin_pos=module_data.get("wings_fin_pos", "top"),
             centerline_root=centerline_root,
         )
         for panel in panel_layout:
@@ -1130,18 +1168,18 @@ def build_full_assembly_json(
             {
                 "name": spec_name,
                 "module": module_entry["module"] if type(module_entry["module"]) is str else module_entry["module"]["name"],
-                "count": module_data["wings_n"],
+                "count": len(panel_layout),
                 "span": wing_data["semispan"],
                 "chord_root": wing_data["chord_root"],
                 "chord_tip": wing_data["chord_tip"],
                 "sweep_len": sweep_len,
                 "x_root_le": module_x_mount_map[index] - wing_data["chord_root"] / 2.0,
                 "body_radius": tube_diam / 2.0,
-                "wing_phase": module_data["wing_phase"],
+                "wing_phase": 0.0,
                 "dihedral_deg": module_data["wings_ang"],
                 "aoa": wing_data["aoa_ang"],
                 "airfoil": wing_data["airfoil"],
-                "planform_area_total": module_data["wings_n"] * wing_data["semispan"] * (wing_data["chord_root"] + wing_data["chord_tip"]) / 2.0,
+                "planform_area_total": len(panel_layout) * wing_data["semispan"] * (wing_data["chord_root"] + wing_data["chord_tip"]) / 2.0,
                 "panels": panel_layout,
                 "mount_factor": average_mount_factor(panel_layout),
             }

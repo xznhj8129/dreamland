@@ -43,10 +43,11 @@ MODULE_LIBRARY_FIELD_ORDER = [
     "diam",
     "mass",
     "cg",
-    "wings_n",
-    "wing_phase",
+    "wings_layout",
+    "wings_fin_pos",
     "wings_ang",
     "wings_x",
+    "wings_y_offset",
     "pointed_shape",
     "fins",
     "semispan",
@@ -132,12 +133,16 @@ def format_field_value(key: str, value):
 
 
 def field_label(key: str) -> str:
-    if key == "wing_phase":
-        return "wing_phase / around tube (deg)"
+    if key == "wings_layout":
+        return "layout (H V 1 3 + X)"
+    if key == "wings_fin_pos":
+        return "fin position (top / bottom)"
     if key == "wings_ang":
         return "dihedral (deg)"
     if key == "wings_x":
         return "fore/aft mount (0=front, 1=back)"
+    if key == "wings_y_offset":
+        return "y-offset on tube (-1=bottom, 0=mid, 1=top)"
     if key == "pointed_shape":
         return "pointed shape"
     if key == "shape":
