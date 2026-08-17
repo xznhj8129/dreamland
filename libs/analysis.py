@@ -101,7 +101,7 @@ def finite_wing_lift_slope(span: float, chord_root: float, chord_tip: float) -> 
 
 
 def layout_wing_count(layout: str) -> int:
-    return {"1": 1, "H": 2, "V": 2, "3": 3, "+": 4, "X": 4}.get(layout, 2)
+    return {"1": 1, "H": 2, "3": 3, "+": 4, "X": 4}.get(layout, 2)
 
 
 def derive_wings_layout(module_data: dict) -> str:
@@ -110,10 +110,6 @@ def derive_wings_layout(module_data: dict) -> str:
     phase = module_data.get("wing_phase", 0.0) % 360
     if n == 1:
         return "1"
-    if n == 2:
-        if 80 <= phase <= 100 or 260 <= phase <= 280:
-            return "V"
-        return "H"
     if n == 3:
         return "3"
     if n >= 4:
@@ -135,11 +131,12 @@ def surface_panel_layout(
     """
     Layout defines the wing configuration:
       H  — 2 horizontal wings, roots positioned by y_offset (-1=bottom, 0=equator, 1=top)
-      V  — 2 vertical fins, fixed at tube top and bottom
       1  — single fin, position set by fin_pos ("top" or "bottom")
       3  — H pair + single fin at fin_pos
       +  — H pair + top and bottom fins
-      X  — biplane: upper H pair at +y_offset, lower H pair at -y_offset
+      X  — 4 wings mirrored about the equator; y_offset sets the root angle on the
+           tube (-1=equator, 0=45 deg, 1=top/bottom), dihedral tilts each pair
+           away from the equator (45 = symmetric X)
 
     Wing direction is always horizontal (±Y) for H-type panels.
     Fin direction is always vertical (±Z) for fin-type panels.
@@ -156,16 +153,17 @@ def surface_panel_layout(
     # (root_y, root_z, dir_y, dir_z) — fully explicit, no angles
     if layout == "1":
         specs = [(0.0, fin_z, 0.0, fin_dz)]
-    elif layout == "V":
-        specs = [(0.0, +root_radius, 0.0, +1.0), (0.0, -root_radius, 0.0, -1.0)]
     elif layout == "3":
         specs = [(+oy, oz, +cos_d, +sin_d), (-oy, oz, -cos_d, +sin_d), (0.0, fin_z, 0.0, fin_dz)]
     elif layout == "+":
         specs = [(+oy, oz, +cos_d, +sin_d), (-oy, oz, -cos_d, +sin_d),
                  (0.0, +root_radius, 0.0, +1.0), (0.0, -root_radius, 0.0, -1.0)]
     elif layout == "X":
-        specs = [(+oy, +oz, +cos_d, +sin_d), (-oy, +oz, -cos_d, +sin_d),
-                 (+oy, -oz, +cos_d, -sin_d), (-oy, -oz, -cos_d, -sin_d)]
+        root_ang = math.radians((max(-1.0, min(1.0, y_offset)) + 1.0) * 45.0)
+        xy = root_radius * math.cos(root_ang)
+        xz = root_radius * math.sin(root_ang)
+        specs = [(+xy, +xz, +cos_d, +sin_d), (-xy, +xz, -cos_d, +sin_d),
+                 (+xy, -xz, +cos_d, -sin_d), (-xy, -xz, -cos_d, -sin_d)]
     else:  # "H" and fallback
         specs = [(+oy, oz, +cos_d, +sin_d), (-oy, oz, -cos_d, +sin_d)]
 
@@ -961,6 +959,7 @@ def build_full_assembly_json(
             {
                 "module_name": module_name,
                 "module_type": module_data["type"],
+                "part_index": assembly_index,
                 "x_start": current_x_fuselage_m,
                 "x_end": current_x_fuselage_m + module_len,
                 "mass": module_mass,
@@ -1095,6 +1094,7 @@ def build_full_assembly_json(
             motor_draw_rows.append(
                 {
                     "kind": "end",
+                    "part_index": assembly_index,
                     "x_m": current_x_fuselage_m + module_len * 0.5,
                     "y_m": 0.0,
                     "z_m": 0.0,
@@ -1168,6 +1168,7 @@ def build_full_assembly_json(
             {
                 "name": spec_name,
                 "module": module_entry["module"] if type(module_entry["module"]) is str else module_entry["module"]["name"],
+                "part_index": index,
                 "count": len(panel_layout),
                 "span": wing_data["semispan"],
                 "chord_root": wing_data["chord_root"],
@@ -1191,6 +1192,7 @@ def build_full_assembly_json(
                 motor_draw_rows.append(
                     {
                         "kind": "surface",
+                        "part_index": index,
                         "x_m": x_motor,
                         "y_m": panel["root_y"] + wing_data["motor_y_pos"] * panel["dir_y"],
                         "z_m": panel["root_z"] + wing_data["motor_y_pos"] * panel["dir_z"],

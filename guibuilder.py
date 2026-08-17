@@ -19,7 +19,7 @@ from tkinter import filedialog, ttk
 SCRIPT_DIR = Path(__file__).resolve().parent
 TEMPLATES_PATH = SCRIPT_DIR / "data" / "templates.json"
 sys.path.insert(0, str(SCRIPT_DIR))
-from libs.analysis import build_asb_airplane, build_vlm_report_text, json_safe_data, load_builder_data as analysis_load_builder_data, parse_motor_name, recompute_analysis, vlm_point_key
+from libs.analysis import build_asb_airplane, build_vlm_report_text, derive_wings_layout, json_safe_data, load_builder_data as analysis_load_builder_data, parse_motor_name, recompute_analysis, vlm_point_key
 from libs.views.aero_analysis_view import AeroAnalysisMainView
 from libs.views.cad_view import CADMainView
 from libs.views.configuration_view import ConfigurationMainView
@@ -30,7 +30,7 @@ from libs.views.vlm_view import VLMMainView
 MODULE_TYPE_OPTIONS = ["body", "end", "coupler", "wingmount"]
 SURFACE_TYPE_OPTIONS = ["wing"]
 MOTOR_DIRECTION_OPTIONS = ["front", "back"]
-WINGS_LAYOUT_OPTIONS = ["H", "V", "1", "3", "+", "X"]
+WINGS_LAYOUT_OPTIONS = ["H", "1", "3", "+", "X"]
 WINGS_FIN_POS_OPTIONS = ["top", "bottom"]
 STANDARD_NONE_OPTION = "None"
 MODULE_FIELD_ORDER = [
@@ -209,7 +209,7 @@ def field_label(key: str) -> str:
     if key == "wing_phase":
         return "wing_phase / around tube (deg)"
     if key == "wings_layout":
-        return "layout (H V 1 3 + X)"
+        return "layout (H 1 3 + X)"
     if key == "wings_fin_pos":
         return "fin position (top / bottom)"
     if key == "wings_ang":
@@ -217,7 +217,7 @@ def field_label(key: str) -> str:
     if key == "wings_x":
         return "fore/aft mount (0=front, 1=back)"
     if key == "wings_y_offset":
-        return "y-offset on tube (-1=bottom, 0=mid, 1=top)"
+        return "y-offset (-1=bottom, 0=mid, 1=top; X: -1=mid, 0=45deg, 1=top)"
     if key == "pointed_shape":
         return "pointed shape"
     if key == "shape":
@@ -476,6 +476,8 @@ class BuilderV3TkApp:
             module_type = module_data["type"]
             if "x" not in part:
                 normalized_part["x"] = module_data["cg"] * module_data["len"] - module_data["len"] * 0.5
+            if "wings_layout" not in module_data or module_data["wings_layout"] == "V":
+                module_data["wings_layout"] = derive_wings_layout(module_data)
             normalized_part["module"] = apply_template_values(module_data, self.templates_data["module_templates"][module_type])
             if "surfaces" in part:
                 surface_block = part["surfaces"]
@@ -705,6 +707,8 @@ class BuilderV3TkApp:
 
     def on_select_value(self, target: dict, key: str, variable: tk.StringVar, rebuild: bool = False) -> None:
         target[key] = variable.get()
+        if key == "wings_layout" and target[key] == "X" and target.get("wings_ang", 0.0) == 0.0:
+            target["wings_ang"] = 45.0
         if rebuild:
             self.rebuild_module_editor()
         self.light_recompute()

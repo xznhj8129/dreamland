@@ -3,6 +3,8 @@ Usage:
 python analyze_headless.py
 python analyze_headless.py --config test.json
 python analyze_headless.py --config test.json --aoa 5
+python analyze_headless.py --config test.json --export-step out.step
+python analyze_headless.py --config test.json --export-step out.step --step-mode fused --export-stl out.stl
 """
 
 import argparse
@@ -21,6 +23,10 @@ def main() -> None:
     parser.add_argument("--airspeed", type=float, default=10.0, help="Operating airspeed in m/s for dimensional surface-force reporting.")
     parser.add_argument("--altitude", type=float, default=0.0, help="Operating altitude in meters for dimensional surface-force reporting.")
     parser.add_argument("--dump-analysis", type=Path, default=None, help="Optional path to write the full computed analysis JSON.")
+    parser.add_argument("--export-step", type=Path, default=None, help="Optional path to write the airframe as a STEP file.")
+    parser.add_argument("--step-mode", choices=["assembly", "fused"], default="assembly", help="STEP export mode: named component assembly or fused single OML.")
+    parser.add_argument("--export-stl", type=Path, default=None, help="Optional path to write the airframe as an STL mesh.")
+    parser.add_argument("--export-prop-discs", action="store_true", help="Include thin propeller discs in CAD exports (for actuator-disc CFD setups).")
     args = parser.parse_args()
 
     modules_data, parts_data, default_config, standards_data, motor_data_df, _motor_names, _propeller_names = load_builder_data()
@@ -62,6 +68,18 @@ def main() -> None:
         }
         with open(args.dump_analysis, "w") as file:
             json.dump(json_safe_data(analysis_dump), file, indent=4, allow_nan=False)
+
+    if args.export_step is not None:
+        from libs.cad import export_step
+
+        written_mode = export_step(analysis, args.export_step, mode=args.step_mode, include_prop_discs=args.export_prop_discs)
+        print(f"STEP written ({written_mode}): {args.export_step}")
+
+    if args.export_stl is not None:
+        from libs.cad import export_stl
+
+        written_mode = export_stl(analysis, args.export_stl, include_prop_discs=args.export_prop_discs)
+        print(f"STL written ({written_mode}): {args.export_stl}")
 
 
 if __name__ == "__main__":

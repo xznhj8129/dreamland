@@ -6,6 +6,7 @@ from tkinter import ttk
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
+from libs.analysis import layout_wing_count
 from libs.graphics import draw_canvas_view
 
 
@@ -634,6 +635,9 @@ class ConfigurationMainView:
         if title == "Surface":
             ttk.Label(frame, text="mid-span chord (mm)").grid(row=next_row, column=0, sticky="w")
             ttk.Label(frame, text=f"{(0.5 * (data['chord_root'] + data['chord_tip']) * 1000.0):g}").grid(row=next_row, column=1, sticky="w", padx=(8, 0), pady=2)
+        if schema_name == "module" and "wings_layout" in data and (data["type"] == "wingmount" or data.get("fins", False)):
+            ttk.Label(frame, text="wing count").grid(row=next_row, column=0, sticky="w")
+            ttk.Label(frame, text=str(layout_wing_count(data["wings_layout"]))).grid(row=next_row, column=1, sticky="w", padx=(8, 0), pady=2)
 
     def build_dict_rows(
         self,

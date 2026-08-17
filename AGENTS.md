@@ -7,13 +7,13 @@ This directory is the modular tube-aircraft configuration frontend.
 Primary files:
 - `guibuilder.py`: Tk window and widget wiring
 - `libs/analysis.py`: headless configuration expansion and analysis
-- `libs/cad.py`: CAD export mapping from current design state to FreeCAD-style varsets
+- `libs/cad.py`: CAD export: FreeCAD-style varsets plus CadQuery solid geometry (STEP/STL, built in mm)
 - `libs/graphics.py`: orthographic drawing on Tk canvas
 - `libs/library_editors.py`: main-window editor panels for `data/modules.json` and `data/parts.json`
 - `libs/views/configuration_view.py`: configuration main-view layout and assembly-card rendering
 - `libs/views/aero_analysis_view.py`: Aero Analysis main-view layout and NeuralFoil airfoil comparison
 - `libs/views/vlm_view.py`: VLM main-view layout and selectors
-- `libs/views/cad_view.py`: CAD main-view placeholder
+- `libs/views/cad_view.py`: CAD main-view with STEP/STL export controls
 - `libs/views/module_editor_view.py`: module-editor main-view mount
 - `libs/views/part_editor_view.py`: part-editor main-view mount
 - `libs/pointed_shapes.py`: pointed-profile geometry helpers

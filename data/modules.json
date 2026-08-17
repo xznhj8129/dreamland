@@ -6,8 +6,7 @@
         "diam": 0.062,
         "mass": 0.029,
         "cg": 0.5,
-        "wings_n": 2,
-        "wing_phase": 0,
+        "wings_layout": "H",
         "wings_ang": 0,
         "wings_x": 0.5,
         "pointed_shape": {
@@ -20,7 +19,8 @@
             "break_fraction": 0.5,
             "break_radius_fraction": 0.5
         },
-        "fins": false
+        "fins": false,
+        "wings_y_offset": 0.0
     },
     "dome-nose": {
         "type": "end",
@@ -29,8 +29,7 @@
         "diam": 0.062,
         "mass": 0.031,
         "cg": 0.5,
-        "wings_n": 2,
-        "wing_phase": 0,
+        "wings_layout": "H",
         "wings_ang": 0,
         "wings_x": 0.5,
         "pointed_shape": {
@@ -43,7 +42,8 @@
             "break_fraction": 0.5,
             "break_radius_fraction": 0.5
         },
-        "fins": false
+        "fins": false,
+        "wings_y_offset": 0.0
     },
     "cam-nose": {
         "type": "end",
@@ -52,8 +52,7 @@
         "diam": 0.062,
         "mass": 0.047,
         "cg": 0.5,
-        "wings_n": 2,
-        "wing_phase": 0,
+        "wings_layout": "H",
         "wings_ang": 0,
         "wings_x": 0.5,
         "pointed_shape": {
@@ -66,7 +65,8 @@
             "break_fraction": 0.5,
             "break_radius_fraction": 0.5
         },
-        "fins": false
+        "fins": false,
+        "wings_y_offset": 0.0
     },
     "avionics-1": {
         "type": "body",
@@ -149,9 +149,9 @@
         "diam": 0.062,
         "mass": 0.125,
         "cg": 0.5,
-        "wings_n": 4,
-        "wing_phase": 45,
-        "wings_ang": 0
+        "wings_layout": "X",
+        "wings_ang": 45,
+        "wings_y_offset": 0.0
     },
     "crossfin-holder": {
         "type": "wingmount",
@@ -160,10 +160,10 @@
         "diam": 0.062,
         "mass": 0.104,
         "cg": 0.5,
-        "wings_n": 4,
-        "wing_phase": 45,
-        "wings_ang": 0,
-        "ballast": true
+        "wings_layout": "X",
+        "wings_ang": 45,
+        "ballast": true,
+        "wings_y_offset": 0.0
     },
     "crossfin-holder2": {
         "type": "wingmount",
@@ -172,10 +172,10 @@
         "diam": 0.062,
         "mass": 0.104,
         "cg": 0.5,
-        "wings_n": 4,
-        "wing_phase": 45,
-        "wings_ang": 0,
-        "ballast": true
+        "wings_layout": "X",
+        "wings_ang": 45,
+        "ballast": true,
+        "wings_y_offset": 0.0
     },
     "4wing-holder": {
         "type": "wingmount",
@@ -184,10 +184,10 @@
         "diam": 0.062,
         "mass": 0.104,
         "cg": 0.5,
-        "wings_n": 4,
-        "wing_phase": 30,
+        "wings_layout": "+",
         "wings_ang": 0,
-        "ballast": true
+        "ballast": true,
+        "wings_y_offset": 0.0
     },
     "2wing-holder": {
         "type": "wingmount",
@@ -196,10 +196,10 @@
         "diam": 0.062,
         "mass": 0.096,
         "cg": 0.5,
-        "wings_n": 2,
-        "wing_phase": 0,
+        "wings_layout": "H",
         "wings_ang": 5,
-        "ballast": true
+        "ballast": true,
+        "wings_y_offset": 0.0
     },
     "vesta-mainwing-holder": {
         "type": "wingmount",
@@ -208,10 +208,10 @@
         "diam": 0.062,
         "mass": 0.096,
         "cg": 0.5,
-        "wings_n": 2,
-        "wing_phase": 0,
+        "wings_layout": "H",
         "wings_ang": 0,
-        "ballast": true
+        "ballast": true,
+        "wings_y_offset": 0.0
     },
     "2wing-holder-tail": {
         "type": "wingmount",
@@ -220,9 +220,9 @@
         "diam": 0.062,
         "mass": 0.096,
         "cg": 0.5,
-        "wings_n": 2,
-        "wing_phase": 0,
-        "wings_ang": 40
+        "wings_layout": "H",
+        "wings_ang": 40,
+        "wings_y_offset": 0.0
     },
     "simplecrossfinholder": {
         "type": "wingmount",
@@ -231,10 +231,10 @@
         "diam": 0.062,
         "mass": 0.6,
         "cg": 0.5,
-        "wings_n": 4,
-        "wing_phase": 45,
-        "wings_ang": 0,
-        "ballast": true
+        "wings_layout": "X",
+        "wings_ang": 45,
+        "ballast": true,
+        "wings_y_offset": 0.0
     },
     "quad-wingmount-v2": {
         "type": "wingmount",
@@ -243,11 +243,11 @@
         "diam": 0.062,
         "mass": 0.125,
         "cg": 0.5,
-        "wings_n": 4,
-        "wing_phase": 45,
-        "wings_ang": 0,
+        "wings_layout": "X",
+        "wings_ang": 45,
         "wings_x": 0.75,
-        "ballast": true
+        "ballast": true,
+        "wings_y_offset": 0.0
     },
     "quad-wingmount-v3": {
         "type": "wingmount",
@@ -256,11 +256,11 @@
         "diam": 0.062,
         "mass": 0.125,
         "cg": 0.5,
-        "wings_n": 4,
-        "wing_phase": 45,
-        "wings_ang": 0,
+        "wings_layout": "X",
+        "wings_ang": 45,
         "wings_x": 0.5,
-        "ballast": true
+        "ballast": true,
+        "wings_y_offset": 0.0
     },
     "short-wing": {
         "type": "wing",
@@ -541,8 +541,7 @@
         "diam": 0.062,
         "mass": 0.027,
         "cg": 0.5,
-        "wings_n": 2,
-        "wing_phase": 0,
+        "wings_layout": "H",
         "wings_ang": 0,
         "wings_x": 0.5,
         "pointed_shape": {
@@ -556,7 +555,8 @@
             "break_radius_fraction": 0.5
         },
         "fins": false,
-        "motor": false
+        "motor": false,
+        "wings_y_offset": 0.0
     },
     "vtail": {
         "type": "end",
@@ -565,8 +565,7 @@
         "diam": 0.062,
         "mass": 0.059,
         "cg": 0.5,
-        "wings_n": 2,
-        "wing_phase": 0,
+        "wings_layout": "H",
         "wings_ang": 0,
         "wings_x": 0.5,
         "pointed_shape": {
@@ -582,7 +581,8 @@
         "fins": false,
         "motor": true,
         "motor_n": 1,
-        "motor_x_pos": 1.0
+        "motor_x_pos": 1.0,
+        "wings_y_offset": 0.0
     },
     "motor_cap": {
         "type": "end",
@@ -591,8 +591,7 @@
         "diam": 0.062,
         "mass": 0.03,
         "cg": 0.5,
-        "wings_n": 2,
-        "wing_phase": 0,
+        "wings_layout": "H",
         "wings_ang": 0,
         "wings_x": 0.5,
         "pointed_shape": {
@@ -608,7 +607,8 @@
         "fins": false,
         "motor": true,
         "motor_n": 1,
-        "motor_x_pos": 1.0
+        "motor_x_pos": 1.0,
+        "wings_y_offset": 0.0
     },
     "big_motor_cap": {
         "type": "end",
@@ -617,8 +617,7 @@
         "diam": 0.062,
         "mass": 0.032,
         "cg": 0.5,
-        "wings_n": 2,
-        "wing_phase": 0,
+        "wings_layout": "H",
         "wings_ang": 0,
         "wings_x": 0.5,
         "pointed_shape": {
@@ -634,6 +633,7 @@
         "fins": false,
         "motor": true,
         "motor_n": 1,
-        "motor_x_pos": 0.0
+        "motor_x_pos": 0.0,
+        "wings_y_offset": 0.0
     }
 }

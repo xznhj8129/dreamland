@@ -305,10 +305,11 @@ ParametersSection [editable]
         len
         mass
         cg
-        wings_n
-        wing_phase
+        wings_layout
+        wings_fin_pos
         wings_ang
         wings_x
+        wings_y_offset
         pointed_shape
         fins
         ballast
@@ -324,7 +325,16 @@ ParametersSection [editable]
         diam
         model
 
+    read-only rows
+        - wing count, derived from the selected layout (shown for wingmounts
+          and for end modules with fins enabled)
+
     special cases
+        - wings_layout is a dropdown with options H, 1, 3, +, X
+        - selecting X sets dihedral to 45 if it was 0
+        - wings_y_offset meaning depends on layout: for H-type pairs
+          -1=bottom, 0=mid, 1=top; for X, -1=mid, 0=45 deg, 1=top
+        - wings_fin_pos is only shown for layouts 1 and 3
         - end modules only expose fin placement fields when fins is enabled
         - end modules edit pointed geometry through a nested pointed_shape block
         - inside pointed_shape, only the parameters relevant to the selected shape are shown
