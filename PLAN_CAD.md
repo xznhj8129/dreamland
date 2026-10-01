@@ -1,5 +1,7 @@
 # Plan: STEP Export from Generated Airframe Geometry
 
+Status: completed (implemented in libs/cad.py, libs/views/cad_view.py, analyze_headless.py). Historical; current plan is PLAN.md.
+
 ## Goal
 
 Export the assembled airframe as a watertight STEP file suitable for CFD meshing and FreeCAD import. The geometry source is the `analysis` dict produced by `recompute_analysis()`, which already contains fully resolved 3D positions and dimensions for every component.

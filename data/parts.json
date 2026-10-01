@@ -127,5 +127,10 @@
             "min_s": 2,
             "max_s": 4
         }
+    },
+    "material": {
+        "elegoo_pla_plus": {
+            "density_kg_m3": 1300.0
+        }
     }
 }

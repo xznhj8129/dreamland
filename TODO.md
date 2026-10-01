@@ -21,7 +21,17 @@
         
 - Motor pods need the same shape constructor as ends for the curved section
 
-- Review 2026-10-01 (4 parallel reviews; V = verified by running). Order: data model -> shared geometry -> physics -> aero -> GUI -> JSBSim.
+- Review 2026-10-01 (4 parallel reviews; V = verified by running). Order and plane-first redesign: PLAN.md.
+
+- Data to verify (owner to correct; found by scanning the libraries 2026-10-01):
+        - Brotherhobby F2008 1000KV: motordata.csv weight 27.08 g (4S rows) vs 27.75 g (3S rows). Real weight?
+        - Battery mass 0.0 in parts.json: GNB-5300mah-6S, GNB-4000mah-6S, Tattu-Gtech-6000mah-6S, Tattu-4500mah-6S. Real weights?
+        - Flashobby A4214 380KV: thrust at low throttle is ~7x the next row (GF1308 6S 7981 g at 50% -> 1167 g at 60%; same pattern GF1310, HQ1309, 6S and 8S). Likely a typo or column swap in the 40-50% rows.
+        - Uangel A2807 1300KV GF7042X2 6S: thrust 1948 g at 90%, 1836 g at 100%.
+        - Empty RPM in GEPRC EM2810 1280/1350 (GF7535X3, GF8040X3, HQ7037X3, GF7037X3) and iFlight XING 2RAW 2812 1150 (GE8060X3, HQ8045X3) rows.
+        - No prop masses anywhere (e.g. GF7042, GF9045). Real weights?
+        - Bench data starts at 10-50% throttle (lowest point: 10% in 13 series, 30% in 11, 40% in 12, 50% in 23 of 60); hover often falls below it.
+        - Real m62v2/quadlancet62 reinforcement: 4 x 2.5 mm x 400 mm carbon fiber rods. Schema spar_rods has no rod length/start (assumes full length) and no CF material yet.
 
 - A. Data model (one source of truth):
         - Saved configs embed full module blocks under library names that drifted from the library (V: batt-1 mass 0.065 vs 0.089, endcap 0.015/len 0.02 vs 0.027/0.07, saggerwing-7in 0.025 vs 0.059, quad-wingmount-v3 len 0.11 vs 0.15). guibuilder.py normalize_config_from_templates expands references; headless cannot run reference configs (KeyError 'x'). One normalizer for GUI + headless; references + explicit overrides.
@@ -87,7 +97,6 @@
         - __pycache__/*.pyc committed despite .gitignore.
         - No requirements file. Deps (aerosandbox, neuralfoil, cadquery) only present in conda env "drone".
         - AGENTS.md lists cad_example.py and library_editors_example.py, which do not exist; AGENTS.md caveats still describe linear AoA pass; docs/ui/configuration_view.md says red marker is Static CP; main_window.md calls CAD a placeholder.
-        - PLAN_CAD.md says libs/views/cad_view.py is a placeholder; it is implemented.
 
 - Bring over from cadbuildsystem (predecessor):
         - cadparams/ FreeCAD spreadsheets (AirframeParams, WingVars, ParamAirfoil, CanardsAirfoil). Fix Fuselage_Thickness expr: OD - ID gives 2x wall; libs/cad.py uses (OD - ID) / 2.

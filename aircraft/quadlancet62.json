@@ -1,0 +1,191 @@
+{
+    "schema": "airframe/2",
+    "name": "62mm Quadlancer 9in",
+    "notes": "Converted from the Lego-style quadlancet62.json. Real aircraft. 'legacy *' point masses are the old module and coupler masses (printed part plus whatever it contained) at their old CG; printed structure is inside them, so fuselage.structure_mass_kg is 0. Replace them with real volumes and remove structure_mass_kg to compute structure.",
+    "preset": "M62",
+    "operating_point": {
+        "aoa_deg": 0.0,
+        "airspeed_m_s": 15.0,
+        "altitude_m": 0.0
+    },
+    "print": {
+        "material": "elegoo_pla_plus",
+        "printer_bed_m": [
+            0.24,
+            0.24,
+            0.25
+        ]
+    },
+    "fuselage": {
+        "length_m": 0.789,
+        "section": {
+            "width_m": 0.062,
+            "height_m": 0.062,
+            "shape": 2.0,
+            "wall_radial_m": 0.00125
+        },
+        "nose": {
+            "profile": "elliptical",
+            "length_m": 0.06,
+            "params": {}
+        },
+        "tail": {
+            "profile": "elliptical",
+            "length_m": 0.02,
+            "params": {}
+        },
+        "joints": {
+            "type": "radial_screws",
+            "count": 8,
+            "screw": "M3",
+            "insertion_depth_m": 0.01
+        },
+        "channels": [],
+        "structure_mass_kg": 0.0
+    },
+    "surfaces": [
+        {
+            "name": "new-wing",
+            "x_root_le_m": 0.398,
+            "layout": "X",
+            "fin_position": "top",
+            "dihedral_deg": 30.0,
+            "root_offset": 0.1807,
+            "exposed_span_m": 0.32,
+            "chord_root_m": 0.1,
+            "chord_tip_m": 0.09,
+            "sweep_le_deg": 1.0,
+            "incidence_deg": 2.0,
+            "airfoil": "naca2412",
+            "mass_kg": 0.1
+        },
+        {
+            "name": "9in-puller",
+            "x_root_le_m": 0.6805,
+            "layout": "X",
+            "fin_position": "top",
+            "dihedral_deg": 45.0,
+            "root_offset": 0.0,
+            "exposed_span_m": 0.137,
+            "chord_root_m": 0.1,
+            "chord_tip_m": 0.08,
+            "sweep_le_deg": 8.0,
+            "incidence_deg": 0.0,
+            "airfoil": "naca0008",
+            "mass_kg": 0.1
+        }
+    ],
+    "propulsion": {
+        "motor": {
+            "brand": "Flashobby",
+            "model": "A2812",
+            "kv": 900,
+            "prop": "GF9045"
+        },
+        "battery_volume": "battery",
+        "mounts": [
+            {
+                "on": "surface",
+                "surface": "9in-puller",
+                "span_position_m": 0.137,
+                "x_offset_m": 0.0,
+                "direction": "tractor",
+                "pod": {
+                    "diameter_m": 0.035,
+                    "flat_length_m": 0.02,
+                    "curve_length_m": 0.05,
+                    "profile": "elliptical"
+                }
+            }
+        ]
+    },
+    "volumes": [
+        {
+            "name": "battery",
+            "shape": "box",
+            "part": "battery:lipo-6S-2200",
+            "x_m": 0.16
+        },
+        {
+            "name": "legacy cam-nose",
+            "shape": "point",
+            "x_m": 0.03,
+            "mass_kg": 0.047
+        },
+        {
+            "name": "legacy coupler 1",
+            "shape": "point",
+            "x_m": 0.06,
+            "mass_kg": 0.02136
+        },
+        {
+            "name": "legacy batt-1",
+            "shape": "point",
+            "x_m": 0.16,
+            "mass_kg": 0.065
+        },
+        {
+            "name": "legacy coupler 2",
+            "shape": "point",
+            "x_m": 0.26,
+            "mass_kg": 0.02136
+        },
+        {
+            "name": "legacy avionics-1",
+            "shape": "point",
+            "x_m": 0.3235,
+            "mass_kg": 0.085
+        },
+        {
+            "name": "legacy coupler 3",
+            "shape": "point",
+            "x_m": 0.387,
+            "mass_kg": 0.02136
+        },
+        {
+            "name": "legacy mainwing",
+            "shape": "point",
+            "x_m": 0.448,
+            "mass_kg": 0.05
+        },
+        {
+            "name": "legacy coupler 4",
+            "shape": "point",
+            "x_m": 0.509,
+            "mass_kg": 0.02136
+        },
+        {
+            "name": "legacy quad-esc-1",
+            "shape": "point",
+            "x_m": 0.584,
+            "mass_kg": 0.055
+        },
+        {
+            "name": "legacy coupler 5",
+            "shape": "point",
+            "x_m": 0.659,
+            "mass_kg": 0.02136
+        },
+        {
+            "name": "legacy quad-wingmount-v3",
+            "shape": "point",
+            "x_m": 0.714,
+            "mass_kg": 0.122
+        },
+        {
+            "name": "legacy coupler 6",
+            "shape": "point",
+            "x_m": 0.769,
+            "mass_kg": 0.02136
+        },
+        {
+            "name": "legacy endcap",
+            "shape": "point",
+            "x_m": 0.779,
+            "mass_kg": 0.015
+        }
+    ],
+    "sections": {
+        "locked_cuts_m": []
+    }
+}
