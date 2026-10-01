@@ -1,14 +1,15 @@
 """
 Usage:
-from libs.report import build_report_text
+from libs.report import build_report_text, build_detailed_report_text
 text = build_report_text(resolved, aero, problems, sweep=True)
+text = build_detailed_report_text(resolved, aero, detailed)
 
-Plain-text report of a resolved airframe and its aero result, shared by analyze_airframe.py and the GUI.
+Plain-text reports of a resolved airframe and its aero results, shared by analyze_airframe.py and the GUI.
 """
 
 import math
 
-from libs.aero import AeroResult, stability_verdict
+from libs.aero import AeroResult, DetailedAeroResult, stability_verdict
 from libs.geometry import GRAMS_FORCE_PER_NEWTON, STANDARD_GRAVITY_M_S2, ResolvedAirframe
 
 
@@ -64,3 +65,36 @@ def build_report_text(resolved: ResolvedAirframe, aero: AeroResult, problems: li
         for row in aero.sweep:
             lines.append(f"  {row.aoa_deg:5.0f} {row.cl:8.4f} {row.cd:8.4f} {row.cm:8.4f} {row.lift_n:8.3f} {row.lift_n / weight_n * 100.0:9.1f} {row.x_np_m:8.4f}  {row.pitch}")
     return "\n".join(lines)
+
+
+def build_detailed_report_text(resolved: ResolvedAirframe, aero: AeroResult, detailed: DetailedAeroResult) -> str:
+    """Detailed (hybrid) aero next to the fast model at the same operating point."""
+    weight_n = sum(resolved.mass_kg) / 2.0 * STANDARD_GRAVITY_M_S2
+    chord = resolved.reference.chord_m
+    lines = [
+        "Detailed aero (lifting-line wings + AeroBuildup bodies)",
+        "  Includes downwash between surfaces, lift carried across the body, viscous camber and stall.",
+        f"  Operating point  : AoA {detailed.aoa_deg:.1f} deg  V {detailed.airspeed_m_s:.1f} m/s  alt {detailed.altitude_m:.0f} m",
+        f"  {'':<18} {'fast (AeroBuildup)':>20} {'detailed (hybrid)':>20}",
+    ]
+    rows = (
+        ("Lift N", aero.lift_n, detailed.lift_n, ".3f"),
+        ("Lift % weight", aero.lift_n / weight_n * 100.0, detailed.lift_n / weight_n * 100.0, ".1f"),
+        ("Drag N", aero.drag_n, detailed.drag_n, ".3f"),
+        ("CL", aero.cl, detailed.cl, ".4f"),
+        ("CD", aero.cd, detailed.cd, ".4f"),
+        ("Cm", aero.cm, detailed.cm, ".4f"),
+        ("Neutral point m", aero.x_np_m, detailed.x_np_m, ".4f"),
+        ("Margin mm", (aero.x_np_m - resolved.cg_m[0]) * 1000.0, (detailed.x_np_m - resolved.cg_m[0]) * 1000.0, ".1f"),
+        ("Margin % c_ref", (aero.x_np_m - resolved.cg_m[0]) / chord * 100.0, (detailed.x_np_m - resolved.cg_m[0]) / chord * 100.0, ".1f"),
+    )
+    for label, fast_value, detailed_value, spec in rows:
+        lines.append(f"  {label:<18} {format(fast_value, spec):>20} {format(detailed_value, spec):>20}")
+    lines.append(f"  {'Verdict':<18} {stability_verdict(aero.x_np_m - resolved.cg_m[0], chord):>20} {stability_verdict(detailed.x_np_m - resolved.cg_m[0], chord):>20}")
+    lines.append(f"  Body + pods lift (detailed): {detailed.body_lift_n:.3f} N")
+    lines.append("")
+    lines.append(f"  {'AoA':>5} {'CL':>8} {'CD':>8} {'Cm':>8} {'Lift N':>8} {'Weight %':>9} {'NP m':>8}  Pitch")
+    for row in detailed.sweep:
+        lines.append(f"  {row.aoa_deg:5.0f} {row.cl:8.4f} {row.cd:8.4f} {row.cm:8.4f} {row.lift_n:8.3f} {row.lift_n / weight_n * 100.0:9.1f} {row.x_np_m:8.4f}  {row.pitch}")
+    return "\n".join(lines)
+

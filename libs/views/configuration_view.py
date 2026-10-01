@@ -131,6 +131,9 @@ class ConfigurationMainView:
         left_header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         left_header.columnconfigure(1, weight=1)
         ttk.Button(left_header, text="Recompute (F5)", command=app.recompute).grid(row=0, column=0, sticky="w")
+        ttk.Button(left_header, text="Detailed aero (~1 min)", command=app.start_detailed_aero).grid(row=1, column=0, sticky="w", pady=(4, 0))
+        self.detailed_status_var = tk.StringVar(value="Detailed aero: not run for this airframe")
+        ttk.Label(left_header, textvariable=self.detailed_status_var).grid(row=1, column=1, sticky="e", padx=(8, 0), pady=(4, 0))
         ttk.Label(left_header, textvariable=app.recompute_status_var).grid(row=0, column=1, sticky="e", padx=(8, 0))
 
         left_notebook = ttk.Notebook(left_frame)
@@ -266,7 +269,7 @@ class ConfigurationMainView:
             app.roll_frame.grid_remove()
         else:
             app.roll_frame.grid()
-        draw_args = (app.view_canvas, app.resolved, app.aero, app.view_mode_var.get(), app.roll_view_var.get(), app.ui_draw, app.ui_bg)
+        draw_args = (app.view_canvas, app.resolved, app.aero, app.detailed, app.view_mode_var.get(), app.roll_view_var.get(), app.ui_draw, app.ui_bg)
         self.view_metrics = draw_canvas_view(*draw_args, self.view_zoom_scale, self.view_pan_x, self.view_pan_y)
         if self.clamp_view_pan():
             self.view_metrics = draw_canvas_view(*draw_args, self.view_zoom_scale, self.view_pan_x, self.view_pan_y)
