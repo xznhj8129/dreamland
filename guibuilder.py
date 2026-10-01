@@ -93,7 +93,8 @@ class BuilderApp:
         self.build_layout()
         self.set_title()
         self.root.bind("<F5>", self.on_manual_recompute)
-        self.root.after(AERO_QUEUE_POLL_MS, self.poll_aero_queue)
+        self.root.protocol("WM_DELETE_WINDOW", self.shutdown)
+        self.poll_after_id = self.root.after(AERO_QUEUE_POLL_MS, self.poll_aero_queue)
         self.configuration_main_view.rebuild_editors()
         self.recompute()
 
@@ -139,7 +140,11 @@ class BuilderApp:
             self.write_summary(build_report_text(resolved, aero, self.problems, sweep=True))
             self.recompute_status_var.set("Up to date")
             self.configuration_main_view.draw_active_view()
-        self.root.after(AERO_QUEUE_POLL_MS, self.poll_aero_queue)
+        self.poll_after_id = self.root.after(AERO_QUEUE_POLL_MS, self.poll_aero_queue)
+
+    def shutdown(self) -> None:
+        self.root.after_cancel(self.poll_after_id)
+        self.root.destroy()
 
     def write_summary(self, text: str) -> None:
         self.summary_text.delete("1.0", tk.END)
@@ -281,7 +286,7 @@ class BuilderApp:
         file_menu.add_command(label="Save", command=self.save_json)
         file_menu.add_command(label="Save As", command=self.save_json_as)
         file_menu.add_separator()
-        file_menu.add_command(label="Exit", command=self.root.destroy)
+        file_menu.add_command(label="Exit", command=self.shutdown)
         menu_bar.add_cascade(label="File", menu=file_menu)
         self.root.config(menu=menu_bar)
 
