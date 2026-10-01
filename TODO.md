@@ -63,7 +63,7 @@
 - D. Aero (fast = AeroBuildup, live; detailed = lifting-line wings + AeroBuildup bodies, on demand):
         - Fast model has no downwash between surfaces, no wing-body carry-over, and centres its finite-wing correction on 0 deg instead of the zero-lift angle (AeroSandbox TODO), over-crediting camber. m62v2 at 5 deg / 20 m/s: fast NP 0.365 m (+27.6 mm), detailed 0.3325 m (-5.0 mm); quadlancet62 fast +8 mm, detailed about 0. Owner: no control surfaces, FC always flying, jet-fighter-like stability (matches detailed).
         - Detailed model: body-rooted panels carried to the axis (carry-over includes camber lift); bodies from AeroBuildup; totals only (no per-surface split); valid to about +-30 deg (lifting line NaN at 45 deg); ~50-60 s.
-        - aero_check.py reference is VLM carried through the body (inviscid; under-reads low-Re camber at 0 deg: m62v2 main wing 0.87 N vs lifting line 1.29 N). Use the carried-through lifting line as the reference instead.
+        - aero_check.py (reference: lifting line, body-rooted panels carried to the axis) at 5 deg / 20 m/s: fast model m62v2 main wing -20 %, X-wing -57 % (0.98 vs 2.28 N), tail fins +25 %; quadlancet62 long-span X main wing 1 %, short 9in-puller X -42 %. Fast model has no carry-over, so short X-wings on the tube are badly under-counted.
         - Stability verdict depends on operating point; low-Re (45-65k) NeuralFoil section curves are bumpy; local NP per AoA jitters +/- 2-3 cm.
         - Recompute ~0.9 s (fast, 94 AoA points). 2.5 deg sweep step: ~0.35 s.
         - Imported DAT airfoils cannot be assigned to surfaces (surfaces take AeroSandbox names only).
