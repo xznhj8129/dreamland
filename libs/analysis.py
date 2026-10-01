@@ -13,6 +13,8 @@ from pathlib import Path
 import aerosandbox as asb
 import numpy as np
 import pandas as pd
+from libs.aero import AERO_MODEL_SIZE, AOA_SWEEP_DEG, NEUTRAL_POINT_FIT_HALF_WINDOW_DEG, STABILITY_MARGINAL_PCT, barrowman_finset
+from libs.geometry import GRAMS_FORCE_PER_NEWTON, STANDARD_GRAVITY_M_S2, surface_panel_layout, trapezoid_mac
 from libs.pointed_shapes import pointed_shape_param_values, sample_pointed_profile
 from libs.simlib2 import TestedMotorData
 
@@ -25,12 +27,6 @@ PARTS_PATH = DATA_DIR / "parts.json"
 DEFAULT_CONFIG_PATH = DATA_DIR / "default.json"
 STANDARDS_PATH = DATA_DIR / "specs.json"
 PROP_SHAFT_LEN_M = 0.015
-STANDARD_GRAVITY_M_S2 = 9.80665
-GRAMS_FORCE_PER_NEWTON = 1000.0 / STANDARD_GRAVITY_M_S2
-AERO_MODEL_SIZE = "large"
-AOA_SWEEP_DEG = range(-45, 46)
-STABILITY_MARGINAL_PCT = 5.0
-NEUTRAL_POINT_FIT_HALF_WINDOW_DEG = 4.0
 
 
 def json_safe_data(value):
@@ -50,40 +46,6 @@ def build_range_values(start_value: float, end_value: float, increment_value: fl
     return [float(value) for value in np.arange(start_value, end_value + increment_value * 0.5, increment_value)]
 
 
-def barrowman_finset(
-    effective_fin_count: float,
-    span: float,
-    chord_root: float,
-    chord_tip: float,
-    sweep_len: float,
-    body_radius: float,
-    ref_diameter: float,
-    x_root_le: float,
-) -> tuple[float, float, float]:
-    mid_chord_line = math.sqrt(
-        span * span + (sweep_len + 0.5 * chord_tip - 0.5 * chord_root) ** 2
-    )
-    cna = (
-        (1.0 + body_radius / (span + body_radius))
-        * (4.0 * effective_fin_count * (span / ref_diameter) ** 2)
-        / (1.0 + math.sqrt(1.0 + (2.0 * mid_chord_line / (chord_root + chord_tip)) ** 2))
-    )
-    x_cp_local = (
-        sweep_len / 3.0 * ((chord_root + 2.0 * chord_tip) / (chord_root + chord_tip))
-        + (1.0 / 6.0)
-        * (chord_root + chord_tip - (chord_root * chord_tip) / (chord_root + chord_tip))
-    )
-    return cna, x_root_le + x_cp_local, mid_chord_line
-
-
-def trapezoid_mac(chord_root: float, chord_tip: float) -> float:
-    return (
-        (2.0 / 3.0)
-        * ((chord_root * chord_root) + (chord_root * chord_tip) + (chord_tip * chord_tip))
-        / (chord_root + chord_tip)
-    )
-
-
 def layout_wing_count(layout: str) -> int:
     return {"1": 1, "H": 2, "3": 3, "+": 4, "X": 4}.get(layout, 2)
 
@@ -101,71 +63,6 @@ def derive_wings_layout(module_data: dict) -> str:
             return "X"
         return "+"
     return "H"
-
-
-def surface_panel_layout(
-    layout: str,
-    root_radius: float,
-    span: float,
-    dihedral_deg: float,
-    y_offset: float = 0.0,
-    fin_pos: str = "top",
-    centerline_root: bool = False,
-) -> list[dict]:
-    """
-    Layout defines the wing configuration:
-      H  — 2 horizontal wings, roots positioned by y_offset (-1=bottom, 0=equator, 1=top)
-      1  — single fin, position set by fin_pos ("top" or "bottom")
-      3  — H pair + single fin at fin_pos
-      +  — H pair + top and bottom fins
-      X  — 4 wings mirrored about the equator; y_offset sets the root angle on the
-           tube (-1=equator, 0=45 deg, 1=top/bottom), dihedral tilts each pair
-           away from the equator (45 = symmetric X)
-
-    Wing direction is always horizontal (±Y) for H-type panels.
-    Fin direction is always vertical (±Z) for fin-type panels.
-    Dihedral tilts H-type wings from horizontal; fins are unaffected.
-    """
-    d = math.radians(dihedral_deg)
-    cos_d = math.cos(d)
-    sin_d = math.sin(d)
-    oz = max(-root_radius, min(root_radius, y_offset * root_radius))
-    oy = math.sqrt(max(0.0, root_radius ** 2 - oz ** 2))
-    fin_z = root_radius if fin_pos == "top" else -root_radius
-    fin_dz = 1.0 if fin_pos == "top" else -1.0
-
-    # (root_y, root_z, dir_y, dir_z, xz_mirror) — fully explicit, no angles.
-    # xz_mirror: "primary" panels have an XZ-plane mirror "copy" in the same set; None = unpaired fin.
-    if layout == "1":
-        specs = [(0.0, fin_z, 0.0, fin_dz, None)]
-    elif layout == "3":
-        specs = [(+oy, oz, +cos_d, +sin_d, "primary"), (-oy, oz, -cos_d, +sin_d, "copy"), (0.0, fin_z, 0.0, fin_dz, None)]
-    elif layout == "+":
-        specs = [(+oy, oz, +cos_d, +sin_d, "primary"), (-oy, oz, -cos_d, +sin_d, "copy"),
-                 (0.0, +root_radius, 0.0, +1.0, None), (0.0, -root_radius, 0.0, -1.0, None)]
-    elif layout == "X":
-        root_ang = math.radians((max(-1.0, min(1.0, y_offset)) + 1.0) * 45.0)
-        xy = root_radius * math.cos(root_ang)
-        xz = root_radius * math.sin(root_ang)
-        specs = [(+xy, +xz, +cos_d, +sin_d, "primary"), (-xy, +xz, -cos_d, +sin_d, "copy"),
-                 (+xy, -xz, +cos_d, -sin_d, "primary"), (-xy, -xz, -cos_d, -sin_d, "copy")]
-    else:  # "H" and fallback
-        specs = [(+oy, oz, +cos_d, +sin_d, "primary"), (-oy, oz, -cos_d, +sin_d, "copy")]
-
-    panels = []
-    for index, (ry, rz, dy, dz, xz_mirror) in enumerate(specs):
-        norm = math.hypot(dy, dz)
-        if norm > 1e-9:
-            dy /= norm
-            dz /= norm
-        if centerline_root:
-            ry, rz = 0.0, 0.0
-        ty = dy * span if centerline_root else ry + span * dy
-        tz = dz * span if centerline_root else rz + span * dz
-        panels.append({"index": index, "phase_deg": 0.0, "dihedral_sign": 1.0,
-                        "root_y": ry, "root_z": rz, "tip_y": ty, "tip_z": tz,
-                        "dir_y": dy, "dir_z": dz, "xz_mirror": xz_mirror})
-    return panels
 
 
 def create_asb_surface(

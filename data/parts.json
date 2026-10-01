@@ -132,5 +132,19 @@
         "elegoo_pla_plus": {
             "density_kg_m3": 1300.0
         }
+    },
+    "prop": {
+        "7in": {
+            "diameter_in": 7,
+            "mass": 0.005
+        },
+        "9in": {
+            "diameter_in": 9,
+            "mass": 0.014
+        },
+        "10in": {
+            "diameter_in": 10,
+            "mass": 0.022
+        }
     }
 }

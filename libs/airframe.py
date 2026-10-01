@@ -28,6 +28,7 @@ DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 PARTS_PATH = DATA_DIR / "parts.json"
 MOTORDATA_PATH = Path(__file__).resolve().parent / "motordata.csv"
 PARTS_DIMENSION_UNIT_M = 0.001  # parts.json battery dimensions are in mm
+INCH_M = 0.0254
 
 LAYOUTS = ("H", "X", "+", "1", "3")
 FIN_POSITIONS = ("top", "bottom")
@@ -158,6 +159,10 @@ class Propulsion:
     battery_volume: str
     mounts: tuple[Mount, ...]
     motor_mass_kg: float  # per motor, from bench data
+    bell_diameter_m: float  # stator diameter from bench data
+    bell_length_m: float  # stator height from bench data
+    prop_diameter_m: float
+    prop_mass_kg: float  # per prop, from parts.json prop sizes
 
 
 @dataclass(frozen=True)
@@ -416,17 +421,25 @@ def _volume(data: dict, path: str, parts_data: dict) -> Volume:
     )
 
 
-def bench_motor_mass_kg(motor: MotorRef) -> float:
-    """Motor mass from the bench data; every row for this motor and KV must agree, whatever the cell count."""
+def bench_motor_specs(motor: MotorRef) -> tuple[float, float, float]:
+    """(mass_kg, stator_diameter_m, stator_height_m) from the bench data, averaged over rows (charts vary slightly)."""
     with open(MOTORDATA_PATH, newline="") as file:
-        weights_g = {
-            float(row["Weight g"])
-            for row in csv.DictReader(file)
+        rows = [
+            row for row in csv.DictReader(file)
             if row["Brand"] == motor.brand and row["Motor"] == motor.model and int(row["KV"]) == motor.kv
-        }
-    if len(weights_g) != 1:
-        raise AirframeError(f"{motor.brand} {motor.model} {motor.kv}KV: motordata.csv has motor weights {sorted(weights_g)} g, need exactly one")
-    return weights_g.pop() / 1000.0
+        ]
+    return tuple(sum(float(row[column]) for row in rows) / len(rows) / 1000.0 for column in ("Weight g", "Stator Diameter", "Stator height"))
+
+
+def prop_mass_kg(diameter_in: float, parts_data: dict) -> float:
+    """Prop mass from parts.json prop entries, linear in diameter between listed sizes."""
+    table = sorted((entry["diameter_in"], entry["mass"]) for entry in parts_data["prop"].values())
+    for (d0, m0), (d1, m1) in zip(table, table[1:]):
+        if d0 <= diameter_in <= d1:
+            return m0 + (m1 - m0) * (diameter_in - d0) / (d1 - d0)
+    if diameter_in == table[-1][0]:
+        return table[-1][1]
+    raise AirframeError(f"prop diameter {diameter_in} in is outside parts.json prop sizes {[d for d, _ in table]}")
 
 
 def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], volumes: tuple[Volume, ...], parts_data: dict) -> Propulsion:
@@ -467,6 +480,8 @@ def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], volumes: t
                 raise AirframeError(f"{mount_fields.at('span_position_m')}: {span_position_m} is past the panel span {surface_names[surface_name].exposed_span_m}")
             x_offset_m = mount_fields.number("x_offset_m")
         direction = mount_fields.choice("direction", THRUST_DIRECTIONS)
+        if (on, direction) in (("nose", "pusher"), ("tail", "tractor")):
+            raise AirframeError(f"{mount_fields.at('direction')}: a {on} motor must be a {'tractor' if on == 'nose' else 'pusher'}")
         pod_data = mount_fields.optional("pod", None)
         pod = None
         if pod_data is not None:
@@ -485,7 +500,13 @@ def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], volumes: t
     if not mounts:
         raise AirframeError(f"{fields.at('mounts')}: at least one mount is required")
     fields.done()
-    return Propulsion(motor=motor, battery_volume=battery_volume, mounts=tuple(mounts), motor_mass_kg=bench_motor_mass_kg(motor))
+    motor_mass_kg, bell_diameter_m, bell_length_m = bench_motor_specs(motor)
+    prop_diameter_in = tested.prop_info(motor.prop)["diameter_in"]
+    return Propulsion(
+        motor=motor, battery_volume=battery_volume, mounts=tuple(mounts), motor_mass_kg=motor_mass_kg,
+        bell_diameter_m=bell_diameter_m, bell_length_m=bell_length_m, prop_diameter_m=prop_diameter_in * INCH_M,
+        prop_mass_kg=prop_mass_kg(prop_diameter_in, parts_data),
+    )
 
 
 def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airframe:
@@ -587,11 +608,11 @@ def main() -> None:
             motor_count += panel_count(surface.layout) if surface is not None else 1
         volume_mass = [sum(volume.mass_kg[i] for volume in airframe.volumes) for i in (0, 1)]
         surface_mass = sum(surface.mass_kg for surface in airframe.surfaces if surface.mass_kg is not None)
-        motor_mass = motor_count * airframe.propulsion.motor_mass_kg
+        motor_mass = motor_count * (airframe.propulsion.motor_mass_kg + airframe.propulsion.prop_mass_kg)
         declared = [volume_mass[i] + surface_mass + motor_mass + (airframe.fuselage.structure_mass_kg or 0.0) for i in (0, 1)]
         print(f"{argument}: {airframe.name!r} valid")
         print(f"  fuselage {airframe.fuselage.length_m:.3f} m, {len(airframe.surfaces)} surface sets, {len(airframe.volumes)} volumes, {motor_count} motors")
-        print(f"  declared mass {declared[0]:.4f}-{declared[1]:.4f} kg (volumes {volume_mass[0]:.4f}-{volume_mass[1]:.4f}, surfaces {surface_mass:.4f}, motors {motor_mass:.4f})")
+        print(f"  declared mass {declared[0]:.4f}-{declared[1]:.4f} kg (volumes {volume_mass[0]:.4f}-{volume_mass[1]:.4f}, surfaces {surface_mass:.4f}, motors+props {motor_mass:.4f})")
         computed = [label for label, value in (("fuselage structure", airframe.fuselage.structure_mass_kg),) if value is None]
         computed += [f"surface {surface.name}" for surface in airframe.surfaces if surface.mass_kg is None]
         if computed:
