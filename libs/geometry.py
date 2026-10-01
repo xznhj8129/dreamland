@@ -26,6 +26,7 @@ END_PROFILE_SAMPLES = 14
 POD_PROFILE_SAMPLES = 14
 PERIMETER_SAMPLES = 72
 SPAN_STRIPS = 64
+ROOT_CHORD_SAMPLES = 16  # body radius samples under a root chord for the equivalent aero root
 PROP_SHAFT_LEN_M = 0.015
 MAX_RANGED_MASSES = 12  # CG range is found by enumerating min/max of every ranged mass
 STANDARD_GRAVITY_M_S2 = 9.80665
@@ -55,7 +56,9 @@ class Panel:
     surface: str
     index: int
     xz_mirror: str | None  # "primary", "copy" or None (unpaired fin)
-    root_le: Vec
+    attach_le: Vec  # true root leading edge, on the body surface
+    attach_te: Vec  # true root trailing edge, on the body surface (follows tapering nose/tail cones)
+    root_le: Vec  # equivalent aero root: at the mean body radius under the root chord (= attach_le on a straight tube)
     tip_le: Vec
     span_dir: Vec
     normal: Vec
@@ -249,33 +252,48 @@ def panel_normal(dir_y: float, dir_z: float) -> Vec:
     return (0.0, -dir_z * sign, dir_y * sign)
 
 
+def body_surface_point(body: Body, x_m: float, angle_rad: float) -> tuple[Vec, float]:
+    """Point on the body surface at station x and section angle; also returns its radius (0 off the body)."""
+    half_w, half_h = body_half_extents(body, x_m)
+    radius = superellipse_radius(half_w, half_h, body.shape, angle_rad) if half_w > 0.0 and half_h > 0.0 else 0.0
+    return (x_m, radius * math.cos(angle_rad), radius * math.sin(angle_rad)), radius
+
+
 def build_surface(surface: Surface, body: Body) -> SurfaceSet:
-    half_w, half_h = body_half_extents(body, surface.x_root_le_m)
     sweep_len = surface.exposed_span_m * math.tan(math.radians(surface.sweep_le_deg))
+    incidence = math.radians(surface.incidence_deg)
+    chord_root = surface.chord_root_m
     layout = surface_panel_layout(
         layout=surface.layout, root_radius=1.0, span=surface.exposed_span_m, dihedral_deg=surface.dihedral_deg,
         y_offset=surface.root_offset, fin_pos=surface.fin_position,
     )
     panels = []
+    aero_root_radii = []
     for spec in layout:
         angle = math.atan2(spec["root_z"], spec["root_y"])
-        radius = superellipse_radius(half_w, half_h, body.shape, angle)
-        root_y, root_z = radius * math.cos(angle), radius * math.sin(angle)
         dir_y, dir_z = spec["dir_y"], spec["dir_z"]
+        normal = panel_normal(dir_y, dir_z)
+        attach_le, _ = body_surface_point(body, surface.x_root_le_m, angle)
+        tip_le = (attach_le[0] + sweep_len, attach_le[1] + surface.exposed_span_m * dir_y, attach_le[2] + surface.exposed_span_m * dir_z)
+        te_surface, _ = body_surface_point(body, surface.x_root_le_m + chord_root * math.cos(incidence), angle)
+        attach_te = tuple(point - chord_root * math.sin(incidence) * n for point, n in zip(te_surface, normal))
+        radii = [body_surface_point(body, surface.x_root_le_m + chord_root * (k + 0.5) / ROOT_CHORD_SAMPLES, angle)[1] for k in range(ROOT_CHORD_SAMPLES)]
+        aero_radius = sum(radii) / len(radii)
+        aero_root_radii.append(aero_radius)
+        root_le = (surface.x_root_le_m, aero_radius * math.cos(angle), aero_radius * math.sin(angle))
         panels.append(Panel(
             surface=surface.name, index=spec["index"], xz_mirror=spec["xz_mirror"],
-            root_le=(surface.x_root_le_m, root_y, root_z),
-            tip_le=(surface.x_root_le_m + sweep_len, root_y + surface.exposed_span_m * dir_y, root_z + surface.exposed_span_m * dir_z),
-            span_dir=(0.0, dir_y, dir_z), normal=panel_normal(dir_y, dir_z),
-            chord_root_m=surface.chord_root_m, chord_tip_m=surface.chord_tip_m, span_m=surface.exposed_span_m,
+            attach_le=attach_le, attach_te=attach_te, root_le=root_le, tip_le=tip_le,
+            span_dir=(0.0, dir_y, dir_z), normal=normal,
+            chord_root_m=chord_root, chord_tip_m=surface.chord_tip_m,
+            span_m=math.dist(root_le[1:], tip_le[1:]),
             incidence_deg=surface.incidence_deg, airfoil=surface.airfoil,
         ))
-    first_angle = math.atan2(layout[0]["root_z"], layout[0]["root_y"])
     return SurfaceSet(
         name=surface.name, definition=surface, panels=tuple(panels),
-        planform_area_m2=len(panels) * surface.exposed_span_m * (surface.chord_root_m + surface.chord_tip_m) / 2.0,
-        mac_m=trapezoid_mac(surface.chord_root_m, surface.chord_tip_m),
-        body_half_extent_m=superellipse_radius(half_w, half_h, body.shape, first_angle),
+        planform_area_m2=sum(panel.span_m for panel in panels) * (chord_root + surface.chord_tip_m) / 2.0,
+        mac_m=trapezoid_mac(chord_root, surface.chord_tip_m),
+        body_half_extent_m=aero_root_radii[0],
     )
 
 
@@ -307,21 +325,35 @@ def surface_mass_point(surface_set: SurfaceSet, density_kg_m3: float, infill: fl
     return MassPoint(f"surface {surface_set.name}", "surface", centroid, (mass, mass), True)
 
 
-def structure_mass_point(airframe: Airframe, body: Body, density_kg_m3: float) -> MassPoint:
-    wall = airframe.fuselage.section.wall_radial_m
+def shell_between(body: Body, x0: float, x1: float, wall_m: float, density_kg_m3: float) -> tuple[float, float]:
+    """(mass, centroid x) of the body shell between two stations."""
+    xs = [x0] + [station.x_m for station in body.stations if x0 < station.x_m < x1] + [x1]
+    sections = [(x, *body_half_extents(body, x)) for x in xs]
     mass = 0.0
     moment_x = 0.0
-    for a, b in zip(body.stations, body.stations[1:]):
-        perimeter = (superellipse_perimeter(a.width_m, a.height_m, body.shape) + superellipse_perimeter(b.width_m, b.height_m, body.shape)) / 2.0
-        slant = math.hypot(b.x_m - a.x_m, (b.width_m - a.width_m) / 2.0)
-        segment = perimeter * slant * wall * density_kg_m3
+    for (xa, wa, ha), (xb, wb, hb) in zip(sections, sections[1:]):
+        perimeter = (superellipse_perimeter(2.0 * wa, 2.0 * ha, body.shape) + superellipse_perimeter(2.0 * wb, 2.0 * hb, body.shape)) / 2.0
+        segment = perimeter * math.hypot(xb - xa, wb - wa) * wall_m * density_kg_m3
         mass += segment
-        moment_x += segment * (a.x_m + b.x_m) / 2.0
-    centroid = (moment_x / mass, 0.0, 0.0)
-    given = airframe.fuselage.structure_mass_kg
-    if given is not None:
-        return MassPoint("fuselage structure", "structure", centroid, (given, given), False)
-    return MassPoint("fuselage structure", "structure", centroid, (mass, mass), True)
+        moment_x += segment * (xa + xb) / 2.0
+    return mass, moment_x / mass if mass > 0.0 else (x0 + x1) / 2.0
+
+
+def structure_mass_points(airframe: Airframe, body: Body, density_kg_m3: float) -> list[MassPoint]:
+    """One mass point per fuselage section (weighed, or shell computed from geometry) and one per coupler."""
+    sections = airframe.sections
+    bounds = [0.0, *sections.cuts_m, body.length_m]
+    points = []
+    for index, (x0, x1) in enumerate(zip(bounds, bounds[1:])):
+        computed_mass, centroid_x = shell_between(body, x0, x1, airframe.fuselage.section.wall_radial_m, density_kg_m3)
+        weighed = sections.mass_kg[index]
+        mass = computed_mass if weighed is None else weighed
+        points.append(MassPoint(f"section {index + 1} ({x0 * 1000:.0f}-{x1 * 1000:.0f} mm)", "structure", (centroid_x, 0.0, 0.0), (mass, mass), weighed is None))
+    coupler_mass = airframe.fuselage.joints.coupler_mass_kg
+    if coupler_mass is not None:
+        for index, cut in enumerate(sections.cuts_m):
+            points.append(MassPoint(f"coupler {index + 1}", "structure", (cut, 0.0, 0.0), (coupler_mass, coupler_mass), False))
+    return points
 
 
 def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[MotorPlacement, ...]:
@@ -333,7 +365,7 @@ def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[
             surface_set = next(item for item in surfaces if item.name == mount.surface)
             positions = [
                 (f"{mount.surface} {panel.index + 1}", tuple(r + mount.span_position_m * d + (mount.x_offset_m if axis == 0 else 0.0)
-                                                            for axis, (r, d) in enumerate(zip(panel.root_le, panel.span_dir))))
+                                                            for axis, (r, d) in enumerate(zip(panel.attach_le, panel.span_dir))))
                 for panel in surface_set.panels
             ]
         elif mount.on == "nose":
@@ -420,7 +452,7 @@ def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirf
     surfaces = tuple(build_surface(surface, body) for surface in airframe.surfaces)
     motors = build_motors(airframe, surfaces)
 
-    points = [structure_mass_point(airframe, body, density)]
+    points = structure_mass_points(airframe, body, density)
     points += [surface_mass_point(surface_set, density, airframe.print.surface_infill) for surface_set in surfaces]
     points += [MassPoint(f"volume {volume.name}", "volume", (volume.x_m, volume.y_m, volume.z_m), volume.mass_kg, False) for volume in airframe.volumes]
     for motor in motors:

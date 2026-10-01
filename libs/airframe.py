@@ -78,6 +78,7 @@ class Joints:
     count: int
     screw: str
     insertion_depth_m: float
+    coupler_mass_kg: float | None  # weighed mass of one coupler; None = not counted yet
 
 
 @dataclass(frozen=True)
@@ -107,7 +108,6 @@ class Fuselage:
     joints: Joints
     spar_rods: SparRods | None
     channels: tuple[Channel, ...]
-    structure_mass_kg: float | None  # weighed/known value; None = computed from geometry
 
 
 @dataclass(frozen=True)
@@ -182,7 +182,8 @@ class Volume:
 
 @dataclass(frozen=True)
 class Sections:
-    locked_cuts_m: tuple[float, ...]
+    cuts_m: tuple[float, ...]  # cut stations along the fuselage, ascending; section i spans cut i-1 .. cut i
+    mass_kg: tuple[float | None, ...]  # weighed printed mass per section (len(cuts_m) + 1); None = computed
 
 
 @dataclass(frozen=True)
@@ -286,6 +287,10 @@ def _fuselage(data: dict, path: str) -> Fuselage:
         count=int(joint_fields.number("count", minimum=1)),
         screw=joint_fields.text("screw"),
         insertion_depth_m=joint_fields.positive("insertion_depth_m"),
+        coupler_mass_kg=(
+            None if "coupler_mass_kg" not in joint_fields.data
+            else joint_fields.number("coupler_mass_kg", minimum=0.0, exclusive=True)
+        ),
     )
     joint_fields.done()
 
@@ -317,8 +322,6 @@ def _fuselage(data: dict, path: str) -> Fuselage:
             raise AirframeError(f"{channel_fields.path}: needs from_x_m < to_x_m <= fuselage length {length_m}")
         channels.append(channel)
 
-    structure_mass = fields.optional("structure_mass_kg", None)
-    structure_mass_kg = None if structure_mass is None else fields.number("structure_mass_kg", minimum=0.0, value=structure_mass)
     fields.done()
     return Fuselage(
         length_m=length_m,
@@ -328,7 +331,6 @@ def _fuselage(data: dict, path: str) -> Fuselage:
         joints=joints,
         spar_rods=spar_rods,
         channels=tuple(channels),
-        structure_mass_kg=structure_mass_kg,
     )
 
 
@@ -570,20 +572,26 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     propulsion = _propulsion(fields.required("propulsion"), fields.at("propulsion"), surfaces, volumes, parts_data)
 
     sections_fields = _Fields(fields.required("sections"), fields.at("sections"))
-    locked = tuple(
-        sections_fields.number("locked_cuts_m", minimum=0.0, exclusive=True, value=item)
-        for item in sections_fields.required("locked_cuts_m")
+    cuts = tuple(
+        sections_fields.number("cuts_m", minimum=0.0, exclusive=True, value=item)
+        for item in sections_fields.required("cuts_m")
+    )
+    if list(cuts) != sorted(set(cuts)) or (cuts and cuts[-1] >= fuselage.length_m):
+        raise AirframeError(f"{sections_fields.at('cuts_m')}: {list(cuts)} must be strictly ascending and inside the fuselage (length {fuselage.length_m})")
+    section_masses = sections_fields.optional("mass_kg", [None] * (len(cuts) + 1))
+    if type(section_masses) is not list or len(section_masses) != len(cuts) + 1:
+        raise AirframeError(f"{sections_fields.at('mass_kg')}: needs one entry per section ({len(cuts) + 1}), number or null")
+    section_masses = tuple(
+        None if mass is None else sections_fields.number("mass_kg", minimum=0.0, exclusive=True, value=mass)
+        for mass in section_masses
     )
     sections_fields.done()
-    for cut in locked:
-        if cut >= fuselage.length_m:
-            raise AirframeError(f"{fields.at('sections')}.locked_cuts_m: {cut} is not inside the fuselage")
 
     fields.done()
     return Airframe(
         name=name, notes=notes, preset=preset, operating_point=operating_point, print=print_settings,
         fuselage=fuselage, surfaces=surfaces, propulsion=propulsion, volumes=volumes,
-        sections=Sections(locked_cuts_m=tuple(sorted(locked))),
+        sections=Sections(cuts_m=cuts, mass_kg=section_masses),
     )
 
 
@@ -609,11 +617,13 @@ def main() -> None:
         volume_mass = [sum(volume.mass_kg[i] for volume in airframe.volumes) for i in (0, 1)]
         surface_mass = sum(surface.mass_kg for surface in airframe.surfaces if surface.mass_kg is not None)
         motor_mass = motor_count * (airframe.propulsion.motor_mass_kg + airframe.propulsion.prop_mass_kg)
-        declared = [volume_mass[i] + surface_mass + motor_mass + (airframe.fuselage.structure_mass_kg or 0.0) for i in (0, 1)]
+        section_mass = sum(mass for mass in airframe.sections.mass_kg if mass is not None)
+        coupler_mass = len(airframe.sections.cuts_m) * (airframe.fuselage.joints.coupler_mass_kg or 0.0)
+        declared = [volume_mass[i] + surface_mass + motor_mass + section_mass + coupler_mass for i in (0, 1)]
         print(f"{argument}: {airframe.name!r} valid")
         print(f"  fuselage {airframe.fuselage.length_m:.3f} m, {len(airframe.surfaces)} surface sets, {len(airframe.volumes)} volumes, {motor_count} motors")
-        print(f"  declared mass {declared[0]:.4f}-{declared[1]:.4f} kg (volumes {volume_mass[0]:.4f}-{volume_mass[1]:.4f}, surfaces {surface_mass:.4f}, motors+props {motor_mass:.4f})")
-        computed = [label for label, value in (("fuselage structure", airframe.fuselage.structure_mass_kg),) if value is None]
+        print(f"  declared mass {declared[0]:.4f}-{declared[1]:.4f} kg (volumes {volume_mass[0]:.4f}-{volume_mass[1]:.4f}, surfaces {surface_mass:.4f}, motors+props {motor_mass:.4f}, sections {section_mass:.4f}, couplers {coupler_mass:.4f})")
+        computed = [f"section {index + 1}" for index, mass in enumerate(airframe.sections.mass_kg) if mass is None]
         computed += [f"surface {surface.name}" for surface in airframe.surfaces if surface.mass_kg is None]
         if computed:
             print(f"  to be computed from geometry (not in declared mass): {', '.join(computed)}")

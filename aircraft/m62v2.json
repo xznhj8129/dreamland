@@ -1,7 +1,7 @@
 {
     "schema": "airframe/2",
     "name": "62mm Quad 7in v2",
-    "notes": "Converted from the Lego-style m62v2.json. Real aircraft. 'legacy *' point masses are the old module and coupler masses (printed part plus whatever it contained) at their old CG; printed structure is inside them, so fuselage.structure_mass_kg is 0. Replace them with real volumes and remove structure_mass_kg to compute structure.",
+    "notes": "Converted from the Lego-style m62v2.json. Real aircraft. Sections are the old printed modules (cuts at the module boundaries); each section mass is the old module mass, which includes whatever was mounted inside it.",
     "preset": "M62",
     "operating_point": {
         "aoa_deg": 5.0,
@@ -40,10 +40,10 @@
             "type": "radial_screws",
             "count": 8,
             "screw": "M3",
-            "insertion_depth_m": 0.01
+            "insertion_depth_m": 0.01,
+            "coupler_mass_kg": 0.02136
         },
-        "channels": [],
-        "structure_mass_kg": 0.0
+        "channels": []
     },
     "surfaces": [
         {
@@ -122,75 +122,23 @@
             "shape": "box",
             "part": "battery:lipo-6S-2200",
             "x_m": 0.135
-        },
-        {
-            "name": "legacy cam-nose",
-            "shape": "point",
-            "x_m": 0.03,
-            "mass_kg": 0.047
-        },
-        {
-            "name": "legacy coupler 1",
-            "shape": "point",
-            "x_m": 0.06,
-            "mass_kg": 0.02136
-        },
-        {
-            "name": "legacy batt-1",
-            "shape": "point",
-            "x_m": 0.145,
-            "mass_kg": 0.065
-        },
-        {
-            "name": "legacy coupler 2",
-            "shape": "point",
-            "x_m": 0.23,
-            "mass_kg": 0.02136
-        },
-        {
-            "name": "legacy mainwing",
-            "shape": "point",
-            "x_m": 0.305,
-            "mass_kg": 0.05
-        },
-        {
-            "name": "legacy coupler 3",
-            "shape": "point",
-            "x_m": 0.38,
-            "mass_kg": 0.02136
-        },
-        {
-            "name": "legacy quad-wingmount-v3",
-            "shape": "point",
-            "x_m": 0.455,
-            "mass_kg": 0.122
-        },
-        {
-            "name": "legacy coupler 4",
-            "shape": "point",
-            "x_m": 0.53,
-            "mass_kg": 0.02136
-        },
-        {
-            "name": "legacy quad-esc-1",
-            "shape": "point",
-            "x_m": 0.566,
-            "mass_kg": 0.055
-        },
-        {
-            "name": "legacy coupler 5",
-            "shape": "point",
-            "x_m": 0.602,
-            "mass_kg": 0.02136
-        },
-        {
-            "name": "legacy endcap",
-            "shape": "point",
-            "x_m": 0.637,
-            "mass_kg": 0.015
         }
     ],
     "sections": {
-        "locked_cuts_m": []
+        "cuts_m": [
+            0.06,
+            0.23,
+            0.38,
+            0.53,
+            0.602
+        ],
+        "mass_kg": [
+            0.047,
+            0.065,
+            0.05,
+            0.122,
+            0.055,
+            0.015
+        ]
     }
 }
