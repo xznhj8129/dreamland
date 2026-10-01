@@ -33,6 +33,7 @@
         - Fields never read: config vtol, powered, material_density_g_cm3, thrust_axis_tilt_deg; module esc, avionics, model, diam, motor_n; part pitch/yaw/roll; surface ctl_surface, all_moving; parts.json esc section; module-level payload_mass/ballast_mass (UI shows them, edits do nothing, V); wing_phase/phase_deg/dihedral_sign; legacy wings_n path.
         - Unknown wing layout silently becomes "H"/2 wings (layout_wing_count, derive_wings_layout).
         - Coupler hardcoded "joint-ring-c" (M62) at every joint regardless of standard_profile.
+        - Computed surface mass is airfoil volume x infill only; printed perimeter walls not modelled (m62v2 main wing: 34 g computed vs 50 g given).
         - spar_rods has no rod length/start (assumes full fuselage length); real m62v2/quadlancet62 use 4 x 2.5 mm x 400 mm carbon rods; no carbon material entry.
         - Save writes vlm_results (not in AGENTS.md contract) and a saved analysis with old schema that is never read.
         - Two names: assembly_name ("default") vs config.name.

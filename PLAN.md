@@ -34,10 +34,9 @@ fuselage
   length_m
   section           width_m, height_m, shape (superellipse exponent; 2 = circle), wall_radial_m
   nose, tail        profile (pointed_shapes name), length_m, params (exactly the profile's keys)
-  joints            type radial_screws, count, screw, insertion_depth_m
+  joints            type radial_screws, count, screw, insertion_depth_m, coupler_mass_kg (optional, one per cut)
   spar_rods         optional: count, diameter_m, radial_position_m, angle_offset_deg, material
   channels[]        name, diameter_m, from_x_m, to_x_m, angle_deg
-  structure_mass_kg optional weighed printed-structure mass; absent = computed from geometry
 surfaces[]          name, x_root_le_m (must be on the body; chords may overhang the tail),
                     layout (H X + 1 3), fin_position (top/bottom), dihedral_deg, root_offset (-1..1),
                     exposed_span_m (from the body surface at the root LE station, along the panel),
@@ -57,10 +56,13 @@ volumes[]           name, x_m (centre), y_m and z_m (default 0), shape:
                       point: mass only
                     mass_kg: number or [min, max], or taken from part (must be > 0)
 sections
-  locked_cuts_m[]   user-fixed cut stations; everything else auto
+  cuts_m[]          cut stations (ascending, inside the fuselage); section i spans cut i-1 .. cut i
+  mass_kg[]         optional, one per section: weighed printed mass (includes whatever is mounted in it), null = computed shell
 ```
 
-Converted examples: `aircraft/m62v2.json` (1.1408 kg) and `aircraft/quadlancet62.json` (1.3732 kg) reproduce the old totals exactly. Their old module and coupler masses are `legacy *` point volumes at the old CG, with `structure_mass_kg` 0 because the printed structure is inside them. Tail fins are converted to exposed span from the body (m62v2: 24 mm; the old model measured 55 mm from the centerline).
+Panels keep the true root edge on the body (follows nose/tail cones) and use an equivalent aero root at the mean body radius under the root chord.
+
+Converted examples: `aircraft/m62v2.json` and `aircraft/quadlancet62.json` reproduce the old totals (1.1408 / 1.3732 kg, plus props 1.1608 / 1.4292 kg). The old modules are sections (cuts at the module boundaries, module mass as the section's weighed mass), couplers 21.36 g per joint, the battery is the only volume. Tail fins use exposed span from the body (m62v2: 24 mm at the root leading edge; the old model measured 55 mm from the centerline).
 
 ## 2. Libraries (data/)
 

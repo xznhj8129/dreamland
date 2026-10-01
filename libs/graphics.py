@@ -4,8 +4,8 @@ from libs.graphics import draw_canvas_view
 metrics = draw_canvas_view(canvas, resolved, markers, "Longitudinal", roll_deg, ui_draw, ui_bg)
 
 Orthographic Tk drawing of a resolved airframe (libs/geometry.py). Everything drawn comes from the resolved model.
-Volumes carry the canvas tags ("drag", "volume:<index>") and wing sets ("drag", "surface:<index>"), so the
-view can move them along x; metrics["scale"] converts screen pixels to metres.
+Volumes carry the canvas tags ("drag", "volume:<index>"), wing sets ("drag", "surface:<index>") and section cuts
+("drag", "cut:<index>"), so the view can move them along x; metrics["scale"] converts screen pixels to metres.
 """
 
 import math
@@ -19,6 +19,8 @@ MOTOR_BASE_LEN_M = 0.005
 SECTION_OUTLINE_SAMPLES = 72
 POINT_MASS_MARK_PX = 5
 VOLUME_COLOR = "#ffcc33"
+CUT_COLOR = "#33ccff"
+CUT_OVERHANG_PX = 14
 MARKER_RADIUS_PX = 5
 MARKER_COLORS = {"cg": "blue", "np": "red", "lift": "green"}
 MARKER_LABELS = {"cg": "CG", "np": "Neutral point", "lift": "Lift @ AoA"}
@@ -46,9 +48,9 @@ def chord_vector(panel, chord: float) -> tuple[float, float, float]:
 
 
 def panel_outline(panel) -> list[tuple[float, float, float]]:
-    root_te = tuple(a + b for a, b in zip(panel.root_le, chord_vector(panel, panel.chord_root_m)))
+    """True outline: root edge along the body surface, then tip trailing edge and tip leading edge."""
     tip_te = tuple(a + b for a, b in zip(panel.tip_le, chord_vector(panel, panel.chord_tip_m)))
-    return [panel.root_le, root_te, tip_te, panel.tip_le]
+    return [panel.attach_le, panel.attach_te, tip_te, panel.tip_le]
 
 
 def volume_half_extents(resolved: ResolvedAirframe, volume) -> tuple[float, float, float]:
@@ -76,6 +78,7 @@ def draw_marker_guide(canvas: tk.Canvas) -> None:
     for index, key in enumerate(("cg", "np", "lift")):
         canvas.create_text(12, 12 + index * 16, anchor="nw", text=MARKER_LABELS[key], fill=MARKER_COLORS[key], font=("TkDefaultFont", 9))
     canvas.create_text(12, 12 + 3 * 16, anchor="nw", text="Volumes (drag along x)", fill=VOLUME_COLOR, font=("TkDefaultFont", 9))
+    canvas.create_text(12, 12 + 4 * 16, anchor="nw", text="Section cuts (drag along x); * = computed mass", fill=CUT_COLOR, font=("TkDefaultFont", 9))
 
 
 def measure_longitudinal_view(resolved: ResolvedAirframe, roll_deg: float, width: float, height: float) -> dict:
@@ -181,12 +184,26 @@ def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, 
             mark = POINT_MASS_MARK_PX
             canvas.create_line(x_screen - mark, t_screen - mark, x_screen + mark, t_screen + mark, fill=VOLUME_COLOR, width=2, tags=tags)
             canvas.create_line(x_screen - mark, t_screen + mark, x_screen + mark, t_screen - mark, fill=VOLUME_COLOR, width=2, tags=tags)
+            canvas.create_text(x_screen, t_screen - mark - 2, anchor="s", text=volume.name, fill=VOLUME_COLOR, font=("TkDefaultFont", 8), tags=tags)
             continue
         half_x, half_y, half_z = volume_half_extents(resolved, volume)
         half_t = half_y * abs(math.sin(roll_rad)) + half_z * abs(math.cos(roll_rad))
         canvas.create_rectangle(x_screen - half_x * scale, t_screen - half_t * scale, x_screen + half_x * scale, t_screen + half_t * scale,
                                 outline=VOLUME_COLOR, fill="", width=1, dash=(4, 2), tags=tags)
         canvas.create_text(x_screen, t_screen, text=volume.name, fill=VOLUME_COLOR, font=("TkDefaultFont", 8), tags=tags)
+
+    sections = resolved.airframe.sections
+    bounds = [0.0, *sections.cuts_m, body.length_m]
+    section_points = [point for point in resolved.mass_points if point.name.startswith("section ")]
+    for index, cut in enumerate(sections.cuts_m):
+        half_w, half_h = body_half_extents(body, cut)
+        half = section_projected_half(half_w, half_h, body.shape, roll_rad) * scale + CUT_OVERHANG_PX
+        canvas.create_line(x_to_screen(cut), center_y - half, x_to_screen(cut), center_y + half, fill=CUT_COLOR, width=3, dash=(6, 3), tags=("drag", f"cut:{index}"))
+    for index, (x0, x1) in enumerate(zip(bounds, bounds[1:])):
+        mass_g = section_points[index].mass_kg[0] * 1000.0
+        label = f"S{index + 1} {mass_g:.0f} g{'*' if section_points[index].computed else ''}"
+        canvas.create_text(x_to_screen((x0 + x1) / 2.0), transverse_to_screen(0.0) + section_projected_half(*body_half_extents(body, (x0 + x1) / 2.0), body.shape, roll_rad) * scale + 4,
+                           anchor="n", text=label, fill=CUT_COLOR, font=("TkDefaultFont", 8))
 
     for motor in resolved.motors:
         x_screen = x_to_screen(motor.position[0])

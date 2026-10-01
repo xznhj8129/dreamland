@@ -23,9 +23,9 @@ from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS
 MM_KEYS = {
     "length_m", "width_m", "height_m", "wall_radial_m", "insertion_depth_m", "diameter_m", "radial_position_m",
     "from_x_m", "to_x_m", "x_root_le_m", "exposed_span_m", "chord_root_m", "chord_tip_m", "span_position_m",
-    "x_offset_m", "x_m", "y_m", "z_m", "flat_length_m", "curve_length_m", "nose_radius", "size_m", "printer_bed_m",
+    "x_offset_m", "x_m", "y_m", "z_m", "flat_length_m", "curve_length_m", "nose_radius", "size_m", "printer_bed_m", "cuts_m",
 }
-GRAM_KEYS = {"mass_kg", "structure_mass_kg"}
+GRAM_KEYS = {"mass_kg", "coupler_mass_kg"}
 PERCENT_KEYS = {"surface_infill"}
 UNIT_SUFFIXES = ("_m_s", "_deg", "_kg", "_m")
 CHOICES = {
@@ -50,7 +50,8 @@ NEW_SURFACE = {
     "exposed_span_m": 0.12, "chord_root_m": 0.1, "chord_tip_m": 0.07, "sweep_le_deg": 10.0, "incidence_deg": 0.0, "airfoil": "naca2412",
 }
 NEW_POD = {"diameter_m": 0.035, "flat_length_m": 0.02, "curve_length_m": 0.05, "profile": "elliptical"}
-DRAG_KEYS = {"volume": ("volumes", "x_m"), "surface": ("surfaces", "x_root_le_m")}
+DRAG_KEYS = {"volume": ("volumes", "x_m"), "surface": ("surfaces", "x_root_le_m")}  # cuts drag the sections.cuts_m entry itself
+MIN_SECTION_LENGTH_M = 0.005
 
 
 def field_label(key: str) -> str:
@@ -277,6 +278,10 @@ class ConfigurationMainView:
             return
         for tag in self.app.view_canvas.gettags("current"):
             kind, _, index = tag.partition(":")
+            if kind == "cut" and index:
+                cuts = self.app.definition["sections"]["cuts_m"]
+                self.drag_target = (cuts, int(index), event.x, cuts[int(index)])
+                return
             if kind in DRAG_KEYS and index:
                 collection, key = DRAG_KEYS[kind]
                 item = self.app.definition[collection][int(index)]
@@ -285,8 +290,13 @@ class ConfigurationMainView:
 
     def on_view_drag_motion(self, event) -> None:
         if self.drag_target is not None:
-            item, key, start_x, start_value = self.drag_target
-            item[key] = round(max(0.0, start_value + (event.x - start_x) / self.view_metrics["scale"]), 4)
+            container, key, start_x, start_value = self.drag_target
+            value = max(0.0, start_value + (event.x - start_x) / self.view_metrics["scale"])
+            if container is self.app.definition["sections"]["cuts_m"]:
+                low = container[key - 1] if key > 0 else 0.0
+                high = container[key + 1] if key + 1 < len(container) else self.app.definition["fuselage"]["length_m"]
+                value = min(max(value, low + MIN_SECTION_LENGTH_M), high - MIN_SECTION_LENGTH_M)
+            container[key] = round(value, 4)
             self.app.recompute(run_aero=False)
             return
         if self.view_drag_last_xy is None:
@@ -329,9 +339,12 @@ class ConfigurationMainView:
             if text.strip() == state["text"].strip():
                 return "break"
             if optional and not text.strip():
-                data.pop(key, None)
+                if type(data) is list:
+                    data[key] = None
+                else:
+                    data.pop(key, None)
             else:
-                existing = data[key] if type(data) is list or key in data else 0.0
+                existing = data[key] if (type(data) is list or key in data) and data[key] is not None else 0.0
                 try:
                     data[key] = parse_value(unit_key, text, existing)
                 except ValueError:
@@ -427,8 +440,7 @@ class ConfigurationMainView:
         group.grid(row=3, column=0, sticky="ew", padx=4, pady=4)
         group.columnconfigure(1, weight=1)
         self.add_entry(group, 0, fuselage, "length_m")
-        self.add_entry(group, 1, fuselage, "structure_mass_kg", optional=True)
-        row = 2
+        row = 1
         for key in ("section", "nose", "tail", "joints"):
             sub = ttk.LabelFrame(group, text=key, padding=4)
             sub.grid(row=row, column=0, columnspan=3, sticky="ew", pady=2)
@@ -441,6 +453,45 @@ class ConfigurationMainView:
             else:
                 self.add_fields(sub, fuselage[key])
             row += 1
+        self.build_sections_group(parent, 4)
+
+    def build_sections_group(self, parent, grid_row: int) -> None:
+        definition = self.app.definition
+        sections = definition["sections"]
+        cuts = sections["cuts_m"]
+        masses = sections.setdefault("mass_kg", [None] * (len(cuts) + 1))
+        group = ttk.LabelFrame(parent, text="Sections (cut lines; drag them in the side view)", padding=6)
+        group.grid(row=grid_row, column=0, sticky="ew", padx=4, pady=4)
+        group.columnconfigure(1, weight=1)
+        ttk.Button(group, text="Add cut", command=self.add_cut).grid(row=0, column=0, sticky="w", pady=(0, 4))
+        bounds = [0.0, *cuts, definition["fuselage"]["length_m"]]
+        row = 1
+        for index in range(len(masses)):
+            self.add_entry(group, row, masses, index, optional=True, unit_key="mass_kg",
+                           label=f"S{index + 1} {bounds[index] * 1000:.0f}-{bounds[index + 1] * 1000:.0f} mm, weighed (g)")
+            row += 1
+            if index < len(cuts):
+                self.add_entry(group, row, cuts, index, unit_key="cuts_m", label=f"  cut {index + 1} (mm)")
+                ttk.Button(group, text="Delete cut", command=lambda i=index: self.delete_cut(i)).grid(row=row, column=2, sticky="e", padx=(6, 0))
+                row += 1
+
+    def add_cut(self) -> None:
+        sections = self.app.definition["sections"]
+        cuts = sections["cuts_m"]
+        bounds = [0.0, *cuts, self.app.definition["fuselage"]["length_m"]]
+        longest = max(range(len(bounds) - 1), key=lambda i: bounds[i + 1] - bounds[i])
+        cuts.insert(longest, round((bounds[longest] + bounds[longest + 1]) / 2.0, 4))
+        masses = sections["mass_kg"]
+        masses[longest:longest + 1] = [None, None]  # a split section's weighed mass no longer applies
+        self.changed(rebuild=True)
+
+    def delete_cut(self, index: int) -> None:
+        sections = self.app.definition["sections"]
+        sections["cuts_m"].pop(index)
+        masses = sections["mass_kg"]
+        merged = None if masses[index] is None or masses[index + 1] is None else masses[index] + masses[index + 1]
+        masses[index:index + 2] = [merged]
+        self.changed(rebuild=True)
 
     def reset_profile_params(self, end: dict) -> None:
         end["params"] = {key: end["params"].get(key, PROFILE_PARAM_DEFAULTS[key]) for key in POINTED_SHAPE_PARAM_KEYS[end["profile"]]}
