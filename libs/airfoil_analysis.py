@@ -13,13 +13,6 @@ import numpy as np
 
 SCRIPT_DIR = Path(__file__).resolve().parent.parent
 AIRFOILS_PATH = SCRIPT_DIR / "data" / "airfoils.json"
-DEFAULT_LIBRARY_AIRFOIL_NAMES = [
-    "naca0008",
-    "naca0012",
-    "naca2408",
-    "naca2412",
-    "naca6408",
-]
 DEFAULT_SELECTED_AIRFOIL_NAMES = [
     "naca2412",
     "naca0008",
@@ -59,24 +52,40 @@ SUMMARY_STALL_POS_ALPHA_MIN_DEG = 0.0
 SUMMARY_STALL_POS_ALPHA_MAX_DEG = 25.0
 SUMMARY_STALL_NEG_ALPHA_MIN_DEG = -25.0
 SUMMARY_STALL_NEG_ALPHA_MAX_DEG = 0.0
+DAT_CHORD_TOLERANCE = 0.02  # coordinates may sit this far outside x in [0, 1]
+DAT_MIN_POINTS = 10
 
 
 def parse_dat_text(dat_text: str) -> np.ndarray:
-    coordinates = []
+    """Airfoil coordinates from Selig or Lednicer *.dat text, returned in Selig order (TE -> upper -> LE -> lower -> TE).
+
+    Lednicer files start with a point-count line ("17. 17.") and list the upper and lower surfaces separately,
+    each from the leading edge to the trailing edge. Raises ValueError when the coordinates do not look like
+    a unit-chord airfoil.
+    """
+    pairs = []
     for line in dat_text.splitlines():
-        stripped = line.strip()
-        if stripped == "":
-            continue
-        parts = stripped.replace(",", " ").split()
-        if len(parts) < 2:
+        parts = line.strip().replace(",", " ").split()
+        if len(parts) != 2:
             continue
         try:
-            x_value = float(parts[0])
-            y_value = float(parts[1])
+            pairs.append((float(parts[0]), float(parts[1])))
         except ValueError:
             continue
-        coordinates.append((x_value, y_value))
-    return np.array(coordinates, dtype=float)
+    if pairs and pairs[0][0] > 1.0 + DAT_CHORD_TOLERANCE and pairs[0][1] > 1.0 + DAT_CHORD_TOLERANCE:
+        upper_count, lower_count = int(pairs[0][0]), int(pairs[0][1])
+        points = pairs[1:]
+        if len(points) != upper_count + lower_count:
+            raise ValueError(f"Lednicer DAT announces {upper_count} + {lower_count} points but contains {len(points)}")
+        upper, lower = points[:upper_count], points[upper_count:]
+        pairs = upper[::-1] + lower[1:] if upper[0] == lower[0] else upper[::-1] + lower
+    coordinates = np.array(pairs, dtype=float)
+    if len(coordinates) < DAT_MIN_POINTS:
+        raise ValueError(f"DAT has {len(coordinates)} coordinate pairs; at least {DAT_MIN_POINTS} needed")
+    x_min, x_max = float(coordinates[:, 0].min()), float(coordinates[:, 0].max())
+    if x_min < -DAT_CHORD_TOLERANCE or x_max > 1.0 + DAT_CHORD_TOLERANCE:
+        raise ValueError(f"DAT x coordinates span {x_min:g}..{x_max:g}; expected a unit chord 0..1")
+    return coordinates
 
 
 def airfoil_record_from_path(dat_path: str | Path) -> dict:
@@ -94,9 +103,17 @@ def load_airfoil_library() -> dict[str, dict]:
     return {name: {"name": name, **record} for name, record in data.items()}
 
 
+def asb_airfoil_record(name: str) -> dict:
+    """Library record for an airfoil AeroSandbox knows by name (the names airframe surfaces use)."""
+    if asb.Airfoil(name).coordinates is None:
+        raise ValueError(f"{name!r} is not a known AeroSandbox airfoil")
+    return {"name": name, "source": "asb"}
+
+
 def airfoil_from_record(record: dict) -> asb.Airfoil:
-    coordinates = parse_dat_text(record["dat_text"])
-    return asb.Airfoil(name=record["name"], coordinates=coordinates)
+    if record["source"] == "asb":
+        return asb.Airfoil(record["name"])
+    return asb.Airfoil(name=record["name"], coordinates=parse_dat_text(record["dat_text"]))
 
 
 def alpha_sweep_values() -> np.ndarray:
@@ -316,6 +333,10 @@ def analyze_airfoils(records: list[dict], operating_point: dict, neuralfoil_sett
     }
 
 
+def summary_value(value: float) -> str:
+    return f"{value:.6f}" if np.isfinite(value) else f"n/a (no point with confidence >= {SUMMARY_CONFIDENCE_MIN})"
+
+
 def build_airfoil_summary_text(results: list[dict], flow_conditions: dict, neuralfoil_settings: dict) -> str:
     lines = [
         f"op.alpha_deg={flow_conditions['alpha_deg']:.3f}",
@@ -353,16 +374,16 @@ def build_airfoil_summary_text(results: list[dict], flow_conditions: dict, neura
                 f"op.top_xtr={op['top_xtr']:.6f}",
                 f"op.bot_xtr={op['bot_xtr']:.6f}",
                 f"op.confidence={op['confidence']:.6f}",
-                f"sweep.alpha_zero_lift_deg={summary['alpha_zero_lift_deg']:.6f}",
-                f"sweep.alpha_pos_stall_deg={summary['alpha_pos_stall_deg']:.6f}",
-                f"sweep.cl_max={summary['cl_max']:.6f}",
-                f"sweep.alpha_neg_stall_deg={summary['alpha_neg_stall_deg']:.6f}",
-                f"sweep.cl_min={summary['cl_min']:.6f}",
-                f"sweep.alpha_best_ld_deg={summary['alpha_best_ld_deg']:.6f}",
-                f"sweep.cl_cd_max={summary['cl_cd_max']:.6f}",
-                f"sweep.alpha_cd_min_deg={summary['alpha_cd_min_deg']:.6f}",
-                f"sweep.cd_min={summary['cd_min']:.6f}",
-                f"sweep.cm_at_cd_min={summary['cm_at_cd_min']:.6f}",
+                f"sweep.alpha_zero_lift_deg={summary_value(summary['alpha_zero_lift_deg'])}",
+                f"sweep.alpha_pos_stall_deg={summary_value(summary['alpha_pos_stall_deg'])}",
+                f"sweep.cl_max={summary_value(summary['cl_max'])}",
+                f"sweep.alpha_neg_stall_deg={summary_value(summary['alpha_neg_stall_deg'])}",
+                f"sweep.cl_min={summary_value(summary['cl_min'])}",
+                f"sweep.alpha_best_ld_deg={summary_value(summary['alpha_best_ld_deg'])}",
+                f"sweep.cl_cd_max={summary_value(summary['cl_cd_max'])}",
+                f"sweep.alpha_cd_min_deg={summary_value(summary['alpha_cd_min_deg'])}",
+                f"sweep.cd_min={summary_value(summary['cd_min'])}",
+                f"sweep.cm_at_cd_min={summary_value(summary['cm_at_cd_min'])}",
                 f"sweep.confidence_min={summary['confidence_min']:.6f}",
                 f"sweep.confidence_mean={summary['confidence_mean']:.6f}",
                 "",

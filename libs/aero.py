@@ -8,18 +8,23 @@ operating point, neutral point from a dCm/dCL fit, and a Barrowman rocket-style 
 Geometry is read from the resolved model only.
 """
 
+import concurrent.futures
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 
 import aerosandbox as asb
 import numpy as np
 
-from libs.geometry import ResolvedAirframe
+from libs.geometry import STANDARD_GRAVITY_M_S2, ResolvedAirframe
 
 AERO_MODEL_SIZE = "large"
 AOA_SWEEP_DEG = range(-45, 46)
 STABILITY_MARGINAL_PCT = 5.0
 NEUTRAL_POINT_FIT_HALF_WINDOW_DEG = 4.0
+VLM_SETTING_KEYS = (
+    "aoa_start", "aoa_end", "aoa_increment", "airspeed_start", "airspeed_end", "airspeed_increment",
+    "altitude_start", "altitude_end", "altitude_increment", "vlm_threads", "vlm_span_res", "vlm_chord_res",
+)
 NOSE_CNA = 2.0
 NOSE_CP_FRACTION = 0.466  # of nose length (tangent ogive)
 
@@ -238,3 +243,118 @@ def stability_verdict(margin_m: float, reference_length_m: float) -> str:
     if margin_pct < STABILITY_MARGINAL_PCT:
         return "marginal"
     return "stable"
+
+
+@dataclass(frozen=True)
+class VLMRow:
+    altitude_m: float
+    aoa_deg: float
+    airspeed_m_s: float
+    lift_n: float
+    drag_induced_n: float
+    cl: float
+    cdi: float
+    cm: float
+    load_pct: float
+    x_np_m: float  # wings only
+    static_margin_pct: float  # wings only, % of the reference chord
+
+
+@dataclass(frozen=True)
+class VLMResult:
+    airframe_name: str
+    settings: dict
+    aoa_values: tuple[float, ...]
+    airspeed_values: tuple[float, ...]
+    altitude_values: tuple[float, ...]
+    rows: tuple[VLMRow, ...]
+    solutions: dict  # aoa -> solved asb.VortexLatticeMethod, for the 3D view
+    report_text: str
+
+
+def range_values(start: float, end: float, step: float, label: str) -> tuple[float, ...]:
+    if step <= 0.0 or end < start:
+        raise ValueError(f"{label}: needs step > 0 and end >= start (got start {start}, end {end}, step {step})")
+    count = int(math.floor((end - start) / step + 1e-9)) + 1
+    values = [start + index * step for index in range(count)]
+    if abs(values[-1] - end) > 1e-9 * max(1.0, abs(end)):
+        values.append(end)  # keep the requested end point when the step does not land on it
+    return tuple(values)
+
+
+def build_vlm_report_text(result: VLMResult) -> str:
+    settings = result.settings
+    lines = [
+        "VLM Sweep (wings only)",
+        f"Airframe              : {result.airframe_name}",
+        "",
+        "AeroSandbox VLM models the lifting surfaces only: the fuselage, pods and motors are left out, so",
+        "body-mounted wings read low (no lift carried across the body) and NP / static margin here are for",
+        "the wings alone. The Configuration summary (AeroBuildup) includes the body.",
+        "",
+        "Parameters",
+        f"AoA                   : {settings['aoa_start']:g} to {settings['aoa_end']:g} deg step {settings['aoa_increment']:g}",
+        f"Airspeed              : {settings['airspeed_start']:g} to {settings['airspeed_end']:g} m/s step {settings['airspeed_increment']:g}",
+        f"Altitude              : {settings['altitude_start']:g} to {settings['altitude_end']:g} m step {settings['altitude_increment']:g}",
+        f"Resolution            : {settings['vlm_span_res']} spanwise x {settings['vlm_chord_res']} chordwise",
+        f"Solved AoA points     : {len(result.aoa_values)} (coefficients do not depend on airspeed or altitude; forces scale with q)",
+        "",
+    ]
+    header = f"{'Alt m':<8} | {'AoA':<5} | {'V m/s':<7} | {'Lift N':<8} | {'Drag_i N':<9} | {'CL':<7} | {'CDi':<7} | {'Cm':<7} | {'Load %':<7} | {'NP wings m':<10} | {'SM wings %c':<11}"
+    lines += [header, "-" * len(header)]
+    for row in result.rows:
+        lines.append(
+            f"{row.altitude_m:<8.1f} | {row.aoa_deg:<5.1f} | {row.airspeed_m_s:<7.1f} | {row.lift_n:<8.2f} | {row.drag_induced_n:<9.3f} | "
+            f"{row.cl:<7.4f} | {row.cdi:<7.4f} | {row.cm:<7.4f} | {row.load_pct:<7.1f} | {row.x_np_m:<10.4f} | {row.static_margin_pct:<11.1f}"
+        )
+    return "\n".join(lines)
+
+
+def run_vlm_sweep(resolved: ResolvedAirframe, settings: dict, progress_callback=None) -> VLMResult:
+    """VLM over the AoA range, solved once per AoA; airspeed/altitude rows scale the forces by dynamic pressure."""
+    aoa_values = range_values(settings["aoa_start"], settings["aoa_end"], settings["aoa_increment"], "AoA")
+    airspeed_values = range_values(settings["airspeed_start"], settings["airspeed_end"], settings["airspeed_increment"], "Airspeed")
+    altitude_values = range_values(settings["altitude_start"], settings["altitude_end"], settings["altitude_increment"], "Altitude")
+    airplane = build_asb_airplane(resolved)
+    reference = resolved.reference
+    cg_x = resolved.cg_m[0]
+    weight_n = sum(resolved.mass_kg) / 2.0 * STANDARD_GRAVITY_M_S2
+
+    def solve(aoa_deg: float):
+        vlm = asb.VortexLatticeMethod(
+            airplane=airplane,
+            op_point=asb.OperatingPoint(velocity=airspeed_values[0], alpha=aoa_deg),
+            spanwise_resolution=int(settings["vlm_span_res"]),
+            chordwise_resolution=int(settings["vlm_chord_res"]),
+        )
+        return aoa_deg, vlm, vlm.run_with_stability_derivatives(alpha=True, beta=False, p=False, q=False, r=False)
+
+    solved = {}
+    with concurrent.futures.ThreadPoolExecutor(max_workers=max(1, int(settings["vlm_threads"]))) as executor:
+        for completed, (aoa_deg, vlm, coefficients) in enumerate(executor.map(solve, aoa_values), start=1):
+            solved[aoa_deg] = (vlm, coefficients)
+            if progress_callback is not None:
+                progress_callback(completed, len(aoa_values), f"AoA {aoa_deg:g} deg")
+
+    rows = []
+    for altitude_m in altitude_values:
+        density = float(asb.Atmosphere(altitude=altitude_m).density())
+        for aoa_deg in aoa_values:
+            _vlm, coefficients = solved[aoa_deg]
+            cl, cdi, cm = float(coefficients["CL"]), float(coefficients["CD"]), float(coefficients["Cm"])
+            x_np = float(coefficients["x_np"])
+            for airspeed_m_s in airspeed_values:
+                force_scale = 0.5 * density * airspeed_m_s * airspeed_m_s * reference.area_m2
+                rows.append(VLMRow(
+                    altitude_m=altitude_m, aoa_deg=aoa_deg, airspeed_m_s=airspeed_m_s,
+                    lift_n=cl * force_scale, drag_induced_n=abs(cdi) * force_scale, cl=cl, cdi=cdi, cm=cm,
+                    load_pct=cl * force_scale / weight_n * 100.0,
+                    x_np_m=x_np, static_margin_pct=(x_np - cg_x) / reference.chord_m * 100.0,
+                ))
+    result = VLMResult(
+        airframe_name=resolved.airframe.name, settings=dict(settings), aoa_values=aoa_values,
+        airspeed_values=airspeed_values, altitude_values=altitude_values, rows=tuple(rows),
+        solutions={aoa: vlm for aoa, (vlm, _coefficients) in solved.items()}, report_text="",
+    )
+    return replace(result, report_text=build_vlm_report_text(result))
+

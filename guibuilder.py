@@ -24,9 +24,11 @@ from libs.airframe import PARTS_PATH, SCHEMA, AirframeError, parse_airframe
 from libs.geometry import resolve_airframe
 from libs.report import build_report_text
 from libs.simlib2 import TestedMotorData
+from libs.views.aero_analysis_view import AeroAnalysisMainView
 from libs.views.cad_view import CADMainView
 from libs.views.configuration_view import ConfigurationMainView
 from libs.views.part_editor_view import PartEditorMainView
+from libs.views.vlm_view import VLMMainView
 
 SCRIPT_DIR = Path(__file__).resolve().parent
 DEFAULT_AIRFRAME_PATH = SCRIPT_DIR / "aircraft" / "m62v2.json"
@@ -83,11 +85,16 @@ class BuilderApp:
         self.asb_draw_busy = False
         self.asb_last_size = (0, 0)
         self.configuration_view = None
+        self.airfoil_view = None
+        self.vlm_view = None
         self.cad_view = None
         self.part_editor_view = None
         self.part_editor_panel = None
         self.configuration_main_view = None
+        self.airfoil_main_view = None  # created on first show, with the airframe's airfoils selected
+        self.vlm_main_view = None
         self.cad_main_view = None
+        self.main_view_host = None
         self.part_editor_main_view = None
         self.active_main_view = "Configuration"
         self.error_dialog: tk.Toplevel | None = None
@@ -117,6 +124,7 @@ class BuilderApp:
         self.resolved = resolved
         self.problems = problems
         self.aero = None
+        self.vlm_main_view.mark_stale()
         self.configuration_main_view.draw_active_view()
         if not run_aero:
             self.recompute_status_var.set("Aero pending")
@@ -154,7 +162,13 @@ class BuilderApp:
         self.summary_text.insert("1.0", text)
 
     def on_manual_recompute(self, _event=None) -> str:
-        self.recompute()
+        """F5 recomputes whatever the active view shows."""
+        if self.active_main_view == "Aero Analysis":
+            self.airfoil_main_view.recompute_airfoils()
+        elif self.active_main_view == "VLM":
+            self.vlm_main_view.start_run()
+        else:
+            self.recompute()
         return "break"
 
     def update_asb_view(self) -> None:
@@ -302,20 +316,32 @@ class BuilderApp:
         main_view_host.grid(row=0, column=0, sticky="nsew")
         main_view_host.columnconfigure(0, weight=1)
         main_view_host.rowconfigure(0, weight=1)
+        self.main_view_host = main_view_host
 
         self.configuration_main_view = ConfigurationMainView(self, main_view_host)
+        self.vlm_main_view = VLMMainView(self, main_view_host)
         self.cad_main_view = CADMainView(self, main_view_host)
         self.part_editor_main_view = PartEditorMainView(self, main_view_host)
 
         bottom_bar = ttk.Frame(self.root, padding=(8, 0, 8, 8))
         bottom_bar.grid(row=1, column=0, sticky="ew")
         ttk.Button(bottom_bar, text="Configuration", command=lambda: self.show_main_view("Configuration")).pack(side="left")
+        ttk.Button(bottom_bar, text="Aero Analysis", command=lambda: self.show_main_view("Aero Analysis")).pack(side="left", padx=(8, 0))
+        ttk.Button(bottom_bar, text="VLM", command=lambda: self.show_main_view("VLM")).pack(side="left", padx=(8, 0))
         ttk.Button(bottom_bar, text="CAD", command=lambda: self.show_main_view("CAD")).pack(side="left", padx=(8, 0))
         ttk.Button(bottom_bar, text="Part Editor", command=lambda: self.show_main_view("Part Editor")).pack(side="left", padx=(8, 0))
         self.show_main_view("Configuration")
 
     def show_main_view(self, view_name: str) -> None:
         self.active_main_view = view_name
+        if view_name == "Aero Analysis":
+            if self.airfoil_main_view is None:
+                self.airfoil_main_view = AeroAnalysisMainView(self, self.main_view_host)
+            self.airfoil_view.tkraise()
+            return
+        if view_name == "VLM":
+            self.vlm_view.tkraise()
+            return
         if view_name == "CAD":
             self.cad_view.tkraise()
             return

@@ -1,3 +1,11 @@
+"""
+Usage:
+from libs.views.aero_analysis_view import AeroAnalysisMainView
+
+Aero Analysis view: NeuralFoil 2D comparison of airfoils at a chosen Reynolds/Mach operating point. Starts with the
+current airframe's airfoils selected; DAT files (Selig or Lednicer) can be imported.
+"""
+
 from __future__ import annotations
 
 import re
@@ -17,8 +25,10 @@ from libs.airfoil_analysis import (
     DEFAULT_SWEEP_ALPHA_MAX_DEG,
     DEFAULT_SWEEP_ALPHA_MIN_DEG,
     NEURALFOIL_MODEL_SIZES,
+    airfoil_from_record,
     airfoil_record_from_path,
     analyze_airfoils,
+    asb_airfoil_record,
     compute_flow_conditions,
     load_airfoil_library,
 )
@@ -240,12 +250,14 @@ class AeroAnalysisMainView:
         return re.fullmatch(r"[+-]?((\d+(\.\d*)?)|(\.\d*))?([eE][+-]?\d*)?", proposed_text) is not None
 
     def seed_selected_airfoils(self) -> None:
+        """Select the airframe's own airfoils, adding AeroSandbox-named ones the library file does not hold."""
         selected_names = []
-        if self.app.analysis is not None:
-            for airfoil_name in self.app.analysis["surface_airfoils"]:
-                if airfoil_name is None:
-                    continue
-                if airfoil_name not in selected_names and airfoil_name in self.airfoil_library:
+        if self.app.resolved is not None:
+            for surface_set in self.app.resolved.surfaces:
+                airfoil_name = surface_set.definition.airfoil
+                if airfoil_name not in self.airfoil_library:
+                    self.airfoil_library[airfoil_name] = asb_airfoil_record(airfoil_name)
+                if airfoil_name not in selected_names:
                     selected_names.append(airfoil_name)
         if len(selected_names) == 0:
             for airfoil_name in DEFAULT_SELECTED_AIRFOIL_NAMES:
@@ -290,6 +302,12 @@ class AeroAnalysisMainView:
         if dat_path == "":
             return
         record = airfoil_record_from_path(dat_path)
+        try:
+            airfoil_from_record(record)
+        except ValueError as error:
+            self.summary_text.delete("1.0", tk.END)
+            self.summary_text.insert("1.0", f"Could not import {Path(dat_path).name}: {error}")
+            return
         import_name = record["name"]
         suffix_index = 2
         while import_name in self.airfoil_library:
@@ -381,17 +399,15 @@ class AeroAnalysisMainView:
         self.plot_canvas.draw_idle()
 
     def plot_curve_with_confidence(self, axis, x_values, y_values, confidence_values, label: str) -> None:
-        high_confidence_mask = confidence_values >= SUMMARY_CONFIDENCE_MIN
-        low_confidence_mask = ~high_confidence_mask
-        high_line = axis.plot(x_values[high_confidence_mask], y_values[high_confidence_mask], label=label)[0]
-        if np.any(low_confidence_mask):
-            axis.plot(
-                x_values[low_confidence_mask],
-                y_values[low_confidence_mask],
-                color=high_line.get_color(),
-                alpha=0.3,
-                linestyle="--",
-            )
+        """Solid where NeuralFoil is confident, faint dashed elsewhere; NaN gaps keep separate stretches unjoined."""
+        high = confidence_values >= SUMMARY_CONFIDENCE_MIN
+        low = ~high
+        # widen the low-confidence mask by one point each side so dashed stretches meet the solid line
+        low_drawn = low | np.roll(low, 1) | np.roll(low, -1)
+        low_drawn[0], low_drawn[-1] = low[0] or low[1], low[-1] or low[-2]
+        high_line = axis.plot(x_values, np.where(high, y_values, np.nan), label=label)[0]
+        if np.any(low):
+            axis.plot(x_values, np.where(low_drawn, y_values, np.nan), color=high_line.get_color(), alpha=0.3, linestyle="--")
 
     def draw_plots(self) -> None:
         for axis in self.plot_axes.values():
