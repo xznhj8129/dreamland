@@ -1,92 +1,101 @@
 """
 Usage:
 from libs.graphics import draw_canvas_view
+metrics = draw_canvas_view(canvas, resolved, markers, "Longitudinal", roll_deg, ui_draw, ui_bg)
+
+Orthographic Tk drawing of a resolved airframe (libs/geometry.py). Everything drawn comes from the resolved model.
+Volumes carry the canvas tags ("drag", "volume:<index>") and wing sets ("drag", "surface:<index>"), so the
+view can move them along x; metrics["scale"] converts screen pixels to metres.
 """
 
 import math
 import tkinter as tk
 
-import numpy as np
-from libs.pointed_shapes import pointed_shape_param_values, sample_pointed_profile
+from libs.geometry import PROP_SHAFT_LEN_M, ResolvedAirframe, body_half_extents, superellipse_radius
 
 PROP_SHAFT_DIAM_M = 0.005
-PROP_SHAFT_LEN_M = 0.015
 MOTOR_BASE_DIAM_FACTOR = 0.5
 MOTOR_BASE_LEN_M = 0.005
+SECTION_OUTLINE_SAMPLES = 72
+POINT_MASS_MARK_PX = 5
+VOLUME_COLOR = "#ffcc33"
+MARKER_RADIUS_PX = 5
+MARKER_COLORS = {"cg": "blue", "np": "red", "lift": "green"}
+MARKER_LABELS = {"cg": "CG", "np": "Neutral point", "lift": "Lift @ AoA"}
 
 
-def structural_rows(module_rows: list[dict]) -> list[dict]:
-    return [row for row in module_rows if row["module_type"] in {"body", "end", "coupler", "wingmount"}]
+def longitudinal_transverse(y_value: float, z_value: float, roll_rad: float) -> float:
+    return z_value * math.cos(roll_rad) + y_value * math.sin(roll_rad)
 
 
-def draw_markers(canvas: tk.Canvas, analysis: dict, x_to_screen, y_screen: float) -> None:
-    marker_radius = 5
-    for color, x_value in (
-        ("blue", analysis["cg_x_m"]),
-        ("red", analysis["x_np"]),
-        ("green", analysis["force_center_x"]),
-    ):
-        if not math.isfinite(x_value):
-            continue
-        x_screen = x_to_screen(x_value)
-        canvas.create_oval(
-            x_screen - marker_radius,
-            y_screen - marker_radius,
-            x_screen + marker_radius,
-            y_screen + marker_radius,
-            fill=color,
-            outline="",
-        )
+def section_projected_half(half_width: float, half_height: float, shape: float, roll_rad: float) -> float:
+    """Half extent of a superellipse section seen along the side-view direction at this roll."""
+    if half_width <= 0.0 or half_height <= 0.0:
+        return 0.0
+    extent = 0.0
+    for index in range(SECTION_OUTLINE_SAMPLES):
+        angle = 2.0 * math.pi * index / SECTION_OUTLINE_SAMPLES
+        radius = superellipse_radius(half_width, half_height, shape, angle)
+        extent = max(extent, abs(longitudinal_transverse(radius * math.cos(angle), radius * math.sin(angle), roll_rad)))
+    return extent
+
+
+def chord_vector(panel, chord: float) -> tuple[float, float, float]:
+    incidence = math.radians(panel.incidence_deg)
+    return tuple(chord * (math.cos(incidence) * (1.0 if axis == 0 else 0.0) - math.sin(incidence) * panel.normal[axis]) for axis in range(3))
+
+
+def panel_outline(panel) -> list[tuple[float, float, float]]:
+    root_te = tuple(a + b for a, b in zip(panel.root_le, chord_vector(panel, panel.chord_root_m)))
+    tip_te = tuple(a + b for a, b in zip(panel.tip_le, chord_vector(panel, panel.chord_tip_m)))
+    return [panel.root_le, root_te, tip_te, panel.tip_le]
+
+
+def volume_half_extents(resolved: ResolvedAirframe, volume) -> tuple[float, float, float]:
+    if volume.shape == "box":
+        return volume.size_m[0] / 2.0, volume.size_m[1] / 2.0, volume.size_m[2] / 2.0
+    if volume.shape == "cylinder":
+        radius = volume.diameter_m / 2.0
+        return {"x": (volume.length_m / 2.0, radius, radius), "y": (radius, volume.length_m / 2.0, radius), "z": (radius, radius, volume.length_m / 2.0)}[volume.axis]
+    if volume.shape == "bore":
+        half_w, half_h = body_half_extents(resolved.body, volume.x_m)
+        wall = resolved.airframe.fuselage.section.wall_radial_m
+        return volume.length_m / 2.0, max(half_w - wall, 0.0), max(half_h - wall, 0.0)
+    return 0.0, 0.0, 0.0
+
+
+def marker_positions(resolved: ResolvedAirframe, aero) -> dict:
+    positions = {"cg": resolved.cg_m[0], "np": float("nan"), "lift": float("nan")}
+    if aero is not None:
+        positions["np"] = aero.x_np_m
+        positions["lift"] = aero.lift_center_x_m
+    return positions
 
 
 def draw_marker_guide(canvas: tk.Canvas) -> None:
-    guide_rows = [
-        ("blue", "CG"),
-        ("red", "Neutral point"),
-        ("green", "Lift @ AoA"),
-    ]
-    for index, (color, text) in enumerate(guide_rows):
-        canvas.create_text(12, 12 + index * 16, anchor="nw", text=text, fill=color, font=("TkDefaultFont", 9))
+    for index, key in enumerate(("cg", "np", "lift")):
+        canvas.create_text(12, 12 + index * 16, anchor="nw", text=MARKER_LABELS[key], fill=MARKER_COLORS[key], font=("TkDefaultFont", 9))
+    canvas.create_text(12, 12 + 3 * 16, anchor="nw", text="Volumes (drag along x)", fill=VOLUME_COLOR, font=("TkDefaultFont", 9))
 
 
-def measure_longitudinal_view(analysis: dict, roll_deg: float, width: float, height: float) -> dict:
+def measure_longitudinal_view(resolved: ResolvedAirframe, roll_deg: float, width: float, height: float) -> dict:
     pad_x = 30.0
     pad_y = 30.0
-    fuselage_length = analysis["fuselage_length"]
-    min_x = 0.0
-    max_x = fuselage_length
     roll_rad = math.radians(roll_deg)
-    half_span = analysis["tube_diam"] / 2.0
-    for surface in analysis["surface_sets"]:
-        aoa_rad = math.radians(surface["aoa"])
-        aoa_transverse_scale = math.cos(roll_rad)
-        x_root_le = surface["x_root_le"]
-        x_tip_le = x_root_le + surface["sweep_len"]
-        root_dt = surface["chord_root"] * math.sin(aoa_rad) * aoa_transverse_scale
-        tip_dt = surface["chord_tip"] * math.sin(aoa_rad) * aoa_transverse_scale
-        root_dx = surface["chord_root"] * math.cos(aoa_rad)
-        tip_dx = surface["chord_tip"] * math.cos(aoa_rad)
-        min_x = min(min_x, x_root_le, x_root_le + root_dx, x_tip_le, x_tip_le + tip_dx)
-        max_x = max(max_x, x_root_le, x_root_le + root_dx, x_tip_le, x_tip_le + tip_dx)
-        for panel in surface["panels"]:
-            root_transverse = longitudinal_transverse(panel["root_y"], panel["root_z"], roll_rad)
-            tip_transverse = longitudinal_transverse(panel["tip_y"], panel["tip_z"], roll_rad)
-            half_span = max(half_span, abs(root_transverse), abs(root_transverse - root_dt), abs(tip_transverse), abs(tip_transverse - tip_dt))
-    for motor in analysis["motor_draw_rows"]:
-        center_transverse = longitudinal_transverse(motor["y_m"], motor["z_m"], roll_rad)
-        half_span = max(half_span, abs(center_transverse) + max(motor["pod_diam_m"], motor["prop_diam_m"], motor["motor_bell_diam_m"]) / 2.0)
-        x_half_extent = motor["motor_bell_len_m"] * 0.5 + max(PROP_SHAFT_LEN_M, MOTOR_BASE_LEN_M, motor["pod_len_flat_m"] + motor["pod_len_curve_m"])
-        min_x = min(min_x, motor["x_m"] - x_half_extent)
-        max_x = max(max_x, motor["x_m"] + x_half_extent)
-    for item in analysis["internal_draw_rows"]:
-        center_transverse = longitudinal_transverse(item["y_m"], item["z_m"], roll_rad)
-        half_span = max(half_span, abs(center_transverse) + item["height_m"] / 2.0)
-        min_x = min(min_x, item["x_m"] - item["len_m"] * 0.5)
-        max_x = max(max_x, item["x_m"] + item["len_m"] * 0.5)
-    for x_value in (analysis["cg_x_m"], analysis["x_np"], analysis["force_center_x"]):
-        if math.isfinite(x_value):
-            min_x = min(min_x, x_value)
-            max_x = max(max_x, x_value)
+    min_x = 0.0
+    max_x = resolved.body.length_m
+    half_span = max(station.width_m for station in resolved.body.stations) / 2.0
+    for surface_set in resolved.surfaces:
+        for panel in surface_set.panels:
+            for x, y, z in panel_outline(panel):
+                min_x = min(min_x, x)
+                max_x = max(max_x, x)
+                half_span = max(half_span, abs(longitudinal_transverse(y, z, roll_rad)))
+    for motor in resolved.motors:
+        half_span = max(half_span, abs(longitudinal_transverse(motor.position[1], motor.position[2], roll_rad)) + motor.prop_radius_m)
+        xs = [motor.position[0] - motor.bell_length_m, motor.prop_center[0]] + [x for x, _ in motor.pod_stations]
+        min_x = min(min_x, *xs)
+        max_x = max(max_x, *xs)
     half_span = max(half_span, 0.1)
     content_x_span = max_x - min_x
     scale = min((width - 2.0 * pad_x) / content_x_span, (height - 2.0 * pad_y) / (2.2 * half_span))
@@ -105,22 +114,18 @@ def measure_longitudinal_view(analysis: dict, roll_deg: float, width: float, hei
     }
 
 
-def measure_front_view(analysis: dict, width: float, height: float) -> dict:
+def measure_front_view(resolved: ResolvedAirframe, width: float, height: float) -> dict:
     pad_x = 30.0
     pad_y = 30.0
-    extent_y = analysis["tube_diam"] / 2.0
-    extent_z = analysis["tube_diam"] / 2.0
-    for surface in analysis["surface_sets"]:
-        for panel in surface["panels"]:
-            extent_y = max(extent_y, abs(panel["root_y"]), abs(panel["tip_y"]))
-            extent_z = max(extent_z, abs(panel["root_z"]), abs(panel["tip_z"]))
-    for motor in analysis["motor_draw_rows"]:
-        outer_radius = max(motor["prop_diam_m"], motor["pod_diam_m"], motor["motor_bell_diam_m"]) / 2.0
-        extent_y = max(extent_y, abs(motor["y_m"]) + outer_radius)
-        extent_z = max(extent_z, abs(motor["z_m"]) + outer_radius)
-    for item in analysis["internal_draw_rows"]:
-        extent_y = max(extent_y, abs(item["y_m"]) + item["width_m"] / 2.0)
-        extent_z = max(extent_z, abs(item["z_m"]) + item["height_m"] / 2.0)
+    extent_y = max(station.width_m for station in resolved.body.stations) / 2.0
+    extent_z = max(station.height_m for station in resolved.body.stations) / 2.0
+    for surface_set in resolved.surfaces:
+        for panel in surface_set.panels:
+            extent_y = max(extent_y, abs(panel.root_le[1]), abs(panel.tip_le[1]))
+            extent_z = max(extent_z, abs(panel.root_le[2]), abs(panel.tip_le[2]))
+    for motor in resolved.motors:
+        extent_y = max(extent_y, abs(motor.position[1]) + motor.prop_radius_m)
+        extent_z = max(extent_z, abs(motor.position[2]) + motor.prop_radius_m)
     scale = min((width - 2.0 * pad_x) / (2.2 * extent_y), (height - 2.0 * pad_y) / (2.2 * extent_z))
     return {
         "mode": "Front",
@@ -136,223 +141,11 @@ def measure_front_view(analysis: dict, width: float, height: float) -> dict:
     }
 
 
-def draw_longitudinal_pod(canvas: tk.Canvas, motor: dict, x_screen: float, transverse_screen: float, scale: float, ui_draw: str) -> None:
-    pod_half = motor["pod_diam_m"] * scale / 2.0
-    pod_flat_len = motor["pod_len_flat_m"] * scale
-    pod_curve_len = motor["pod_len_curve_m"] * scale
-    if pod_flat_len <= 0.0 and pod_curve_len <= 0.0:
-        return
-    front_sign = -1.0 if motor["direction"] == "front" else 1.0
-    pod_sign = -front_sign
-    motor_edge_x = x_screen + pod_sign * (motor["motor_bell_len_m"] * scale / 2.0)
-    flat_end_x = motor_edge_x + pod_sign * pod_flat_len
-    if pod_flat_len > 0.0:
-        canvas.create_rectangle(
-            min(motor_edge_x, flat_end_x),
-            transverse_screen - pod_half,
-            max(motor_edge_x, flat_end_x),
-            transverse_screen + pod_half,
-            outline=ui_draw,
-            fill="",
-            width=2,
-        )
-    arc_center_x = flat_end_x if pod_flat_len > 0.0 else motor_edge_x
-    if pod_curve_len > 0.0:
-        top_points = []
-        bottom_points = []
-        for x_local, radius_value in sample_pointed_profile(motor["pod_shape"], motor["pod_len_curve_m"], motor["pod_diam_m"] / 2.0, 16):
-            x_profile = arc_center_x + pod_sign * (pod_curve_len - x_local * scale)
-            radius_screen = radius_value * scale
-            top_points.extend((x_profile, transverse_screen - radius_screen))
-            bottom_points.extend((x_profile, transverse_screen + radius_screen))
-        canvas.create_line(top_points, fill=ui_draw, width=2)
-        canvas.create_line(bottom_points, fill=ui_draw, width=2)
-
-
-def longitudinal_transverse(y_value: float, z_value: float, roll_rad: float) -> float:
-    return z_value * math.cos(roll_rad) + y_value * math.sin(roll_rad)
-
-
-def draw_longitudinal_motors(canvas: tk.Canvas, analysis: dict, x_to_screen, transverse_to_screen, scale: float, ui_draw: str, roll_rad: float) -> None:
-    for motor in analysis["motor_draw_rows"]:
-        x_screen = x_to_screen(motor["x_m"])
-        transverse_screen = transverse_to_screen(longitudinal_transverse(motor["y_m"], motor["z_m"], roll_rad))
-        bell_half_diam = motor["motor_bell_diam_m"] * scale / 2.0
-        bell_half_len = motor["motor_bell_len_m"] * scale / 2.0
-        shaft_half = PROP_SHAFT_DIAM_M * scale / 2.0
-        shaft_len = PROP_SHAFT_LEN_M * scale
-        base_half = motor["motor_bell_diam_m"] * MOTOR_BASE_DIAM_FACTOR * scale / 2.0
-        base_len = MOTOR_BASE_LEN_M * scale
-        prop_radius = motor["prop_diam_m"] * scale / 2.0
-        front_sign = -1.0 if motor["direction"] == "front" else 1.0
-        draw_longitudinal_pod(canvas, motor, x_screen, transverse_screen, scale, ui_draw)
-        canvas.create_rectangle(
-            x_screen - bell_half_len,
-            transverse_screen - bell_half_diam,
-            x_screen + bell_half_len,
-            transverse_screen + bell_half_diam,
-            outline=ui_draw,
-            fill="",
-            width=2,
-        )
-        shaft_outer_x = x_screen + front_sign * (bell_half_len + shaft_len)
-        shaft_inner_x = x_screen + front_sign * bell_half_len
-        canvas.create_rectangle(
-            min(shaft_inner_x, shaft_outer_x),
-            transverse_screen - shaft_half,
-            max(shaft_inner_x, shaft_outer_x),
-            transverse_screen + shaft_half,
-            outline=ui_draw,
-            fill="",
-            width=2,
-        )
-        base_outer_x = x_screen - front_sign * (bell_half_len + base_len)
-        base_inner_x = x_screen - front_sign * bell_half_len
-        canvas.create_rectangle(
-            min(base_inner_x, base_outer_x),
-            transverse_screen - base_half,
-            max(base_inner_x, base_outer_x),
-            transverse_screen + base_half,
-            outline=ui_draw,
-            fill="",
-            width=2,
-        )
-        prop_x_screen = shaft_outer_x
-        canvas.create_line(prop_x_screen, transverse_screen - prop_radius, prop_x_screen, transverse_screen + prop_radius, fill="red", width=2)
-
-
-def draw_longitudinal_internal_objects(canvas: tk.Canvas, analysis: dict, x_to_screen, transverse_to_screen, scale: float, ui_draw: str, roll_rad: float) -> None:
-    for item in analysis["internal_draw_rows"]:
-        transverse_screen = transverse_to_screen(longitudinal_transverse(item["y_m"], item["z_m"], roll_rad))
-        half_len = item["len_m"] * scale / 2.0
-        half_height = item["height_m"] * scale / 2.0
-        canvas.create_rectangle(
-            x_to_screen(item["x_m"]) - half_len,
-            transverse_screen - half_height,
-            x_to_screen(item["x_m"]) + half_len,
-            transverse_screen + half_height,
-            outline=ui_draw,
-            fill="",
-            width=1,
-            dash=(4, 2),
-        )
-
-
-def draw_front_internal_objects(canvas: tk.Canvas, analysis: dict, center_x: float, center_y: float, scale: float, ui_draw: str) -> None:
-    for item in analysis["internal_draw_rows"]:
-        half_width = item["width_m"] * scale / 2.0
-        half_height = item["height_m"] * scale / 2.0
-        x_screen = center_x + item["y_m"] * scale
-        y_screen = center_y - item["z_m"] * scale
-        canvas.create_rectangle(
-            x_screen - half_width,
-            y_screen - half_height,
-            x_screen + half_width,
-            y_screen + half_height,
-            outline=ui_draw,
-            fill="",
-            width=1,
-            dash=(4, 2),
-        )
-
-
-def draw_front_motors(canvas: tk.Canvas, analysis: dict, center_x: float, center_y: float, scale: float, ui_draw: str, ui_bg: str) -> None:
-    for motor in analysis["motor_draw_rows"]:
-        x_screen = center_x + motor["y_m"] * scale
-        y_screen = center_y - motor["z_m"] * scale
-        pod_radius = motor["pod_diam_m"] * scale / 2.0
-        motor_radius = motor["motor_bell_diam_m"] * scale / 2.0
-        shaft_radius = PROP_SHAFT_DIAM_M * scale / 2.0
-        prop_radius = motor["prop_diam_m"] * scale / 2.0
-        canvas.create_oval(
-            x_screen - pod_radius,
-            y_screen - pod_radius,
-            x_screen + pod_radius,
-            y_screen + pod_radius,
-            outline=ui_draw,
-            fill=ui_bg,
-            width=2,
-        )
-        canvas.create_oval(
-            x_screen - motor_radius,
-            y_screen - motor_radius,
-            x_screen + motor_radius,
-            y_screen + motor_radius,
-            outline=ui_draw,
-            fill=ui_bg,
-            width=2,
-        )
-        canvas.create_oval(
-            x_screen - shaft_radius,
-            y_screen - shaft_radius,
-            x_screen + shaft_radius,
-            y_screen + shaft_radius,
-            outline=ui_draw,
-            fill=ui_bg,
-            width=2,
-        )
-        canvas.create_oval(
-            x_screen - prop_radius,
-            y_screen - prop_radius,
-            x_screen + prop_radius,
-            y_screen + prop_radius,
-            outline="red",
-            width=2,
-        )
-
-
-def draw_longitudinal_fuselage(canvas: tk.Canvas, analysis: dict, x_to_screen, transverse_to_screen, center_line: float, ui_draw: str) -> None:
-    for row in structural_rows(analysis["module_rows"]):
-        radius = row["diam"] / 2.0
-        if row["module_type"] == "end":
-            module_len = row["x_end"] - row["x_start"]
-            if row["x_start"] == 0.0:
-                top_points = []
-                bottom_points = []
-                for x_local, radius_value in sample_pointed_profile(
-                    row["pointed_shape"]["shape"],
-                    module_len,
-                    radius,
-                    16,
-                    pointed_shape_param_values(row["pointed_shape"]),
-                ):
-                    x_screen = x_to_screen(row["x_start"] + x_local)
-                    top_points.extend((x_screen, transverse_to_screen(radius_value)))
-                    bottom_points.extend((x_screen, transverse_to_screen(-radius_value)))
-                canvas.create_line(top_points, fill=ui_draw, width=2)
-                canvas.create_line(bottom_points, fill=ui_draw, width=2)
-            else:
-                top_points = []
-                bottom_points = []
-                for x_local, radius_value in sample_pointed_profile(
-                    row["pointed_shape"]["shape"],
-                    module_len,
-                    radius,
-                    16,
-                    pointed_shape_param_values(row["pointed_shape"]),
-                ):
-                    x_screen = x_to_screen(row["x_end"] - x_local)
-                    top_points.extend((x_screen, transverse_to_screen(radius_value)))
-                    bottom_points.extend((x_screen, transverse_to_screen(-radius_value)))
-                canvas.create_line(top_points, fill=ui_draw, width=2)
-                canvas.create_line(bottom_points, fill=ui_draw, width=2)
-            continue
-        canvas.create_rectangle(
-            x_to_screen(row["x_start"]),
-            transverse_to_screen(radius),
-            x_to_screen(row["x_end"]),
-            transverse_to_screen(-radius),
-            outline=ui_draw,
-            width=2,
-        )
-    draw_markers(canvas, analysis, x_to_screen, center_line)
-
-
-def draw_longitudinal_view(canvas: tk.Canvas, analysis: dict, roll_deg: float, ui_draw: str, zoom_scale: float = 1.0, pan_x: float = 0.0, pan_y: float = 0.0) -> dict:
+def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, roll_deg: float, ui_draw: str, zoom_scale: float, pan_x: float, pan_y: float) -> dict:
     canvas.delete("all")
     width = max(canvas.winfo_width(), 10)
     height = max(canvas.winfo_height(), 10)
-    metrics = measure_longitudinal_view(analysis, roll_deg, width, height)
+    metrics = measure_longitudinal_view(resolved, roll_deg, width, height)
     scale = metrics["base_scale"] * zoom_scale
     roll_rad = metrics["roll_rad"]
     center_y = metrics["origin_y"] + pan_y
@@ -363,33 +156,73 @@ def draw_longitudinal_view(canvas: tk.Canvas, analysis: dict, roll_deg: float, u
     def transverse_to_screen(transverse_value: float) -> float:
         return center_y - transverse_value * scale
 
-    for surface in analysis["surface_sets"]:
-        x_root_le = surface["x_root_le"]
-        x_tip_le = x_root_le + surface["sweep_len"]
-        aoa_rad = math.radians(surface["aoa"])
-        aoa_transverse_scale = math.cos(roll_rad)
-        root_dx = surface["chord_root"] * math.cos(aoa_rad)
-        root_dt = surface["chord_root"] * math.sin(aoa_rad) * aoa_transverse_scale
-        tip_dx = surface["chord_tip"] * math.cos(aoa_rad)
-        tip_dt = surface["chord_tip"] * math.sin(aoa_rad) * aoa_transverse_scale
-        for panel in surface["panels"]:
-            root_transverse = longitudinal_transverse(panel["root_y"], panel["root_z"], roll_rad)
-            tip_transverse = longitudinal_transverse(panel["tip_y"], panel["tip_z"], roll_rad)
-            points = [
-                x_to_screen(x_root_le),
-                transverse_to_screen(root_transverse),
-                x_to_screen(x_root_le + root_dx),
-                transverse_to_screen(root_transverse - root_dt),
-                x_to_screen(x_tip_le + tip_dx),
-                transverse_to_screen(tip_transverse - tip_dt),
-                x_to_screen(x_tip_le),
-                transverse_to_screen(tip_transverse),
-            ]
-            canvas.create_polygon(points, outline=ui_draw, fill="", width=2)
-    draw_longitudinal_internal_objects(canvas, analysis, x_to_screen, transverse_to_screen, scale, ui_draw, roll_rad)
-    draw_longitudinal_fuselage(canvas, analysis, x_to_screen, transverse_to_screen, center_y, ui_draw)
-    draw_longitudinal_motors(canvas, analysis, x_to_screen, transverse_to_screen, scale, ui_draw, roll_rad)
+    for surface_index, surface_set in enumerate(resolved.surfaces):
+        for panel in surface_set.panels:
+            points = []
+            for x, y, z in panel_outline(panel):
+                points.extend((x_to_screen(x), transverse_to_screen(longitudinal_transverse(y, z, roll_rad))))
+            canvas.create_polygon(points, outline=ui_draw, fill="", width=2, tags=("drag", f"surface:{surface_index}"))
+
+    body = resolved.body
+    top_points = []
+    bottom_points = []
+    for station in body.stations:
+        half = section_projected_half(station.width_m / 2.0, station.height_m / 2.0, body.shape, roll_rad)
+        top_points.extend((x_to_screen(station.x_m), transverse_to_screen(half)))
+        bottom_points.extend((x_to_screen(station.x_m), transverse_to_screen(-half)))
+    canvas.create_line(top_points, fill=ui_draw, width=2)
+    canvas.create_line(bottom_points, fill=ui_draw, width=2)
+
+    for volume_index, volume in enumerate(resolved.airframe.volumes):
+        tags = ("drag", f"volume:{volume_index}")
+        x_screen = x_to_screen(volume.x_m)
+        t_screen = transverse_to_screen(longitudinal_transverse(volume.y_m, volume.z_m, roll_rad))
+        if volume.shape == "point":
+            mark = POINT_MASS_MARK_PX
+            canvas.create_line(x_screen - mark, t_screen - mark, x_screen + mark, t_screen + mark, fill=VOLUME_COLOR, width=2, tags=tags)
+            canvas.create_line(x_screen - mark, t_screen + mark, x_screen + mark, t_screen - mark, fill=VOLUME_COLOR, width=2, tags=tags)
+            continue
+        half_x, half_y, half_z = volume_half_extents(resolved, volume)
+        half_t = half_y * abs(math.sin(roll_rad)) + half_z * abs(math.cos(roll_rad))
+        canvas.create_rectangle(x_screen - half_x * scale, t_screen - half_t * scale, x_screen + half_x * scale, t_screen + half_t * scale,
+                                outline=VOLUME_COLOR, fill="", width=1, dash=(4, 2), tags=tags)
+        canvas.create_text(x_screen, t_screen, text=volume.name, fill=VOLUME_COLOR, font=("TkDefaultFont", 8), tags=tags)
+
+    for motor in resolved.motors:
+        x_screen = x_to_screen(motor.position[0])
+        t_screen = transverse_to_screen(longitudinal_transverse(motor.position[1], motor.position[2], roll_rad))
+        if motor.pod_stations:
+            pod_top = []
+            pod_bottom = []
+            for pod_x, pod_radius in motor.pod_stations:
+                pod_top.extend((x_to_screen(pod_x), t_screen - pod_radius * scale))
+                pod_bottom.extend((x_to_screen(pod_x), t_screen + pod_radius * scale))
+            canvas.create_line(pod_top, fill=ui_draw, width=2)
+            canvas.create_line(pod_bottom, fill=ui_draw, width=2)
+        bell_half_len = motor.bell_length_m * scale / 2.0
+        bell_half_diam = motor.bell_diameter_m * scale / 2.0
+        canvas.create_rectangle(x_screen - bell_half_len, t_screen - bell_half_diam, x_screen + bell_half_len, t_screen + bell_half_diam, outline=ui_draw, width=2)
+        prop_side = 1.0 if motor.prop_center[0] > motor.position[0] else -1.0
+        shaft_half = PROP_SHAFT_DIAM_M * scale / 2.0
+        shaft_inner = x_screen + prop_side * bell_half_len
+        shaft_outer = x_screen + prop_side * (bell_half_len + PROP_SHAFT_LEN_M * scale)
+        canvas.create_rectangle(min(shaft_inner, shaft_outer), t_screen - shaft_half, max(shaft_inner, shaft_outer), t_screen + shaft_half, outline=ui_draw, width=2)
+        base_half = motor.bell_diameter_m * MOTOR_BASE_DIAM_FACTOR * scale / 2.0
+        base_inner = x_screen - prop_side * bell_half_len
+        base_outer = x_screen - prop_side * (bell_half_len + MOTOR_BASE_LEN_M * scale)
+        canvas.create_rectangle(min(base_inner, base_outer), t_screen - base_half, max(base_inner, base_outer), t_screen + base_half, outline=ui_draw, width=2)
+        prop_radius = motor.prop_radius_m * scale
+        canvas.create_line(shaft_outer, t_screen - prop_radius, shaft_outer, t_screen + prop_radius, fill="red", width=2)
+
+    for key, x_value in marker_positions(resolved, aero).items():
+        if math.isfinite(x_value):
+            x_screen = x_to_screen(x_value)
+            canvas.create_oval(x_screen - MARKER_RADIUS_PX, center_y - MARKER_RADIUS_PX, x_screen + MARKER_RADIUS_PX, center_y + MARKER_RADIUS_PX, fill=MARKER_COLORS[key], outline="")
+    cg_low, cg_high = resolved.cg_x_range_m
+    if cg_low != cg_high:
+        canvas.create_line(x_to_screen(cg_low), center_y + 2 * MARKER_RADIUS_PX, x_to_screen(cg_high), center_y + 2 * MARKER_RADIUS_PX, fill=MARKER_COLORS["cg"], width=3)
     draw_marker_guide(canvas)
+    metrics["scale"] = scale
     metrics["zoom_scale"] = zoom_scale
     metrics["pan_x"] = pan_x
     metrics["pan_y"] = pan_y
@@ -398,39 +231,43 @@ def draw_longitudinal_view(canvas: tk.Canvas, analysis: dict, roll_deg: float, u
     return metrics
 
 
-def draw_front_view(canvas: tk.Canvas, analysis: dict, ui_draw: str, ui_bg: str, zoom_scale: float = 1.0, pan_x: float = 0.0, pan_y: float = 0.0) -> dict:
+def draw_front_view(canvas: tk.Canvas, resolved: ResolvedAirframe, ui_draw: str, ui_bg: str, zoom_scale: float, pan_x: float, pan_y: float) -> dict:
     canvas.delete("all")
     width = max(canvas.winfo_width(), 10)
     height = max(canvas.winfo_height(), 10)
-    metrics = measure_front_view(analysis, width, height)
+    metrics = measure_front_view(resolved, width, height)
     center_x = metrics["origin_x"] + pan_x
     center_y = metrics["origin_y"] + pan_y
     scale = metrics["base_scale"] * zoom_scale
-    for surface in analysis["surface_sets"]:
-        for panel in surface["panels"]:
-            canvas.create_line(
-                center_x + panel["root_y"] * scale,
-                center_y - panel["root_z"] * scale,
-                center_x + panel["tip_y"] * scale,
-                center_y - panel["tip_z"] * scale,
-                fill=ui_draw,
-                width=2,
-            )
-    draw_front_internal_objects(canvas, analysis, center_x, center_y, scale, ui_draw)
-    body_half = analysis["tube_diam"] / 2.0
-    canvas.create_oval(
-        center_x - body_half * scale,
-        center_y - body_half * scale,
-        center_x + body_half * scale,
-        center_y + body_half * scale,
-        outline=ui_draw,
-        width=2,
-    )
-    draw_front_motors(canvas, analysis, center_x, center_y, scale, ui_draw, ui_bg)
+    for surface_set in resolved.surfaces:
+        for panel in surface_set.panels:
+            canvas.create_line(center_x + panel.root_le[1] * scale, center_y - panel.root_le[2] * scale,
+                               center_x + panel.tip_le[1] * scale, center_y - panel.tip_le[2] * scale, fill=ui_draw, width=2)
+    body = resolved.body
+    widest = max(body.stations, key=lambda station: station.width_m)
+    outline = []
+    for index in range(SECTION_OUTLINE_SAMPLES + 1):
+        angle = 2.0 * math.pi * index / SECTION_OUTLINE_SAMPLES
+        radius = superellipse_radius(widest.width_m / 2.0, widest.height_m / 2.0, body.shape, angle)
+        outline.extend((center_x + radius * math.cos(angle) * scale, center_y - radius * math.sin(angle) * scale))
+    canvas.create_line(outline, fill=ui_draw, width=2)
+    for volume in resolved.airframe.volumes:
+        if volume.shape == "point":
+            continue
+        _half_x, half_y, half_z = volume_half_extents(resolved, volume)
+        x_screen = center_x + volume.y_m * scale
+        y_screen = center_y - volume.z_m * scale
+        canvas.create_rectangle(x_screen - half_y * scale, y_screen - half_z * scale, x_screen + half_y * scale, y_screen + half_z * scale,
+                                outline=VOLUME_COLOR, fill="", width=1, dash=(4, 2))
+    for motor in resolved.motors:
+        x_screen = center_x + motor.position[1] * scale
+        y_screen = center_y - motor.position[2] * scale
+        pod_radius = max((radius for _x, radius in motor.pod_stations), default=0.0)
+        for radius, color, fill in ((pod_radius, ui_draw, ui_bg), (motor.bell_diameter_m / 2.0, ui_draw, ui_bg), (PROP_SHAFT_DIAM_M / 2.0, ui_draw, ui_bg), (motor.prop_radius_m, "red", "")):
+            if radius > 0.0:
+                canvas.create_oval(x_screen - radius * scale, y_screen - radius * scale, x_screen + radius * scale, y_screen + radius * scale, outline=color, fill=fill, width=2)
     draw_marker_guide(canvas)
-    legend_y = 64
-    for index, color in enumerate(("blue", "red", "green")):
-        canvas.create_oval(20 + index * 22, legend_y, 30 + index * 22, legend_y + 10, fill=color, outline="")
+    metrics["scale"] = scale
     metrics["zoom_scale"] = zoom_scale
     metrics["pan_x"] = pan_x
     metrics["pan_y"] = pan_y
@@ -441,7 +278,8 @@ def draw_front_view(canvas: tk.Canvas, analysis: dict, ui_draw: str, ui_bg: str,
 
 def draw_canvas_view(
     canvas: tk.Canvas,
-    analysis: dict,
+    resolved: ResolvedAirframe,
+    aero,
     view_mode: str,
     roll_deg: float,
     ui_draw: str,
@@ -450,6 +288,7 @@ def draw_canvas_view(
     pan_x: float = 0.0,
     pan_y: float = 0.0,
 ) -> dict:
+    """aero is the AeroResult for this geometry, or None while it is still being computed."""
     if view_mode == "Longitudinal":
-        return draw_longitudinal_view(canvas, analysis, roll_deg, ui_draw, zoom_scale, pan_x, pan_y)
-    return draw_front_view(canvas, analysis, ui_draw, ui_bg, zoom_scale, pan_x, pan_y)
+        return draw_longitudinal_view(canvas, resolved, aero, roll_deg, ui_draw, zoom_scale, pan_x, pan_y)
+    return draw_front_view(canvas, resolved, ui_draw, ui_bg, zoom_scale, pan_x, pan_y)

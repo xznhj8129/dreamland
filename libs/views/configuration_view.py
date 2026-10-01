@@ -1,26 +1,107 @@
+"""
+Usage:
+from libs.views.configuration_view import ConfigurationMainView
+
+Configuration view: summary, drawing and the plane-first editors (Airframe, Surfaces, Propulsion, Volumes).
+Editors write straight into app.definition (the airframe/2 dict) and call app.recompute(). Lengths are shown in
+mm and masses in g; the definition stays in SI. In the side view, volumes and wing sets can be dragged along x.
+"""
+
 from __future__ import annotations
 
+import copy
 import tkinter as tk
 from tkinter import ttk
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-from libs.analysis import layout_wing_count
+from libs.airframe import AXES, FIN_POSITIONS, JOINT_TYPES, LAYOUTS, MOUNT_TARGETS, THRUST_DIRECTIONS, VOLUME_SHAPES
 from libs.graphics import draw_canvas_view
+from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS
+
+MM_KEYS = {
+    "length_m", "width_m", "height_m", "wall_radial_m", "insertion_depth_m", "diameter_m", "radial_position_m",
+    "from_x_m", "to_x_m", "x_root_le_m", "exposed_span_m", "chord_root_m", "chord_tip_m", "span_position_m",
+    "x_offset_m", "x_m", "y_m", "z_m", "flat_length_m", "curve_length_m", "nose_radius", "size_m", "printer_bed_m",
+}
+GRAM_KEYS = {"mass_kg", "structure_mass_kg"}
+PERCENT_KEYS = {"surface_infill"}
+UNIT_SUFFIXES = ("_m_s", "_deg", "_kg", "_m")
+CHOICES = {
+    "layout": list(LAYOUTS),
+    "fin_position": list(FIN_POSITIONS),
+    "axis": list(AXES),
+    "on": list(MOUNT_TARGETS),
+    "direction": list(THRUST_DIRECTIONS),
+    "type": list(JOINT_TYPES),
+    "profile": sorted(POINTED_SHAPE_PARAM_KEYS),
+}
+# Explicit defaults for fields that appear when the user switches a profile, shape or adds an item.
+PROFILE_PARAM_DEFAULTS = {"k_prime": 1.0, "nose_radius": 0.00465, "break_fraction": 0.5, "break_radius_fraction": 0.5, "rho_factor": 1.25, "exponent": 0.66, "c": 0.0}
+VOLUME_SHAPE_FIELDS = {
+    "box": {"size_m": [0.02, 0.02, 0.02]},
+    "cylinder": {"diameter_m": 0.02, "length_m": 0.03, "axis": "x"},
+    "bore": {"length_m": 0.05},
+    "point": {},
+}
+NEW_SURFACE = {
+    "name": "wing", "x_root_le_m": 0.2, "layout": "H", "fin_position": "top", "dihedral_deg": 0.0, "root_offset": 0.0,
+    "exposed_span_m": 0.12, "chord_root_m": 0.1, "chord_tip_m": 0.07, "sweep_le_deg": 10.0, "incidence_deg": 0.0, "airfoil": "naca2412",
+}
+NEW_POD = {"diameter_m": 0.035, "flat_length_m": 0.02, "curve_length_m": 0.05, "profile": "elliptical"}
+DRAG_KEYS = {"volume": ("volumes", "x_m"), "surface": ("surfaces", "x_root_le_m")}
+
+
+def field_label(key: str) -> str:
+    base = key
+    for suffix in UNIT_SUFFIXES:
+        if base.endswith(suffix):
+            base = base[: -len(suffix)]
+            break
+    unit = "mm" if key in MM_KEYS else "g" if key in GRAM_KEYS else "%" if key in PERCENT_KEYS else "deg" if key.endswith("_deg") else "m/s" if key.endswith("_m_s") else "m" if key.endswith("_m") else ""
+    return f"{base.replace('_', ' ')} ({unit})" if unit else base.replace("_", " ")
+
+
+def display_factor(key: str) -> float:
+    return 1000.0 if key in MM_KEYS or key in GRAM_KEYS else 100.0 if key in PERCENT_KEYS else 1.0
+
+
+def format_value(key: str, value) -> str:
+    if value is None:
+        return ""
+    if type(value) is list:
+        return "-".join(f"{item * display_factor(key):g}" for item in value)
+    if type(value) in (int, float):
+        return f"{value * display_factor(key):g}" if type(value) is float else str(value)
+    return str(value)
+
+
+def parse_value(key: str, text: str, existing):
+    """Text from an entry back to the stored value; raises ValueError on bad input. 'a-b' gives a mass range."""
+    text = text.strip()
+    if type(existing) is str:
+        return text
+    if type(existing) is int:
+        return int(text)
+    if key == "mass_kg" and "-" in text[1:]:
+        low, high = text.split("-", 1)
+        return [float(low) / display_factor(key), float(high) / display_factor(key)]
+    return float(text) / display_factor(key)
 
 
 class ConfigurationMainView:
     def __init__(self, app, parent) -> None:
         self.app = app
-        self.collapsed_part_ids = set()
         self.view_zoom_scale = 1.0
         self.view_pan_x = 0.0
         self.view_pan_y = 0.0
         self.view_drag_last_xy = None
+        self.drag_target = None
         self.view_metrics = None
         self.view_scroll_x = None
         self.view_scroll_y = None
+        self.editor_frames: dict[str, ttk.Frame] = {}
         self.frame = ttk.Frame(parent)
         self.frame.grid(row=0, column=0, sticky="nsew")
         self.frame.columnconfigure(0, weight=1)
@@ -47,18 +128,15 @@ class ConfigurationMainView:
         left_header = ttk.LabelFrame(left_frame, text="Recompute", padding=6)
         left_header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
         left_header.columnconfigure(1, weight=1)
-        ttk.Button(left_header, text="Recompute (F5)", command=app.heavy_recompute).grid(row=0, column=0, sticky="w")
+        ttk.Button(left_header, text="Recompute (F5)", command=app.recompute).grid(row=0, column=0, sticky="w")
         ttk.Label(left_header, textvariable=app.recompute_status_var).grid(row=0, column=1, sticky="e", padx=(8, 0))
 
         left_notebook = ttk.Notebook(left_frame)
         left_notebook.grid(row=1, column=0, sticky="nsew")
         summary_tab = ttk.Frame(left_notebook, padding=4)
-        controls_tab = ttk.Frame(left_notebook, padding=4)
         summary_tab.columnconfigure(0, weight=1)
         summary_tab.rowconfigure(0, weight=1)
-        controls_tab.columnconfigure(0, weight=1)
         left_notebook.add(summary_tab, text="Summary")
-        left_notebook.add(controls_tab, text="Controls")
 
         summary_frame = ttk.LabelFrame(summary_tab, text="Summary", padding=4)
         summary_frame.grid(row=0, column=0, sticky="nsew")
@@ -84,23 +162,6 @@ class ConfigurationMainView:
         app.summary_text.grid(row=0, column=0, sticky="nsew")
         summary_scroll_y.grid(row=0, column=1, sticky="ns")
         summary_scroll_x.grid(row=1, column=0, sticky="ew")
-
-        controls_frame = ttk.LabelFrame(controls_tab, text="Controls", padding=6)
-        controls_frame.grid(row=0, column=0, sticky="new")
-        controls_frame.columnconfigure(0, weight=1)
-        operating_point_frame = ttk.LabelFrame(controls_frame, text="Surface Force Operating Point", padding=6)
-        operating_point_frame.grid(row=0, column=0, sticky="ew")
-        operating_point_frame.columnconfigure(1, weight=1)
-        for row_index, key in enumerate(app.config_force_settings):
-            ttk.Label(operating_point_frame, text=app.config_force_labels[key]).grid(row=row_index, column=0, sticky="w")
-            entry = ttk.Entry(operating_point_frame, textvariable=app.config_force_vars[key])
-            entry.grid(row=row_index, column=1, sticky="ew", padx=(8, 0), pady=2)
-            app.bind_value_entry(entry, app.config_force_settings, key, app.config_force_vars[key], "config_force")
-        ttk.Label(
-            controls_frame,
-            text="These values drive the Surface Forces block in Summary.",
-        ).grid(row=1, column=0, sticky="w", pady=(8, 0))
-        ttk.Label(controls_frame, text="Cheap aero sweep is always recomputed from -45 to 45 deg.").grid(row=2, column=0, sticky="w", pady=(8, 0))
 
         center_notebook = ttk.Notebook(center_frame)
         center_notebook.grid(row=0, column=0, sticky="nsew")
@@ -170,120 +231,371 @@ class ConfigurationMainView:
         app.asb_frame.rowconfigure(1, weight=1)
         asb_controls = ttk.Frame(app.asb_frame)
         asb_controls.grid(row=0, column=0, sticky="ew", pady=(0, 6))
-        ttk.Button(asb_controls, text="Update View", command=app.heavy_recompute).pack(side="left")
+        ttk.Button(asb_controls, text="Update View", command=app.update_asb_view).pack(side="left")
 
         notebook = ttk.Notebook(right_frame)
         notebook.grid(row=0, column=0, rowspan=2, sticky="nsew")
-        parameters_tab = ttk.Frame(notebook, padding=4)
-        propulsion_tab = ttk.Frame(notebook, padding=4)
-        assembly_tab = ttk.Frame(notebook, padding=4)
-        parameters_tab.columnconfigure(0, weight=1)
-        propulsion_tab.columnconfigure(0, weight=1)
-        propulsion_tab.rowconfigure(1, weight=1)
-        assembly_tab.columnconfigure(0, weight=1)
-        assembly_tab.rowconfigure(1, weight=1)
-        notebook.add(parameters_tab, text="Parameters")
-        notebook.add(propulsion_tab, text="Propulsion")
-        notebook.add(assembly_tab, text="Assembly")
+        for tab_name in ("Airframe", "Surfaces", "Propulsion", "Volumes"):
+            tab = ttk.Frame(notebook, padding=4)
+            tab.columnconfigure(0, weight=1)
+            tab.rowconfigure(0, weight=1)
+            notebook.add(tab, text=tab_name)
+            self.editor_frames[tab_name] = self.make_scroll_area(tab)
 
-        modules_header = ttk.LabelFrame(parameters_tab, text="Parameters", padding=6)
-        modules_header.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        modules_header.columnconfigure(1, weight=1)
-        ttk.Label(modules_header, text=app.main_driver_labels["assembly_name"]).grid(row=0, column=0, sticky="w")
-        assembly_entry = ttk.Entry(modules_header, textvariable=app.assembly_name_var)
-        assembly_entry.grid(row=0, column=1, sticky="ew", padx=(8, 0), pady=2)
-        assembly_entry.bind("<Return>", lambda event: app.on_assembly_name_commit())
-        assembly_entry.bind("<KP_Enter>", lambda event: app.on_assembly_name_commit())
-        assembly_entry.bind("<FocusOut>", lambda event: app.on_assembly_name_commit())
-        ttk.Label(modules_header, text="Standard Profile").grid(row=1, column=0, sticky="w")
-        standard_box = ttk.Combobox(modules_header, values=[app.standard_none_option, *app.standard_names], textvariable=app.standard_profile_var, state="readonly")
-        standard_box.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=2)
-        standard_box.bind("<<ComboboxSelected>>", lambda event: app.on_standard_profile_selected())
-        apply_standard_box = ttk.Checkbutton(modules_header, text="Apply", variable=app.apply_standard_var, command=app.on_apply_standard_changed)
-        apply_standard_box.grid(row=1, column=2, sticky="w", padx=(8, 0), pady=2)
-        for row_index, key in enumerate(app.main_driver_keys, start=2):
-            ttk.Label(modules_header, text=app.main_driver_labels[key]).grid(row=row_index, column=0, sticky="w")
-            variable = tk.StringVar(value=app.format_field_value(key, app.current_config[key]))
-            entry = ttk.Entry(modules_header, textvariable=variable)
-            entry.grid(row=row_index, column=1, sticky="ew", padx=(8, 0), pady=2)
-            app.bind_value_entry(entry, app.current_config, key, variable, "config")
 
-        app.assembly_inner = ttk.Frame(parameters_tab)
-        app.assembly_inner.grid(row=1, column=0, sticky="nsew")
+    def make_scroll_area(self, tab: ttk.Frame) -> ttk.Frame:
+        canvas = tk.Canvas(tab, background=self.app.ui_bg, highlightthickness=1, highlightbackground=self.app.ui_border, highlightcolor=self.app.ui_accent, relief="flat")
+        scroll_y = ttk.Scrollbar(tab, orient="vertical", command=canvas.yview)
+        inner = ttk.Frame(canvas)
+        inner.columnconfigure(0, weight=1)
+        inner.bind("<Configure>", lambda event: canvas.configure(scrollregion=canvas.bbox("all")))
+        window_id = canvas.create_window((0, 0), window=inner, anchor="nw")
+        canvas.configure(yscrollcommand=scroll_y.set)
+        canvas.grid(row=0, column=0, sticky="nsew")
+        scroll_y.grid(row=0, column=1, sticky="ns")
+        canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window_id, width=event.width))
+        return inner
 
-        propulsion_select_frame = ttk.LabelFrame(propulsion_tab, text="Selection", padding=6)
-        propulsion_select_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        propulsion_select_frame.columnconfigure(1, weight=1)
-        ttk.Label(propulsion_select_frame, text=app.propulsion_labels["battery"]).grid(row=0, column=0, sticky="w")
-        battery_box = ttk.Combobox(propulsion_select_frame, values=sorted(app.parts_data["battery"].keys()), textvariable=app.propulsion_battery_var, state="readonly")
-        battery_box.grid(row=0, column=1, sticky="ew", padx=(8, 0), pady=2)
-        battery_box.bind("<<ComboboxSelected>>", lambda event: app.on_propulsion_battery_selected())
-        ttk.Label(propulsion_select_frame, text=app.propulsion_labels["motors"]).grid(row=1, column=0, sticky="w")
-        motor_box = ttk.Combobox(propulsion_select_frame, values=app.motor_names, textvariable=app.propulsion_motor_var, state="readonly")
-        motor_box.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=2)
-        motor_box.bind("<<ComboboxSelected>>", lambda event: app.on_propulsion_motor_selected())
-        ttk.Label(propulsion_select_frame, text=app.propulsion_labels["props"]).grid(row=2, column=0, sticky="w")
-        app.propulsion_prop_box = ttk.Combobox(propulsion_select_frame, values=[], textvariable=app.propulsion_prop_var, state="readonly")
-        app.propulsion_prop_box.grid(row=2, column=1, sticky="ew", padx=(8, 0), pady=2)
-        app.propulsion_prop_box.bind("<<ComboboxSelected>>", lambda event: app.on_propulsion_prop_selected())
+    def draw_active_view(self) -> None:
+        app = self.app
+        if app.resolved is None or app.view_canvas is None:
+            return
+        if app.view_mode_var.get() == "Front":
+            app.roll_frame.grid_remove()
+        else:
+            app.roll_frame.grid()
+        draw_args = (app.view_canvas, app.resolved, app.aero, app.view_mode_var.get(), app.roll_view_var.get(), app.ui_draw, app.ui_bg)
+        self.view_metrics = draw_canvas_view(*draw_args, self.view_zoom_scale, self.view_pan_x, self.view_pan_y)
+        if self.clamp_view_pan():
+            self.view_metrics = draw_canvas_view(*draw_args, self.view_zoom_scale, self.view_pan_x, self.view_pan_y)
+        self.update_view_scrollbars()
 
-        propulsion_info_frame = ttk.LabelFrame(propulsion_tab, text="Motor Info", padding=6)
-        propulsion_info_frame.grid(row=1, column=0, sticky="nsew")
-        propulsion_info_frame.columnconfigure(0, weight=1)
-        propulsion_info_frame.rowconfigure(0, weight=1)
-        propulsion_info_frame.rowconfigure(1, weight=1)
-        app.propulsion_plot_host = ttk.Frame(propulsion_info_frame)
-        app.propulsion_plot_host.grid(row=0, column=0, sticky="nsew")
-        app.propulsion_plot_host.columnconfigure(0, weight=1)
-        app.propulsion_plot_host.rowconfigure(0, weight=1)
-        propulsion_text_frame = ttk.Frame(propulsion_info_frame)
-        propulsion_text_frame.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
-        propulsion_text_frame.columnconfigure(0, weight=1)
-        propulsion_text_frame.rowconfigure(0, weight=1)
-        app.propulsion_text = tk.Text(
-            propulsion_text_frame,
-            wrap="none",
-            font=("TkFixedFont", 10),
-            background=app.ui_panel,
-            foreground=app.ui_fg,
-            insertbackground=app.ui_fg,
-            selectbackground=app.ui_border,
-            selectforeground=app.ui_accent,
-            highlightthickness=1,
-            highlightbackground=app.ui_border,
-            highlightcolor=app.ui_accent,
-            relief="flat",
-            height=12,
-        )
-        propulsion_text_scroll_y = ttk.Scrollbar(propulsion_text_frame, orient="vertical", command=app.propulsion_text.yview)
-        app.propulsion_text.configure(yscrollcommand=propulsion_text_scroll_y.set)
-        app.propulsion_text.grid(row=0, column=0, sticky="nsew")
-        propulsion_text_scroll_y.grid(row=0, column=1, sticky="ns")
+    def on_view_drag_start(self, event) -> None:
+        self.view_drag_last_xy = (event.x, event.y)
+        self.drag_target = None
+        if self.app.view_mode_var.get() != "Longitudinal":
+            return
+        for tag in self.app.view_canvas.gettags("current"):
+            kind, _, index = tag.partition(":")
+            if kind in DRAG_KEYS and index:
+                collection, key = DRAG_KEYS[kind]
+                item = self.app.definition[collection][int(index)]
+                self.drag_target = (item, key, event.x, item[key])
+                return
 
-        assembly_controls = ttk.Frame(assembly_tab)
-        assembly_controls.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        ttk.Button(assembly_controls, text="Add New", command=app.add_new_part).pack(side="left")
+    def on_view_drag_motion(self, event) -> None:
+        if self.drag_target is not None:
+            item, key, start_x, start_value = self.drag_target
+            item[key] = round(max(0.0, start_value + (event.x - start_x) / self.view_metrics["scale"]), 4)
+            self.app.recompute(run_aero=False)
+            return
+        if self.view_drag_last_xy is None:
+            return
+        last_x, last_y = self.view_drag_last_xy
+        self.view_pan_x += event.x - last_x
+        self.view_pan_y += event.y - last_y
+        self.view_drag_last_xy = (event.x, event.y)
+        self.draw_active_view()
 
-        module_scroll_frame = ttk.Frame(assembly_tab)
-        module_scroll_frame.grid(row=1, column=0, sticky="nsew")
-        module_scroll_frame.columnconfigure(0, weight=1)
-        module_scroll_frame.rowconfigure(0, weight=1)
-        app.module_canvas = tk.Canvas(
-            module_scroll_frame,
-            background=app.ui_bg,
-            highlightthickness=1,
-            highlightbackground=app.ui_border,
-            highlightcolor=app.ui_accent,
-            relief="flat",
-        )
-        module_scroll_y = ttk.Scrollbar(module_scroll_frame, orient="vertical", command=app.module_canvas.yview)
-        app.module_inner = ttk.Frame(app.module_canvas)
-        app.module_inner.bind("<Configure>", lambda event: app.module_canvas.configure(scrollregion=app.module_canvas.bbox("all")))
-        app.module_window_id = app.module_canvas.create_window((0, 0), window=app.module_inner, anchor="nw")
-        app.module_canvas.configure(yscrollcommand=module_scroll_y.set)
-        app.module_canvas.grid(row=0, column=0, sticky="nsew")
-        module_scroll_y.grid(row=0, column=1, sticky="ns")
-        app.module_canvas.bind("<Configure>", lambda event: app.module_canvas.itemconfigure(app.module_window_id, width=event.width))
+    def on_view_drag_end(self, _event) -> None:
+        self.view_drag_last_xy = None
+        if self.drag_target is not None:
+            self.drag_target = None
+            self.rebuild_editors()
+            self.app.recompute()
+
+    def changed(self, rebuild: bool = False) -> None:
+        if rebuild:
+            self.rebuild_editors()
+        self.app.recompute()
+
+    def add_entry(self, frame, row: int, data, key, optional: bool = False, label: str | None = None, unit_key: str | None = None, blank_hint: str | None = None) -> None:
+        """Entry for one value of a dict (by key) or list (by index); commits on Return/focus-out only when the text changed.
+        unit_key names the field for units and label when key is a list index."""
+        unit_key = unit_key or key
+        ttk.Label(frame, text=label or field_label(unit_key)).grid(row=row, column=0, sticky="w")
+        present = type(data) is list or key in data
+        initial = format_value(unit_key, data[key] if present else None)
+        variable = tk.StringVar(value=initial)
+        entry = ttk.Entry(frame, textvariable=variable)
+        entry.grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=1)
+        if optional:
+            hint = blank_hint or ("blank = computed" if unit_key in GRAM_KEYS else "blank = none")
+            ttk.Label(frame, text=hint).grid(row=row, column=2, sticky="w", padx=(6, 0))
+        state = {"text": initial}
+
+        def commit(_event=None) -> str:
+            text = variable.get()
+            if text.strip() == state["text"].strip():
+                return "break"
+            if optional and not text.strip():
+                data.pop(key, None)
+            else:
+                existing = data[key] if type(data) is list or key in data else 0.0
+                try:
+                    data[key] = parse_value(unit_key, text, existing)
+                except ValueError:
+                    variable.set(state["text"])
+                    self.app.recompute_status_var.set(f"Not a valid value for {field_label(unit_key)}: {text!r}")
+                    return "break"
+            state["text"] = text
+            self.changed()
+            return "break"
+
+        for sequence in ("<Return>", "<KP_Enter>", "<FocusOut>"):
+            entry.bind(sequence, commit)
+
+    def add_vector_entries(self, frame, row: int, data: dict, key: str, axis_labels: tuple[str, ...]) -> int:
+        for index, axis_label in enumerate(axis_labels):
+            self.add_entry(frame, row + index, data[key], index, label=f"{field_label(key)} {axis_label}", unit_key=key)
+        return row + len(axis_labels)
+
+    def add_choice(self, frame, row: int, data: dict, key: str, options: list[str], on_change=None) -> None:
+        ttk.Label(frame, text=field_label(key)).grid(row=row, column=0, sticky="w")
+        variable = tk.StringVar(value=str(data.get(key, "")))
+        box = ttk.Combobox(frame, values=options, textvariable=variable, state="readonly")
+        box.grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=1)
+
+        def select(_event=None) -> None:
+            data[key] = variable.get()
+            if on_change is not None:
+                on_change()
+            self.changed(rebuild=True)
+
+        box.bind("<<ComboboxSelected>>", select)
+
+    def add_fields(self, frame, data: dict, start_row: int = 0, skip: set[str] = frozenset()) -> int:
+        """Generic rows for every field of a definition dict, in stored order."""
+        row = start_row
+        for key, value in list(data.items()):
+            if key in skip:
+                continue
+            if type(value) is dict:
+                group = ttk.LabelFrame(frame, text=field_label(key), padding=4)
+                group.grid(row=row, column=0, columnspan=3, sticky="ew", pady=2)
+                group.columnconfigure(1, weight=1)
+                self.add_fields(group, value)
+            elif key in CHOICES and type(value) is str:
+                self.add_choice(frame, row, data, key, CHOICES[key])
+            elif type(value) is list and key == "printer_bed_m":
+                row = self.add_vector_entries(frame, row, data, key, ("x", "y", "z")) - 1
+            elif type(value) is list and key == "size_m":
+                row = self.add_vector_entries(frame, row, data, key, ("x", "y", "z")) - 1
+            elif type(value) is list:
+                ttk.Label(frame, text=f"{field_label(key)}: {len(value)} entries (edit in file)").grid(row=row, column=0, columnspan=3, sticky="w")
+            else:
+                self.add_entry(frame, row, data, key)
+            row += 1
+        return row
+
+    def card(self, parent, row: int, title: str, on_delete) -> ttk.LabelFrame:
+        frame = ttk.LabelFrame(parent, text=title, padding=6)
+        frame.grid(row=row, column=0, sticky="ew", padx=4, pady=4)
+        frame.columnconfigure(1, weight=1)
+        ttk.Button(frame, text="Delete", command=on_delete).grid(row=0, column=2, sticky="e")
+        return frame
+
+    def rebuild_editors(self) -> None:
+        for frame in self.editor_frames.values():
+            for child in frame.winfo_children():
+                child.destroy()
+        self.build_airframe_tab(self.editor_frames["Airframe"])
+        self.build_surfaces_tab(self.editor_frames["Surfaces"])
+        self.build_propulsion_tab(self.editor_frames["Propulsion"])
+        self.build_volumes_tab(self.editor_frames["Volumes"])
+
+    def build_airframe_tab(self, parent) -> None:
+        definition = self.app.definition
+        general = ttk.LabelFrame(parent, text="Airframe", padding=6)
+        general.grid(row=0, column=0, sticky="ew", padx=4, pady=4)
+        general.columnconfigure(1, weight=1)
+        self.add_entry(general, 0, definition, "name")
+        self.add_entry(general, 1, definition, "notes", optional=True)
+        for row, (key, title) in enumerate((("operating_point", "Operating point (aero and stability)"), ("print", "Print")), start=1):
+            group = ttk.LabelFrame(parent, text=title, padding=6)
+            group.grid(row=row, column=0, sticky="ew", padx=4, pady=4)
+            group.columnconfigure(1, weight=1)
+            if key == "print":
+                print_settings = definition["print"]
+                self.add_choice(group, 0, print_settings, "material", sorted(self.app.parts_data["material"]))
+                next_row = self.add_vector_entries(group, 1, print_settings, "printer_bed_m", ("x", "y", "z"))
+                self.add_entry(group, next_row, print_settings, "surface_infill", optional=True)
+            else:
+                self.add_fields(group, definition[key])
+        fuselage = definition["fuselage"]
+        group = ttk.LabelFrame(parent, text="Fuselage", padding=6)
+        group.grid(row=3, column=0, sticky="ew", padx=4, pady=4)
+        group.columnconfigure(1, weight=1)
+        self.add_entry(group, 0, fuselage, "length_m")
+        self.add_entry(group, 1, fuselage, "structure_mass_kg", optional=True)
+        row = 2
+        for key in ("section", "nose", "tail", "joints"):
+            sub = ttk.LabelFrame(group, text=key, padding=4)
+            sub.grid(row=row, column=0, columnspan=3, sticky="ew", pady=2)
+            sub.columnconfigure(1, weight=1)
+            if key in ("nose", "tail"):
+                end = fuselage[key]
+                self.add_choice(sub, 0, end, "profile", CHOICES["profile"], on_change=lambda e=end: self.reset_profile_params(e))
+                self.add_entry(sub, 1, end, "length_m")
+                self.add_fields(sub, end["params"], start_row=2)
+            else:
+                self.add_fields(sub, fuselage[key])
+            row += 1
+
+    def reset_profile_params(self, end: dict) -> None:
+        end["params"] = {key: end["params"].get(key, PROFILE_PARAM_DEFAULTS[key]) for key in POINTED_SHAPE_PARAM_KEYS[end["profile"]]}
+
+    def build_surfaces_tab(self, parent) -> None:
+        surfaces = self.app.definition["surfaces"]
+        ttk.Button(parent, text="Add surface set", command=self.add_surface).grid(row=0, column=0, sticky="w", padx=4, pady=4)
+        for index, surface in enumerate(surfaces):
+            frame = self.card(parent, index + 1, surface["name"], lambda i=index: self.delete_item("surfaces", i))
+            skip = set() if surface["layout"] in ("1", "3") else {"fin_position"}
+            row = self.add_fields(frame, surface, start_row=1, skip=skip | {"mass_kg"})
+            self.add_entry(frame, row, surface, "mass_kg", optional=True)
+
+    def add_surface(self) -> None:
+        surface = copy.deepcopy(NEW_SURFACE)
+        names = {item["name"] for item in self.app.definition["surfaces"]}
+        surface["name"] = next(f"wing {n}" for n in range(1, len(names) + 2) if f"wing {n}" not in names)
+        self.app.definition["surfaces"].append(surface)
+        self.changed(rebuild=True)
+
+    def delete_item(self, collection: str, index: int) -> None:
+        self.app.definition[collection].pop(index)
+        self.changed(rebuild=True)
+
+    def build_propulsion_tab(self, parent) -> None:
+        definition = self.app.definition
+        propulsion = definition["propulsion"]
+        motor = propulsion["motor"]
+        group = ttk.LabelFrame(parent, text="Motor and prop (bench data)", padding=6)
+        group.grid(row=0, column=0, sticky="ew", padx=4, pady=4)
+        group.columnconfigure(1, weight=1)
+        battery_volumes = [volume["name"] for volume in definition["volumes"] if str(volume.get("part", "")).startswith("battery:")]
+        self.add_choice(group, 0, propulsion, "battery_volume", battery_volumes)
+        cells = None
+        battery = next((volume for volume in definition["volumes"] if volume["name"] == propulsion["battery_volume"]), None)
+        if battery is not None and str(battery.get("part", "")).startswith("battery:"):
+            cells = int(self.app.parts_data["battery"][battery["part"].partition(":")[2]]["s"])
+        combos = [combo for combo in self.app.motor_options if cells is None or combo["batt_s"] == cells]
+        motor_labels = sorted({f"{combo['brand']} {combo['motor']} {combo['kv']}KV" for combo in combos})
+        ttk.Label(group, text="motor").grid(row=1, column=0, sticky="w")
+        motor_var = tk.StringVar(value=f"{motor['brand']} {motor['model']} {motor['kv']}KV")
+        motor_box = ttk.Combobox(group, values=motor_labels, textvariable=motor_var, state="readonly")
+        motor_box.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=1)
+        props = sorted({combo["prop"] for combo in combos if (combo["brand"], combo["motor"], combo["kv"]) == (motor["brand"], motor["model"], motor["kv"])})
+        self.add_choice(group, 2, motor, "prop", props)
+
+        def select_motor(_event=None) -> None:
+            chosen = next(combo for combo in combos if f"{combo['brand']} {combo['motor']} {combo['kv']}KV" == motor_var.get())
+            motor.update(brand=chosen["brand"], model=chosen["motor"], kv=chosen["kv"])
+            motor_props = sorted(combo["prop"] for combo in combos if (combo["brand"], combo["motor"], combo["kv"]) == (chosen["brand"], chosen["motor"], chosen["kv"]))
+            if motor["prop"] not in motor_props:
+                motor["prop"] = motor_props[0]
+            self.changed(rebuild=True)
+
+        motor_box.bind("<<ComboboxSelected>>", select_motor)
+        ttk.Button(parent, text="Add motor mount", command=self.add_mount).grid(row=1, column=0, sticky="w", padx=4, pady=4)
+        surface_names = [surface["name"] for surface in definition["surfaces"]]
+        for index, mount in enumerate(propulsion["mounts"]):
+            frame = self.card(parent, index + 2, f"mount {index + 1}", lambda i=index: self.delete_mount(i))
+            self.add_choice(frame, 1, mount, "on", CHOICES["on"], on_change=lambda m=mount: self.normalize_mount(m))
+            row = 2
+            if mount["on"] == "surface":
+                self.add_choice(frame, row, mount, "surface", surface_names)
+                self.add_entry(frame, row + 1, mount, "span_position_m")
+                self.add_entry(frame, row + 2, mount, "x_offset_m")
+                row += 3
+            self.add_choice(frame, row, mount, "direction", CHOICES["direction"])
+            pod_var = tk.BooleanVar(value="pod" in mount)
+            ttk.Checkbutton(frame, text="pod", variable=pod_var, command=lambda m=mount, v=pod_var: self.toggle_pod(m, v)).grid(row=row + 1, column=0, sticky="w")
+            if "pod" in mount:
+                pod = ttk.LabelFrame(frame, text="pod", padding=4)
+                pod.grid(row=row + 2, column=0, columnspan=3, sticky="ew")
+                pod.columnconfigure(1, weight=1)
+                self.add_fields(pod, mount["pod"])
+
+    def normalize_mount(self, mount: dict) -> None:
+        surfaces = self.app.definition["surfaces"]
+        if mount["on"] == "surface":
+            mount.setdefault("surface", surfaces[0]["name"] if surfaces else "")
+            mount.setdefault("span_position_m", 0.0)
+            mount.setdefault("x_offset_m", 0.0)
+        else:
+            for key in ("surface", "span_position_m", "x_offset_m"):
+                mount.pop(key, None)
+            mount["direction"] = "tractor" if mount["on"] == "nose" else "pusher"
+
+    def toggle_pod(self, mount: dict, variable: tk.BooleanVar) -> None:
+        if variable.get():
+            mount["pod"] = copy.deepcopy(NEW_POD)
+        else:
+            mount.pop("pod", None)
+        self.changed(rebuild=True)
+
+    def add_mount(self) -> None:
+        mount = {"on": "nose", "direction": "tractor"}
+        self.app.definition["propulsion"]["mounts"].append(mount)
+        self.changed(rebuild=True)
+
+    def delete_mount(self, index: int) -> None:
+        self.app.definition["propulsion"]["mounts"].pop(index)
+        self.changed(rebuild=True)
+
+    def build_volumes_tab(self, parent) -> None:
+        volumes = self.app.definition["volumes"]
+        ttk.Label(parent, text="Mass: grams, or a range like 10-30. Drag volumes along the body in the side view.").grid(row=0, column=0, sticky="w", padx=4)
+        ttk.Button(parent, text="Add volume", command=self.add_volume).grid(row=1, column=0, sticky="w", padx=4, pady=4)
+        part_options = [""] + [f"{category}:{name}" for category in ("battery", "esc") for name in sorted(self.app.parts_data[category])]
+        for index, volume in enumerate(volumes):
+            frame = self.card(parent, index + 2, volume["name"], lambda i=index: self.delete_item("volumes", i))
+            self.add_entry(frame, 1, volume, "name")
+            self.add_choice(frame, 2, volume, "shape", list(VOLUME_SHAPES), on_change=lambda v=volume: self.reset_volume_shape(v))
+            self.add_choice(frame, 3, volume, "part", part_options, on_change=lambda v=volume: self.normalize_volume_part(v))
+            row = 4
+            for key in ("x_m", "y_m", "z_m"):
+                self.add_entry(frame, row, volume, key, optional=key != "x_m")
+                row += 1
+            if volume["shape"] == "box":
+                if "size_m" in volume:
+                    row = self.add_vector_entries(frame, row, volume, "size_m", ("x", "y", "z"))
+                else:
+                    ttk.Label(frame, text="size from part").grid(row=row, column=0, sticky="w")
+                    row += 1
+            for key in VOLUME_SHAPE_FIELDS[volume["shape"]]:
+                if key != "size_m":
+                    if key == "axis":
+                        self.add_choice(frame, row, volume, key, CHOICES["axis"])
+                    else:
+                        self.add_entry(frame, row, volume, key)
+                    row += 1
+            self.add_entry(frame, row, volume, "mass_kg", optional="part" in volume, blank_hint="blank = from part")
+
+    def normalize_volume_part(self, volume: dict) -> None:
+        if volume["part"] != "":
+            return
+        volume.pop("part")
+        if volume["shape"] == "box" and "size_m" not in volume:
+            volume["size_m"] = copy.deepcopy(VOLUME_SHAPE_FIELDS["box"]["size_m"])
+        volume.setdefault("mass_kg", 0.02)
+
+    def reset_volume_shape(self, volume: dict) -> None:
+        for fields in VOLUME_SHAPE_FIELDS.values():
+            for key in fields:
+                volume.pop(key, None)
+        for key, value in VOLUME_SHAPE_FIELDS[volume["shape"]].items():
+            volume[key] = copy.deepcopy(value)
+
+    def add_volume(self) -> None:
+        volumes = self.app.definition["volumes"]
+        names = {volume["name"] for volume in volumes}
+        name = next(f"volume {n}" for n in range(1, len(names) + 2) if f"volume {n}" not in names)
+        volume = {"name": name, "shape": "box", "x_m": round(self.app.definition["fuselage"]["length_m"] / 2.0, 4), "mass_kg": 0.02}
+        volume.update(copy.deepcopy(VOLUME_SHAPE_FIELDS["box"]))
+        volumes.append(volume)
+        self.changed(rebuild=True)
+
 
     def on_roll_slider_changed(self, _value: str) -> None:
         self.app.roll_view_display_var.set(f"{self.app.roll_view_var.get():.1f} deg")
@@ -418,21 +730,6 @@ class ConfigurationMainView:
             self.view_pan_y -= int(args[1]) * step
         self.draw_active_view()
 
-    def on_view_drag_start(self, event) -> None:
-        self.view_drag_last_xy = (event.x, event.y)
-
-    def on_view_drag_motion(self, event) -> None:
-        if self.view_drag_last_xy is None:
-            return
-        last_x, last_y = self.view_drag_last_xy
-        self.view_pan_x += event.x - last_x
-        self.view_pan_y += event.y - last_y
-        self.view_drag_last_xy = (event.x, event.y)
-        self.draw_active_view()
-
-    def on_view_drag_end(self, _event) -> None:
-        self.view_drag_last_xy = None
-
     def zoom_view_at(self, event_x: float, event_y: float, zoom_factor: float) -> None:
         if self.view_metrics is None:
             return
@@ -455,39 +752,6 @@ class ConfigurationMainView:
     def on_view_wheel_down(self, event) -> None:
         self.zoom_view_at(event.x, event.y, 1.0 / 1.1)
 
-    def draw_active_view(self) -> None:
-        app = self.app
-        if app.analysis is None:
-            return
-        if app.view_mode_var.get() == "Front":
-            app.roll_frame.grid_remove()
-        else:
-            app.roll_frame.grid()
-        self.view_metrics = draw_canvas_view(
-            app.view_canvas,
-            app.analysis,
-            app.view_mode_var.get(),
-            app.roll_view_var.get(),
-            app.ui_draw,
-            app.ui_bg,
-            self.view_zoom_scale,
-            self.view_pan_x,
-            self.view_pan_y,
-        )
-        if self.clamp_view_pan():
-            self.view_metrics = draw_canvas_view(
-                app.view_canvas,
-                app.analysis,
-                app.view_mode_var.get(),
-                app.roll_view_var.get(),
-                app.ui_draw,
-                app.ui_bg,
-                self.view_zoom_scale,
-                self.view_pan_x,
-                self.view_pan_y,
-            )
-        self.update_view_scrollbars()
-
     def make_view_canvas(self, parent: ttk.Frame, title: str, row: int) -> tk.Canvas:
         frame = ttk.LabelFrame(parent, text=title, padding=4)
         frame.grid(row=row, column=0, sticky="nsew", padx=4, pady=4)
@@ -508,7 +772,7 @@ class ConfigurationMainView:
         scroll_x.grid(row=1, column=0, sticky="ew")
         self.view_scroll_x = scroll_x
         self.view_scroll_y = scroll_y
-        canvas.bind("<Configure>", lambda event: self.app.analysis is not None and self.draw_active_view())
+        canvas.bind("<Configure>", lambda event: self.draw_active_view())
         canvas.bind("<ButtonPress-1>", self.on_view_drag_start)
         canvas.bind("<B1-Motion>", self.on_view_drag_motion)
         canvas.bind("<ButtonRelease-1>", self.on_view_drag_end)
@@ -516,277 +780,6 @@ class ConfigurationMainView:
         canvas.bind("<Button-4>", self.on_view_wheel_up)
         canvas.bind("<Button-5>", self.on_view_wheel_down)
         return canvas
-
-    def rebuild_module_editor(self) -> None:
-        app = self.app
-        for child in app.module_inner.winfo_children():
-            child.destroy()
-        for child in app.assembly_inner.winfo_children():
-            child.destroy()
-        app.module_inner.columnconfigure(0, weight=1)
-        self.collapsed_part_ids.intersection_update({id(part) for part in app.current_config["parts"]})
-
-        config_frame = ttk.LabelFrame(app.assembly_inner, text="Assembly", padding=6)
-        config_frame.grid(row=0, column=0, sticky="ew", padx=4, pady=4)
-        config_frame.columnconfigure(1, weight=1)
-        row_index = 0
-        for key in app.ordered_keys(app.current_config, app.config_field_order):
-            if key in {"parts", *app.main_driver_keys, "standard_profile", "apply_standard", "thrust_axis_tilt_deg", "battery", "motors", "props"}:
-                continue
-            value = app.current_config[key]
-            ttk.Label(config_frame, text=app.field_label(key)).grid(row=row_index, column=0, sticky="w")
-            if type(value) is bool:
-                variable = tk.BooleanVar(value=value)
-                widget = ttk.Checkbutton(config_frame, variable=variable, command=lambda d=app.current_config, k=key, v=variable: app.on_bool_changed(d, k, v, False))
-                widget.grid(row=row_index, column=1, sticky="ew", padx=(8, 0), pady=2)
-            else:
-                variable = tk.StringVar(value=app.format_field_value(key, value))
-                widget = ttk.Entry(config_frame, textvariable=variable)
-                widget.grid(row=row_index, column=1, sticky="ew", padx=(8, 0), pady=2)
-                app.bind_value_entry(widget, app.current_config, key, variable, "config")
-            row_index += 1
-
-        for index, part in enumerate(app.current_config["parts"]):
-            module_name = part["module"]["name"]
-            part_id = id(part)
-            is_collapsed = part_id in self.collapsed_part_ids
-            frame = ttk.LabelFrame(app.module_inner, padding=4)
-            frame.grid(row=index, column=0, sticky="ew", padx=4, pady=(2, 3) if is_collapsed else 4)
-            frame.columnconfigure(0, weight=1)
-
-            header_bar = ttk.Frame(frame)
-            header_bar.grid(row=0, column=0, sticky="ew", pady=(0, 0) if is_collapsed else (0, 6))
-            ttk.Label(header_bar, text=f"{index + 1}. {module_name}", font=("TkDefaultFont", 12, "bold")).pack(side="left")
-            ttk.Button(
-                header_bar,
-                text="+" if is_collapsed else "-",
-                width=4,
-                command=lambda pid=part_id: self.toggle_part_collapsed(pid),
-            ).pack(side="left", padx=(8, 0))
-
-            if is_collapsed:
-                continue
-
-            button_bar = ttk.Frame(frame)
-            button_bar.grid(row=1, column=0, sticky="ew", pady=(0, 6))
-            ttk.Button(button_bar, text="Up", command=lambda idx=index: app.move_part(idx, -1)).pack(side="left")
-            ttk.Button(button_bar, text="Down", command=lambda idx=index: app.move_part(idx, 1)).pack(side="left", padx=4)
-            ttk.Button(button_bar, text="Delete", command=lambda idx=index: app.delete_part(idx)).pack(side="left")
-
-            load_bar = ttk.Frame(frame)
-            load_bar.grid(row=2, column=0, sticky="ew", pady=(0, 6))
-            load_bar.columnconfigure(1, weight=1)
-            ttk.Label(load_bar, text="Load Module").grid(row=0, column=0, sticky="w")
-            module_source_var = tk.StringVar(value=str(part["module"]["name"]))
-            module_source_box = ttk.Combobox(load_bar, values=app.module_library_names, textvariable=module_source_var, state="readonly")
-            module_source_box.grid(row=0, column=1, sticky="ew", padx=(8, 8))
-            ttk.Button(load_bar, text="Load", command=lambda p=part, v=module_source_var: app.on_load_module_from_library(p, v)).grid(row=0, column=2, sticky="e")
-
-            self.build_dict_editor(frame, "Parameters", part["module"], app.module_field_order, app.module_type_options, 3, {"diam", "model"}, "module", part)
-            next_row = 4
-            if "surfaces" in part:
-                self.build_dict_editor(frame, "Surface", part["surfaces"], app.surface_field_order, app.surface_type_options, next_row, {"model"}, "surface", part)
-                next_row += 1
-
-            part_keys = []
-            if part["module"].get("battery", False) or part["module"].get("payload", False) or part["module"].get("ballast", False):
-                part_keys.extend(["x", "y", "z", "pitch", "yaw", "roll"])
-            if part["module"].get("payload", False):
-                part_keys.append("payload_mass")
-            if part["module"].get("ballast", False):
-                part_keys.append("ballast_mass")
-
-            if part_keys:
-                aux_frame = ttk.LabelFrame(frame, text="Part Fields", padding=6)
-                aux_frame.grid(row=next_row, column=0, sticky="ew", pady=(6, 0))
-                aux_frame.columnconfigure(1, weight=1)
-                for aux_row, key in enumerate(part_keys):
-                    value = part[key]
-                    ttk.Label(aux_frame, text=app.field_label(key)).grid(row=aux_row, column=0, sticky="w")
-                    variable = tk.StringVar(value=app.format_field_value(key, value))
-                    entry = ttk.Entry(aux_frame, textvariable=variable)
-                    entry.grid(row=aux_row, column=1, sticky="ew", padx=(8, 0), pady=2)
-                    app.bind_value_entry(entry, part, key, variable, "part")
-
-    def toggle_part_collapsed(self, part_id: int) -> None:
-        if part_id in self.collapsed_part_ids:
-            self.collapsed_part_ids.remove(part_id)
-        else:
-            self.collapsed_part_ids.add(part_id)
-        self.rebuild_module_editor()
-
-    def build_dict_editor(
-        self,
-        parent,
-        title: str,
-        data: dict,
-        preferred_order: list[str],
-        type_options: list[str] | None,
-        row: int,
-        exclude_keys: set[str],
-        schema_name: str,
-        owner_part: dict,
-    ) -> None:
-        app = self.app
-        frame = ttk.LabelFrame(parent, text=title, padding=6)
-        frame.grid(row=row, column=0, sticky="ew", pady=(0, 6))
-        frame.columnconfigure(1, weight=1)
-        next_row = self.build_dict_rows(frame, data, preferred_order, type_options, exclude_keys, schema_name, owner_part, ())
-        if title == "Surface":
-            ttk.Label(frame, text="mid-span chord (mm)").grid(row=next_row, column=0, sticky="w")
-            ttk.Label(frame, text=f"{(0.5 * (data['chord_root'] + data['chord_tip']) * 1000.0):g}").grid(row=next_row, column=1, sticky="w", padx=(8, 0), pady=2)
-        if schema_name == "module" and "wings_layout" in data and (data["type"] == "wingmount" or data.get("fins", False)):
-            ttk.Label(frame, text="wing count").grid(row=next_row, column=0, sticky="w")
-            ttk.Label(frame, text=str(layout_wing_count(data["wings_layout"]))).grid(row=next_row, column=1, sticky="w", padx=(8, 0), pady=2)
-
-    def build_dict_rows(
-        self,
-        frame,
-        data: dict,
-        preferred_order: list[str],
-        type_options: list[str] | None,
-        exclude_keys: set[str],
-        schema_name: str,
-        owner_part: dict,
-        path: tuple[str, ...],
-    ) -> int:
-        app = self.app
-        visible_keys = [key for key in app.ordered_keys(data, preferred_order) if key not in exclude_keys]
-        if path == () and schema_name == "module" and data["type"] == "end" and not data.get("fins", False):
-            visible_keys = [key for key in visible_keys if key not in {"wings_n", "wing_phase", "wings_layout", "wings_fin_pos", "wings_ang", "wings_x", "wings_y_offset"}]
-        if path == () and schema_name == "module" and data.get("wings_layout", "H") not in {"1", "3"}:
-            visible_keys = [key for key in visible_keys if key != "wings_fin_pos"]
-        if path == ("pointed_shape",):
-            active_shape_param_keys = set(app.pointed_shape_param_keys[data["shape"]])
-            visible_keys = [key for key in visible_keys if key == "shape" or key in active_shape_param_keys]
-        if "motor" in data and not data["motor"]:
-            visible_keys = [key for key in visible_keys if key not in app.motor_edit_keys]
-        next_row = 0
-        for key in visible_keys:
-            value = data[key]
-            if type(value) is dict:
-                group = ttk.LabelFrame(frame, text=app.field_label(key), padding=6)
-                group.grid(row=next_row, column=0, columnspan=2, sticky="ew", pady=2)
-                group.columnconfigure(1, weight=1)
-                child_order = app.pointed_shape_field_order if key == "pointed_shape" else []
-                self.build_dict_rows(group, value, child_order, None, set(), schema_name, owner_part, path + (key,))
-                next_row += 1
-                continue
-            ttk.Label(frame, text=app.field_label(key)).grid(row=next_row, column=0, sticky="w")
-            if key == "type" and type_options is not None:
-                variable = tk.StringVar(value=str(value))
-                widget = ttk.Combobox(frame, values=type_options, textvariable=variable, state="readonly")
-                widget.grid(row=next_row, column=1, sticky="ew", padx=(8, 0), pady=2)
-                if schema_name == "module":
-                    widget.bind("<<ComboboxSelected>>", lambda event, p=owner_part, v=variable: app.on_module_type_changed(p, v))
-                else:
-                    widget.bind("<<ComboboxSelected>>", lambda event, p=owner_part, v=variable: app.on_surface_type_changed(p, v))
-                next_row += 1
-                continue
-            if key == "wings_layout":
-                variable = tk.StringVar(value=str(value))
-                widget = ttk.Combobox(frame, values=app.wings_layout_options, textvariable=variable, state="readonly")
-                widget.grid(row=next_row, column=1, sticky="ew", padx=(8, 0), pady=2)
-                widget.bind("<<ComboboxSelected>>", lambda event, d=data, v=variable: app.on_select_value(d, "wings_layout", v, True))
-                next_row += 1
-                continue
-            if key == "wings_fin_pos":
-                variable = tk.StringVar(value=str(value))
-                widget = ttk.Combobox(frame, values=app.wings_fin_pos_options, textvariable=variable, state="readonly")
-                widget.grid(row=next_row, column=1, sticky="ew", padx=(8, 0), pady=2)
-                widget.bind("<<ComboboxSelected>>", lambda event, d=data, v=variable: app.on_select_value(d, "wings_fin_pos", v, True))
-                next_row += 1
-                continue
-            if key == "motor_dir":
-                variable = tk.StringVar(value=str(value))
-                widget = ttk.Combobox(frame, values=app.motor_direction_options, textvariable=variable, state="readonly")
-                widget.grid(row=next_row, column=1, sticky="ew", padx=(8, 0), pady=2)
-                widget.bind("<<ComboboxSelected>>", lambda event, d=data, v=variable: app.on_select_value(d, "motor_dir", v, True))
-                next_row += 1
-                continue
-            if key == "pod_shape":
-                variable = tk.StringVar(value=str(value))
-                widget = ttk.Combobox(frame, values=app.pod_shape_options, textvariable=variable, state="readonly")
-                widget.grid(row=next_row, column=1, sticky="ew", padx=(8, 0), pady=2)
-                widget.bind("<<ComboboxSelected>>", lambda event, d=data, v=variable: app.on_select_value(d, "pod_shape", v, True))
-                next_row += 1
-                continue
-            if path == ("pointed_shape",) and key == "shape":
-                variable = tk.StringVar(value=str(value))
-                widget = ttk.Combobox(frame, values=app.pointed_shape_options, textvariable=variable, state="readonly")
-                widget.grid(row=next_row, column=1, sticky="ew", padx=(8, 0), pady=2)
-                widget.bind("<<ComboboxSelected>>", lambda event, d=data, v=variable: app.on_select_value(d, "shape", v, True))
-                next_row += 1
-                continue
-            if type(value) is bool:
-                variable = tk.BooleanVar(value=value)
-                widget = ttk.Checkbutton(frame, variable=variable, command=lambda d=data, k=key, v=variable: app.on_bool_changed(d, k, v, True))
-                widget.grid(row=next_row, column=1, sticky="ew", padx=(8, 0), pady=2)
-                next_row += 1
-                continue
-            variable = tk.StringVar(value=app.format_field_value(key, value))
-            widget = ttk.Entry(frame, textvariable=variable)
-            widget.grid(row=next_row, column=1, sticky="ew", padx=(8, 0), pady=2)
-            app.bind_value_entry(widget, data, key, variable, schema_name, key == "name")
-            next_row += 1
-        return next_row
-
-    def draw_propulsion_info(self) -> None:
-        app = self.app
-        if app.propulsion_text is None:
-            return
-        app.refresh_propulsion_controls()
-        app.propulsion_text.delete("1.0", tk.END)
-        if app.analysis is None or not app.analysis["motor_summary_rows"]:
-            app.propulsion_text.insert("1.0", "No propulsion data.")
-            if app.propulsion_plot_canvas is not None:
-                app.propulsion_plot_canvas.get_tk_widget().destroy()
-                app.propulsion_plot_canvas = None
-            if app.propulsion_plot_figure is not None:
-                plt.close(app.propulsion_plot_figure)
-                app.propulsion_plot_figure = None
-            return
-        row = app.analysis["motor_summary_rows"][0]
-        lines = [
-            f"Motor                : {row['label']}",
-            f"Propeller            : {row['propeller']}",
-            f"Pack voltage         : {row['pack_voltage_v']:.2f} V",
-            f"Motor KV             : {row['kv']:.0f}",
-            f"No-load RPM          : {row['no_load_rpm']:.0f}",
-            f"Static prop RPM      : {row['prop_rpm']:.0f}",
-            f"Static thrust        : {row['thrust_n_per_motor']:.2f} N",
-            f"Static current       : {row['current_a_per_motor']:.2f} A",
-            f"Static input power   : {row['input_power_w_per_motor']:.1f} W",
-            f"Pitch speed          : {row['pitch_speed_kph']:.1f} km/h",
-            f"Efficiency           : {row['efficiency_g_per_w']:.2f} g/W",
-        ]
-        app.propulsion_text.insert("1.0", "\n".join(lines))
-        if app.propulsion_plot_canvas is not None:
-            app.propulsion_plot_canvas.get_tk_widget().destroy()
-        if app.propulsion_plot_figure is not None:
-            plt.close(app.propulsion_plot_figure)
-        app.propulsion_plot_figure, axis = plt.subplots(figsize=(5.8, 4.8), dpi=100)
-        curve = row["curve"]
-        plot_rows = [
-            ("Thrust (N)", curve["thrust_n"], "#19ff19"),
-            ("RPM / 1000", [value / 1000.0 for value in curve["rpm"]], "#33ccff"),
-            ("kW", [value / 1000.0 for value in curve["watts"]], "#ffcc33"),
-        ]
-        for label, values, color in plot_rows:
-            axis.plot(curve["throttle_pct"], values, color=color, linewidth=2.0, label=label)
-        axis.set_xlabel("Throttle (%)", color=app.ui_fg)
-        axis.set_ylabel("Value", color=app.ui_fg)
-        axis.tick_params(colors=app.ui_fg)
-        axis.set_facecolor(app.ui_bg)
-        axis.grid(color=app.ui_border, alpha=0.4)
-        legend = axis.legend(loc="upper left", facecolor=app.ui_panel, edgecolor=app.ui_border, framealpha=1.0)
-        for text in legend.get_texts():
-            text.set_color(app.ui_fg)
-        app.propulsion_plot_figure.patch.set_facecolor(app.ui_bg)
-        app.propulsion_plot_figure.tight_layout()
-        app.propulsion_plot_canvas = FigureCanvasTkAgg(app.propulsion_plot_figure, master=app.propulsion_plot_host)
-        app.propulsion_plot_canvas.draw()
-        app.propulsion_plot_canvas.get_tk_widget().grid(row=0, column=0, sticky="nsew")
 
     def draw_asb_view(self, force: bool = False) -> None:
         app = self.app
