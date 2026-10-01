@@ -23,7 +23,7 @@ def draw_markers(canvas: tk.Canvas, analysis: dict, x_to_screen, y_screen: float
     marker_radius = 5
     for color, x_value in (
         ("blue", analysis["cg_x_m"]),
-        ("red", analysis["x_cp_total"]),
+        ("red", analysis["x_np"]),
         ("green", analysis["force_center_x"]),
     ):
         if not math.isfinite(x_value):
@@ -42,7 +42,7 @@ def draw_markers(canvas: tk.Canvas, analysis: dict, x_to_screen, y_screen: float
 def draw_marker_guide(canvas: tk.Canvas) -> None:
     guide_rows = [
         ("blue", "CG"),
-        ("red", "Static CP"),
+        ("red", "Neutral point"),
         ("green", "Lift @ AoA"),
     ]
     for index, (color, text) in enumerate(guide_rows):
@@ -83,7 +83,7 @@ def measure_longitudinal_view(analysis: dict, roll_deg: float, width: float, hei
         half_span = max(half_span, abs(center_transverse) + item["height_m"] / 2.0)
         min_x = min(min_x, item["x_m"] - item["len_m"] * 0.5)
         max_x = max(max_x, item["x_m"] + item["len_m"] * 0.5)
-    for x_value in (analysis["cg_x_m"], analysis["x_cp_total"], analysis["force_center_x"]):
+    for x_value in (analysis["cg_x_m"], analysis["x_np"], analysis["force_center_x"]):
         if math.isfinite(x_value):
             min_x = min(min_x, x_value)
             max_x = max(max_x, x_value)

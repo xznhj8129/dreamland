@@ -14,7 +14,7 @@ Theme
     - Airframe drawing = green
     - Semantic markers remain color-coded:
         CG = blue
-        Static CP = red
+        Neutral point = red
         Lift @ AoA = green
 ```
 

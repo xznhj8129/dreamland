@@ -27,11 +27,10 @@ STANDARDS_PATH = DATA_DIR / "specs.json"
 PROP_SHAFT_LEN_M = 0.015
 STANDARD_GRAVITY_M_S2 = 9.80665
 GRAMS_FORCE_PER_NEWTON = 1000.0 / STANDARD_GRAVITY_M_S2
-SURFACE_FORCE_N_CRIT = 9.0
-SURFACE_FORCE_XTR_UPPER = 1.0
-SURFACE_FORCE_XTR_LOWER = 1.0
-SURFACE_FORCE_MODEL_SIZE = "large"
-SURFACE_FORCE_INCLUDE_360_DEG_EFFECTS = False
+AERO_MODEL_SIZE = "large"
+AOA_SWEEP_DEG = range(-45, 46)
+STABILITY_MARGINAL_PCT = 5.0
+NEUTRAL_POINT_FIT_HALF_WINDOW_DEG = 4.0
 
 
 def json_safe_data(value):
@@ -52,7 +51,7 @@ def build_range_values(start_value: float, end_value: float, increment_value: fl
 
 
 def barrowman_finset(
-    fin_count: int,
+    effective_fin_count: float,
     span: float,
     chord_root: float,
     chord_tip: float,
@@ -66,7 +65,7 @@ def barrowman_finset(
     )
     cna = (
         (1.0 + body_radius / (span + body_radius))
-        * (4.0 * fin_count * (span / ref_diameter) ** 2)
+        * (4.0 * effective_fin_count * (span / ref_diameter) ** 2)
         / (1.0 + math.sqrt(1.0 + (2.0 * mid_chord_line / (chord_root + chord_tip)) ** 2))
     )
     x_cp_local = (
@@ -83,21 +82,6 @@ def trapezoid_mac(chord_root: float, chord_tip: float) -> float:
         * ((chord_root * chord_root) + (chord_root * chord_tip) + (chord_tip * chord_tip))
         / (chord_root + chord_tip)
     )
-
-
-def trapezoid_ac_x(x_root_le: float, span: float, chord_root: float, chord_tip: float, sweep_len: float) -> float:
-    taper = chord_tip / chord_root if chord_root > 0.0 else 0.0
-    y_mac = span * (1.0 + 2.0 * taper) / (3.0 * (1.0 + taper))
-    x_mac_le = x_root_le + sweep_len * y_mac / span if span > 0.0 else x_root_le
-    return x_mac_le + 0.25 * trapezoid_mac(chord_root, chord_tip)
-
-
-def finite_wing_lift_slope(span: float, chord_root: float, chord_tip: float) -> float:
-    area = span * (chord_root + chord_tip) / 2.0
-    aspect_ratio = (2.0 * span) ** 2 / (2.0 * area)
-    a0 = 2.0 * math.pi
-    e = 0.9
-    return a0 / (1.0 + a0 / (math.pi * e * aspect_ratio))
 
 
 def layout_wing_count(layout: str) -> int:
@@ -150,25 +134,26 @@ def surface_panel_layout(
     fin_z = root_radius if fin_pos == "top" else -root_radius
     fin_dz = 1.0 if fin_pos == "top" else -1.0
 
-    # (root_y, root_z, dir_y, dir_z) — fully explicit, no angles
+    # (root_y, root_z, dir_y, dir_z, xz_mirror) — fully explicit, no angles.
+    # xz_mirror: "primary" panels have an XZ-plane mirror "copy" in the same set; None = unpaired fin.
     if layout == "1":
-        specs = [(0.0, fin_z, 0.0, fin_dz)]
+        specs = [(0.0, fin_z, 0.0, fin_dz, None)]
     elif layout == "3":
-        specs = [(+oy, oz, +cos_d, +sin_d), (-oy, oz, -cos_d, +sin_d), (0.0, fin_z, 0.0, fin_dz)]
+        specs = [(+oy, oz, +cos_d, +sin_d, "primary"), (-oy, oz, -cos_d, +sin_d, "copy"), (0.0, fin_z, 0.0, fin_dz, None)]
     elif layout == "+":
-        specs = [(+oy, oz, +cos_d, +sin_d), (-oy, oz, -cos_d, +sin_d),
-                 (0.0, +root_radius, 0.0, +1.0), (0.0, -root_radius, 0.0, -1.0)]
+        specs = [(+oy, oz, +cos_d, +sin_d, "primary"), (-oy, oz, -cos_d, +sin_d, "copy"),
+                 (0.0, +root_radius, 0.0, +1.0, None), (0.0, -root_radius, 0.0, -1.0, None)]
     elif layout == "X":
         root_ang = math.radians((max(-1.0, min(1.0, y_offset)) + 1.0) * 45.0)
         xy = root_radius * math.cos(root_ang)
         xz = root_radius * math.sin(root_ang)
-        specs = [(+xy, +xz, +cos_d, +sin_d), (-xy, +xz, -cos_d, +sin_d),
-                 (+xy, -xz, +cos_d, -sin_d), (-xy, -xz, -cos_d, -sin_d)]
+        specs = [(+xy, +xz, +cos_d, +sin_d, "primary"), (-xy, +xz, -cos_d, +sin_d, "copy"),
+                 (+xy, -xz, +cos_d, -sin_d, "primary"), (-xy, -xz, -cos_d, -sin_d, "copy")]
     else:  # "H" and fallback
-        specs = [(+oy, oz, +cos_d, +sin_d), (-oy, oz, -cos_d, +sin_d)]
+        specs = [(+oy, oz, +cos_d, +sin_d, "primary"), (-oy, oz, -cos_d, +sin_d, "copy")]
 
     panels = []
-    for index, (ry, rz, dy, dz) in enumerate(specs):
+    for index, (ry, rz, dy, dz, xz_mirror) in enumerate(specs):
         norm = math.hypot(dy, dz)
         if norm > 1e-9:
             dy /= norm
@@ -179,12 +164,8 @@ def surface_panel_layout(
         tz = dz * span if centerline_root else rz + span * dz
         panels.append({"index": index, "phase_deg": 0.0, "dihedral_sign": 1.0,
                         "root_y": ry, "root_z": rz, "tip_y": ty, "tip_z": tz,
-                        "dir_y": dy, "dir_z": dz})
+                        "dir_y": dy, "dir_z": dz, "xz_mirror": xz_mirror})
     return panels
-
-
-def average_mount_factor(panel_layout: list[dict]) -> float:
-    return sum(panel["dir_y"] * panel["dir_y"] for panel in panel_layout) / len(panel_layout)
 
 
 def create_asb_surface(
@@ -200,6 +181,7 @@ def create_asb_surface(
     sweep_deg: float,
     name_prefix: str,
     airfoil_name: str,
+    symmetric: bool,
 ) -> asb.Wing:
     base_airfoil = asb.Airfoil(airfoil_name)
     span = math.hypot(y_tip - y_le, z_tip - z_le)
@@ -221,7 +203,7 @@ def create_asb_surface(
         xsecs = [tip, root]
     return asb.Wing(
         name=f"{name_prefix}_{idx + 1}",
-        symmetric=False,
+        symmetric=symmetric,
         xsecs=xsecs,
     )
 
@@ -271,11 +253,13 @@ def build_asb_airplane(analysis: dict) -> asb.Airplane:
     fuselages = [asb.Fuselage(name="Fuselage", xsecs=xsecs)]
 
     wings = []
-    wing_index = 0
     for surface in analysis["surface_sets"]:
         x_le = surface["x_root_le"]
         for panel in surface["panels"]:
-            wing = create_asb_surface(
+            # A mirrored pair is one symmetric ASB wing so AeroBuildup sees the pair's real aspect ratio.
+            if panel["xz_mirror"] == "copy":
+                continue
+            wings.append(create_asb_surface(
                 idx=panel["index"],
                 chord_root=surface["chord_root"],
                 chord_tip=surface["chord_tip"],
@@ -288,13 +272,9 @@ def build_asb_airplane(analysis: dict) -> asb.Airplane:
                 sweep_deg=math.degrees(math.atan2(surface["sweep_len"], surface["span"])) if surface["span"] > 0.0 else 0.0,
                 name_prefix=surface["name"],
                 airfoil_name=surface["airfoil"],
-            )
-            wing.name = f"{surface['name']}_{wing_index + 1}"
-            wings.append(wing)
-            wing_index += 1
+                symmetric=panel["xz_mirror"] == "primary",
+            ))
 
-    c_ref = analysis["reference_chord_m"] if math.isfinite(analysis["reference_chord_m"]) and analysis["reference_chord_m"] > 0.0 else analysis["tube_diam"]
-    b_ref = analysis["tot_wingspan"]
     propulsors = []
     for index, motor in enumerate(analysis["motor_draw_rows"]):
         front_sign = -1.0 if motor["direction"] == "front" else 1.0
@@ -330,6 +310,8 @@ def build_asb_airplane(analysis: dict) -> asb.Airplane:
                             radius=curve_radius,
                         )
                     )
+            # Rear-facing pods are built aft-to-fore; ASB needs nose-to-tail order or the volume goes negative.
+            pod_xsecs.sort(key=lambda xsec: xsec.xyz_c[0])
             fuselages.append(asb.Fuselage(name=f"pod_{index + 1}", xsecs=pod_xsecs))
         propulsors.append(
             asb.Propulsor(
@@ -347,9 +329,9 @@ def build_asb_airplane(analysis: dict) -> asb.Airplane:
     return asb.Airplane(
         name=analysis["config_name"],
         xyz_ref=[analysis["cg_x_m"], 0.0, 0.0],
-        s_ref=analysis["surface_planform_total"],
-        c_ref=c_ref,
-        b_ref=b_ref,
+        s_ref=analysis["reference_area_m2"],
+        c_ref=analysis["reference_length_m"],
+        b_ref=analysis["tot_wingspan"],
         wings=wings,
         fuselages=fuselages,
         propulsors=propulsors,
@@ -484,24 +466,25 @@ def build_report_text(analysis: dict) -> str:
     lines.append("Lifting Surfaces")
     lines.append(f"Surface area total    : {analysis['surface_planform_total']:.4f} m^2")
     lines.append(f"Surface loading       : {analysis['surface_loading']:.2f} N/m^2")
-    if analysis["surface_force_rows"]:
-        lines.append("")
-        lines.append("Surface Forces")
+    lines.append("")
+    lines.append("Aero Forces (AeroBuildup)")
+    lines.append(
+        f"Operating point       : AoA {analysis['force_eval_aoa_deg']:.1f} deg  V {analysis['force_eval_airspeed_m_s']:.1f} m/s  Alt {analysis['force_eval_altitude_m']:.1f} m"
+    )
+    lines.append(f"Air density           : {analysis['force_eval_density_kg_m3']:.4f} kg/m^3")
+    lines.append(f"Dynamic pressure      : {analysis['force_eval_dynamic_pressure_pa']:.2f} Pa")
+    lines.append(
+        f"Total lift            : {analysis['aero_lift_n']:.3f} N  {analysis['aero_lift_g']:.1f} g  {analysis['aero_load_pct']:.1f} % weight"
+    )
+    lines.append(f"Total drag            : {analysis['aero_drag_n']:.3f} N")
+    lines.append(f"CL / CD / Cm          : {analysis['aero_cl']:.4f} / {analysis['aero_cd']:.4f} / {analysis['aero_cm']:.4f}")
+    for row in analysis["surface_force_rows"]:
+        x_lift_text = f"{row['x_lift_m']:.4f} m" if math.isfinite(row["x_lift_m"]) else "n/a"
         lines.append(
-            f"Operating point       : AoA {analysis['force_eval_aoa_deg']:.1f} deg  V {analysis['force_eval_airspeed_m_s']:.1f} m/s  Alt {analysis['force_eval_altitude_m']:.1f} m"
+            f"{row['name']:<18} airfoil={row['airfoil']:<10} area={row['area_m2']:.4f} m^2 CL={row['cl']:.3f} CD={row['cd']:.4f} "
+            f"lift={row['lift_n']:.3f} N {row['lift_g']:.1f} g drag={row['drag_n']:.3f} N load={row['load_pct']:.1f} % x_lift={x_lift_text}"
         )
-        lines.append(f"Air density           : {analysis['force_eval_density_kg_m3']:.4f} kg/m^3")
-        lines.append(f"Dynamic pressure      : {analysis['force_eval_dynamic_pressure_pa']:.2f} Pa")
-        lines.append(
-            f"Surface vertical total: {analysis['surface_vertical_force_n']:.3f} N  {analysis['surface_vertical_force_g']:.1f} g  {analysis['surface_vertical_load_pct']:.1f} % weight"
-        )
-        for row in analysis["surface_force_rows"]:
-            lines.append(
-                f"{row['name']:<18} airfoil={row['airfoil']:<10} alpha={row['alpha_eff_deg']:.2f} deg "
-                f"area={row['area_m2']:.4f} m^2 CL={row['cl']:.3f} CD={row['cd']:.4f} "
-                f"vertical={row['vertical_force_n']:.3f} N {row['vertical_force_g']:.1f} g "
-                f"lift={row['lift_n']:.3f} N drag={row['drag_n']:.3f} N Re={row['reynolds']:.0f} conf={row['confidence']:.3f}"
-            )
+    lines.append(f"{'body':<18} lift={analysis['body_lift_n']:.3f} N drag={analysis['body_drag_n']:.3f} N")
     if analysis["battery_summary"] is not None:
         battery_summary = analysis["battery_summary"]
         lines.append("")
@@ -523,28 +506,30 @@ def build_report_text(analysis: dict) -> str:
         lines.append(f"Full throttle time    : {analysis['full_throttle_time_min']:.1f} min" if math.isfinite(analysis["full_throttle_time_min"]) else "Full throttle time    : n/a")
     lines.append("")
     lines.append("Static Stability")
-    lines.append(f"Static CP (Barrowman) : {analysis['x_cp_total']:.4f} m")
-    lines.append(f"Static offset         : {analysis['static_margin_m']:.4f} m")
+    reference_text = "MAC" if analysis["reference_basis"] == "surfaces" else "body diameter"
+    lines.append(
+        f"Neutral point         : {analysis['x_np']:.4f} m (AeroBuildup dCm/dCL fit over AoA {analysis['force_eval_aoa_deg']:.1f} +/- {NEUTRAL_POINT_FIT_HALF_WINDOW_DEG:.0f} deg)"
+    )
+    lines.append(f"Static margin         : {analysis['static_margin_m']:.4f} m  {analysis['static_margin_pct_ref']:.1f} % {reference_text}")
     lines.append(f"Static stability      : {analysis['stability_verdict']}")
+    lines.append(f"Barrowman CP          : {analysis['x_cp_total']:.4f} m (rocket-style cross-check)")
     lines.append("")
     lines.append("Markers")
     lines.append(f"CG marker             : blue @ {analysis['cg_x_m']:.4f} m")
-    lines.append(f"Static CP marker      : red @ {analysis['x_cp_total']:.4f} m")
+    lines.append(f"Neutral point marker  : red @ {analysis['x_np']:.4f} m")
     if math.isfinite(analysis["force_center_x"]):
         lines.append(f"Lift marker           : green @ {analysis['force_center_x']:.4f} m @ AoA {analysis['force_eval_aoa_deg']:.2f} deg")
     lines.append("")
-    lines.append("AoA Sweep")
-    header = f"{'AoA':<5} | {'CN':<9} | {'Cm':<9} | {'Lift x m':<10} | {'Offset m':<8} | {'Verdict':<9}"
+    lines.append("AoA Sweep (AeroBuildup)")
+    header = f"{'AoA':<5} | {'CL':<8} | {'CD':<8} | {'Cm':<8} | {'Lift N':<8} | {'Weight %':<8} | {'NP m':<8} | {'Pitch':<9}"
     lines.append(header)
     lines.append("-" * len(header))
     for row in analysis["aoa_sweep_rows"]:
-        cl_x_text = f"{row['lift_center_x']:.4f}" if math.isfinite(row["lift_center_x"]) else "nan"
-        sm_text = f"{row['lift_static_offset_m']:.4f}" if math.isfinite(row["lift_static_offset_m"]) else "nan"
         lines.append(
-            f"{row['aoa_eval_deg']:<5.0f} | {row['aoa_cn']:<9.4f} | {row['aoa_cm']:<9.4f} | {cl_x_text:<10} | {sm_text:<8} | {row['aoa_verdict']:<9}"
+            f"{row['aoa_deg']:<5.0f} | {row['cl']:<8.4f} | {row['cd']:<8.4f} | {row['cm']:<8.4f} | {row['lift_n']:<8.3f} | {row['load_pct']:<8.1f} | {row['x_np_m']:<8.4f} | {row['pitch']:<9}"
         )
     lines.append("")
-    lines.append("Components")
+    lines.append("Barrowman Components")
     for row in analysis["component_rows"]:
         lines.append(
             f"{row['component']:<24} CNa={row['cna']:.3f} x_cp={row['x_cp']:.4f} {row['notes']}"
@@ -826,66 +811,6 @@ def build_propulsion_summary(
     return summary
 
 
-def linear_aero_state(analysis: dict, aoa_eval_deg: float) -> dict:
-    s_ref = analysis["surface_planform_total"] if analysis["surface_planform_total"] > 0.0 else math.pi * (analysis["tube_diam"] / 2.0) ** 2
-    c_ref = analysis["reference_chord_m"] if math.isfinite(analysis["reference_chord_m"]) and analysis["reference_chord_m"] > 0.0 else analysis["fuselage_length"]
-    surface_aero = []
-    for surface in analysis["surface_sets"]:
-        slope = finite_wing_lift_slope(surface["span"], surface["chord_root"], surface["chord_tip"])
-        mount_factor = surface["mount_factor"]
-        area_ratio = surface["planform_area_total"] / s_ref
-        x_ac = trapezoid_ac_x(
-            x_root_le=surface["x_root_le"],
-            span=surface["span"],
-            chord_root=surface["chord_root"],
-            chord_tip=surface["chord_tip"],
-            sweep_len=surface["sweep_len"],
-        )
-        surface_aero.append(
-            {
-                "x_ac": x_ac,
-                "incidence_deg": surface["aoa"],
-                "mount_factor": mount_factor,
-                "slope": slope,
-                "area_ratio": area_ratio,
-            }
-        )
-    body_ref_area = math.pi * (analysis["tube_diam"] / 2.0) ** 2
-    body_area_ratio = body_ref_area / s_ref
-    body_slope = analysis["nose_cna"] * body_area_ratio
-    aoa_rad = math.radians(aoa_eval_deg)
-    cn_total = body_slope * aoa_rad
-    cm_total = -body_slope * (analysis["nose_cp_x"] - analysis["cg_x_m"]) / c_ref * aoa_rad
-    for surface in surface_aero:
-        alpha_eff_rad = math.radians(aoa_eval_deg + surface["incidence_deg"])
-        cn_i = surface["slope"] * alpha_eff_rad * surface["mount_factor"] * surface["area_ratio"]
-        cm_i = -cn_i * (surface["x_ac"] - analysis["cg_x_m"]) / c_ref
-        cn_total += cn_i
-        cm_total += cm_i
-    if abs(cn_total) > 1e-9:
-        lift_center_x = analysis["cg_x_m"] - (cm_total / cn_total) * c_ref
-    else:
-        lift_center_x = float("nan")
-    if cm_total > 0.0:
-        aoa_verdict = "nose-up"
-    elif cm_total < 0.0:
-        aoa_verdict = "nose-down"
-    else:
-        aoa_verdict = "trim"
-    if math.isfinite(lift_center_x):
-        static_offset_m = lift_center_x - analysis["cg_x_m"]
-    else:
-        static_offset_m = float("nan")
-    return {
-        "aoa_eval_deg": aoa_eval_deg,
-        "aoa_cn": cn_total,
-        "aoa_cm": cm_total,
-        "aoa_verdict": aoa_verdict,
-        "lift_center_x": lift_center_x,
-        "lift_static_offset_m": static_offset_m,
-    }
-
-
 def build_full_assembly_json(
     assembly_name: str,
     config: dict,
@@ -1117,7 +1042,7 @@ def build_full_assembly_json(
         current_x_fuselage_m += module_len
 
     cg_x_m = total_moment_kg_m / total_mass_kg
-    weight_n = total_mass_kg * 9.81
+    weight_n = total_mass_kg * STANDARD_GRAVITY_M_S2
 
     body_x_start = 0.0
     body_x_end = 0.0
@@ -1182,7 +1107,6 @@ def build_full_assembly_json(
                 "airfoil": wing_data["airfoil"],
                 "planform_area_total": len(panel_layout) * wing_data["semispan"] * (wing_data["chord_root"] + wing_data["chord_tip"]) / 2.0,
                 "panels": panel_layout,
-                "mount_factor": average_mount_factor(panel_layout),
             }
         )
         if wing_data["motor"]:
@@ -1214,7 +1138,15 @@ def build_full_assembly_json(
     reference_chord_area_sum = 0.0
     for surface in surface_sets:
         reference_chord_area_sum += surface["planform_area_total"] * trapezoid_mac(surface["chord_root"], surface["chord_tip"])
-    reference_chord_m = reference_chord_area_sum / surface_planform_total if surface_planform_total > 0.0 else float("nan")
+    # Aero references: area-weighted MAC and total planform; a wingless body falls back to diameter and frontal area.
+    if surface_planform_total > 0.0:
+        reference_basis = "surfaces"
+        reference_length_m = reference_chord_area_sum / surface_planform_total
+        reference_area_m2 = surface_planform_total
+    else:
+        reference_basis = "body"
+        reference_length_m = tube_diam
+        reference_area_m2 = math.pi * (tube_diam / 2.0) ** 2
     surface_loading = float(weight_n / surface_planform_total) if surface_planform_total > 0.0 else float("nan")
     if total_motor_count > 0:
         motor_summary_rows = [
@@ -1245,7 +1177,9 @@ def build_full_assembly_json(
         "surface_airfoils": surface_airfoils,
         "surface_planform_total": surface_planform_total,
         "surface_loading": surface_loading,
-        "reference_chord_m": reference_chord_m,
+        "reference_basis": reference_basis,
+        "reference_length_m": reference_length_m,
+        "reference_area_m2": reference_area_m2,
         "battery_summary": battery_summary,
         "total_motor_count": total_motor_count,
         "tot_wingspan": tot_wingspan,
@@ -1275,8 +1209,11 @@ def apply_barrowman_analysis(analysis: dict) -> dict:
         }
     )
     for surface in analysis["surface_sets"]:
+        # Barrowman's 4N form equals N/2 single-fin slopes for evenly spaced fins. A panel's
+        # pitch-plane share is dir_y^2: vertical fins add nothing, a horizontal pair counts as 4.
+        effective_fin_count = 2.0 * sum(panel["dir_y"] * panel["dir_y"] for panel in surface["panels"])
         cna, x_cp, mid_chord_line = barrowman_finset(
-            fin_count=surface["count"],
+            effective_fin_count=effective_fin_count,
             span=surface["span"],
             chord_root=surface["chord_root"],
             chord_tip=surface["chord_tip"],
@@ -1291,129 +1228,137 @@ def apply_barrowman_analysis(analysis: dict) -> dict:
                 "cna": cna,
                 "x_cp": x_cp,
                 "notes": (
-                    f"N={surface['count']} span={surface['span']:.3f} m "
+                    f"N={surface['count']} N_pitch={effective_fin_count:.2f} span={surface['span']:.3f} m "
                     f"area={surface['planform_area_total']:.4f} m^2 MCL={mid_chord_line:.3f} m"
                 ),
             }
         )
 
     total_cna = sum(row["cna"] for row in component_rows)
-    x_cp_total = sum(row["cna"] * row["x_cp"] for row in component_rows) / total_cna
-    static_margin_m = x_cp_total - analysis["cg_x_m"]
-    static_margin_pct_mac = (
-        static_margin_m / analysis["reference_chord_m"] * 100.0
-        if math.isfinite(analysis["reference_chord_m"]) and analysis["reference_chord_m"] > 0.0
-        else float("nan")
-    )
-    if static_margin_pct_mac <= 0.0:
-        stability_verdict = "unstable"
-    elif static_margin_pct_mac < 5.0:
-        stability_verdict = "marginal"
-    else:
-        stability_verdict = "stable"
-
     analysis["component_rows"] = component_rows
-    analysis["nose_cna"] = nose_cna
-    analysis["nose_cp_x"] = nose_cp_x
     analysis["total_cna"] = total_cna
-    analysis["x_cp_total"] = x_cp_total
-    analysis["static_margin_m"] = static_margin_m
-    analysis["static_margin_pct_mac"] = static_margin_pct_mac
-    analysis["stability_verdict"] = stability_verdict
+    analysis["x_cp_total"] = sum(row["cna"] * row["x_cp"] for row in component_rows) / total_cna
     return analysis
 
 
-def apply_linear_aero_analysis(
+def apply_aero_buildup_analysis(
     analysis: dict,
     aoa_eval_deg: float,
     force_eval_airspeed_m_s: float,
     force_eval_altitude_m: float,
 ) -> dict:
-    sweep_rows = []
-    for sweep_aoa_deg in range(-45, 46):
-        sweep_rows.append(linear_aero_state(analysis, float(sweep_aoa_deg)))
-    analysis["aoa_sweep_rows"] = sweep_rows
-    eval_row = linear_aero_state(analysis, aoa_eval_deg)
-    analysis.update(eval_row)
+    airplane = build_asb_airplane(analysis)
     atmosphere = asb.Atmosphere(altitude=force_eval_altitude_m)
-    density_kg_m3 = float(atmosphere.density())
-    dynamic_viscosity_pa_s = float(atmosphere.dynamic_viscosity())
-    speed_of_sound_m_s = float(atmosphere.speed_of_sound())
-    dynamic_pressure_pa = 0.5 * density_kg_m3 * force_eval_airspeed_m_s * force_eval_airspeed_m_s
-    mach = force_eval_airspeed_m_s / speed_of_sound_m_s
-    body_aoa_rad = math.radians(aoa_eval_deg)
-    flow_dir = np.array([math.cos(body_aoa_rad), 0.0, -math.sin(body_aoa_rad)], dtype=float)
+    weight_n = analysis["weight_N"]
+    cg_x_m = analysis["cg_x_m"]
+
+    # One vectorized AeroBuildup run: the sweep plus the operating point appended at eval_index.
+    sweep_aoa_deg = np.array(AOA_SWEEP_DEG, dtype=float)
+    eval_index = len(sweep_aoa_deg)
+    all_aoa_deg = np.append(sweep_aoa_deg, aoa_eval_deg)
+    op_point = asb.OperatingPoint(atmosphere=atmosphere, velocity=force_eval_airspeed_m_s, alpha=all_aoa_deg)
+    aero = asb.AeroBuildup(airplane=airplane, op_point=op_point, model_size=AERO_MODEL_SIZE).run()
+    dynamic_pressure_pa = float(op_point.dynamic_pressure())
+
+    # Neutral point along the sweep from central differences on the sweep grid; stall peaks give inf/nan.
+    with np.errstate(divide="ignore", invalid="ignore"):
+        sweep_x_np_m = cg_x_m - (
+            np.gradient(np.asarray(aero["Cm"][:eval_index]), sweep_aoa_deg)
+            / np.gradient(np.asarray(aero["CL"][:eval_index]), sweep_aoa_deg)
+            * analysis["reference_length_m"]
+        )
+    sweep_rows = []
+    for index, aoa_deg in enumerate(sweep_aoa_deg):
+        cm = float(aero["Cm"][index])
+        lift_n = float(aero["L"][index])
+        if cm > 0.0:
+            pitch = "nose-up"
+        elif cm < 0.0:
+            pitch = "nose-down"
+        else:
+            pitch = "trim"
+        sweep_rows.append(
+            {
+                "aoa_deg": float(aoa_deg),
+                "cl": float(aero["CL"][index]),
+                "cd": float(aero["CD"][index]),
+                "cm": cm,
+                "lift_n": lift_n,
+                "load_pct": lift_n / weight_n * 100.0,
+                "x_np_m": float(sweep_x_np_m[index]),
+                "pitch": pitch,
+            }
+        )
+
+    # airplane.wings holds one wing per panel that is not an XZ-mirror copy, in surface_sets order.
+    wing_components = iter(aero["wing_aero_components"])
     surface_force_rows = []
-    surface_vertical_force_n = 0.0
-    surface_vertical_moment_n_m = 0.0
     for surface in analysis["surface_sets"]:
-        area_m2 = surface["planform_area_total"]
-        mac_m = trapezoid_mac(surface["chord_root"], surface["chord_tip"])
-        reynolds = density_kg_m3 * force_eval_airspeed_m_s * mac_m / dynamic_viscosity_pa_s
-        alpha_eff_deg = aoa_eval_deg + surface["aoa"]
-        x_force_m = trapezoid_ac_x(
-            x_root_le=surface["x_root_le"],
-            span=surface["span"],
-            chord_root=surface["chord_root"],
-            chord_tip=surface["chord_tip"],
-            sweep_len=surface["sweep_len"],
-        )
-        aero = asb.Airfoil(surface["airfoil"]).get_aero_from_neuralfoil(
-            alpha=alpha_eff_deg,
-            Re=reynolds,
-            mach=mach,
-            n_crit=SURFACE_FORCE_N_CRIT,
-            xtr_upper=SURFACE_FORCE_XTR_UPPER,
-            xtr_lower=SURFACE_FORCE_XTR_LOWER,
-            model_size=SURFACE_FORCE_MODEL_SIZE,
-            include_360_deg_effects=SURFACE_FORCE_INCLUDE_360_DEG_EFFECTS,
-        )
-        cl = float(aero["CL"])
-        cd = float(aero["CD"])
-        confidence = float(aero["analysis_confidence"])
-        lift_n = dynamic_pressure_pa * area_m2 * cl
-        drag_n = dynamic_pressure_pa * area_m2 * cd
-        panel_area_m2 = area_m2 / surface["count"]
-        vertical_force_n = 0.0
+        lift_n = 0.0
+        drag_n = 0.0
+        pitch_moment_n_m = 0.0
         for panel in surface["panels"]:
-            span_dir = np.array([0.0, panel["dir_y"], panel["dir_z"]], dtype=float)
-            lift_dir = np.cross(flow_dir, span_dir)
-            lift_dir = lift_dir / np.linalg.norm(lift_dir)
-            panel_lift_n = dynamic_pressure_pa * panel_area_m2 * cl
-            panel_drag_n = dynamic_pressure_pa * panel_area_m2 * cd
-            vertical_force_n += panel_lift_n * abs(lift_dir[2]) + panel_drag_n * flow_dir[2]
-        surface_vertical_force_n += vertical_force_n
-        surface_vertical_moment_n_m += vertical_force_n * x_force_m
+            if panel["xz_mirror"] == "copy":
+                continue
+            component = next(wing_components)
+            lift_n += float(component.L[eval_index])
+            drag_n += float(component.D[eval_index])
+            pitch_moment_n_m += float(component.M_b[1][eval_index])
+        area_m2 = surface["planform_area_total"]
         surface_force_rows.append(
             {
                 "name": surface["name"],
                 "module": surface["module"],
                 "airfoil": surface["airfoil"],
-                "alpha_eff_deg": alpha_eff_deg,
                 "area_m2": area_m2,
-                "x_force_m": x_force_m,
-                "reynolds": reynolds,
-                "mach": mach,
-                "cl": cl,
-                "cd": cd,
-                "confidence": confidence,
+                "cl": lift_n / (dynamic_pressure_pa * area_m2),
+                "cd": drag_n / (dynamic_pressure_pa * area_m2),
                 "lift_n": lift_n,
+                "lift_g": lift_n * GRAMS_FORCE_PER_NEWTON,
                 "drag_n": drag_n,
-                "vertical_force_n": vertical_force_n,
-                "vertical_force_g": vertical_force_n * GRAMS_FORCE_PER_NEWTON,
-                "load_pct": vertical_force_n / analysis["weight_N"] * 100.0,
+                "load_pct": lift_n / weight_n * 100.0,
+                "x_lift_m": cg_x_m - pitch_moment_n_m / lift_n if abs(lift_n) > 1e-9 else float("nan"),
             }
         )
+    body_lift_n = sum(float(component.L[eval_index]) for component in aero["fuselage_aero_components"])
+    body_drag_n = sum(float(component.D[eval_index]) for component in aero["fuselage_aero_components"])
+
+    total_lift_n = float(aero["L"][eval_index])
+    # NeuralFoil's low-Re section curves are bumpy, so a local derivative jitters by centimetres.
+    # The verdict uses the least-squares dCm/dCL over sweep points within the window around the operating point.
+    fit_mask = np.abs(sweep_aoa_deg - aoa_eval_deg) <= NEUTRAL_POINT_FIT_HALF_WINDOW_DEG
+    dcm_dcl = float(np.polyfit(np.asarray(aero["CL"][:eval_index])[fit_mask], np.asarray(aero["Cm"][:eval_index])[fit_mask], 1)[0])
+    x_np_m = cg_x_m - dcm_dcl * analysis["reference_length_m"]
+    static_margin_m = x_np_m - cg_x_m
+    static_margin_pct_ref = static_margin_m / analysis["reference_length_m"] * 100.0
+    if static_margin_pct_ref <= 0.0:
+        stability_verdict = "unstable"
+    elif static_margin_pct_ref < STABILITY_MARGINAL_PCT:
+        stability_verdict = "marginal"
+    else:
+        stability_verdict = "stable"
+
+    analysis["aoa_sweep_rows"] = sweep_rows
     analysis["force_eval_aoa_deg"] = aoa_eval_deg
     analysis["force_eval_airspeed_m_s"] = force_eval_airspeed_m_s
     analysis["force_eval_altitude_m"] = force_eval_altitude_m
-    analysis["force_eval_density_kg_m3"] = density_kg_m3
+    analysis["force_eval_density_kg_m3"] = float(atmosphere.density())
     analysis["force_eval_dynamic_pressure_pa"] = dynamic_pressure_pa
     analysis["surface_force_rows"] = surface_force_rows
-    analysis["surface_vertical_force_n"] = surface_vertical_force_n
-    analysis["surface_vertical_force_g"] = surface_vertical_force_n * GRAMS_FORCE_PER_NEWTON
-    analysis["surface_vertical_load_pct"] = surface_vertical_force_n / analysis["weight_N"] * 100.0
-    analysis["force_center_x"] = surface_vertical_moment_n_m / surface_vertical_force_n if abs(surface_vertical_force_n) > 1e-9 else float("nan")
+    analysis["body_lift_n"] = body_lift_n
+    analysis["body_drag_n"] = body_drag_n
+    analysis["aero_lift_n"] = total_lift_n
+    analysis["aero_lift_g"] = total_lift_n * GRAMS_FORCE_PER_NEWTON
+    analysis["aero_drag_n"] = float(aero["D"][eval_index])
+    analysis["aero_cl"] = float(aero["CL"][eval_index])
+    analysis["aero_cd"] = float(aero["CD"][eval_index])
+    analysis["aero_cm"] = float(aero["Cm"][eval_index])
+    analysis["aero_load_pct"] = total_lift_n / weight_n * 100.0
+    analysis["force_center_x"] = cg_x_m - float(aero["M_b"][1][eval_index]) / total_lift_n if abs(total_lift_n) > 1e-9 else float("nan")
+    analysis["x_np"] = x_np_m
+    analysis["static_margin_m"] = static_margin_m
+    analysis["static_margin_pct_ref"] = static_margin_pct_ref
+    analysis["stability_verdict"] = stability_verdict
     return analysis
 
 
@@ -1437,7 +1382,7 @@ def analyze_config(
         motor_data_df=motor_data_df,
     )
     analysis = apply_barrowman_analysis(analysis)
-    analysis = apply_linear_aero_analysis(analysis, aoa_eval_deg, force_eval_airspeed_m_s, force_eval_altitude_m)
+    analysis = apply_aero_buildup_analysis(analysis, aoa_eval_deg, force_eval_airspeed_m_s, force_eval_altitude_m)
     analysis["report_text"] = build_report_text(analysis)
     return analysis
 
