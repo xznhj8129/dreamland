@@ -39,7 +39,8 @@ fuselage
   channels[]        name, diameter_m, from_x_m, to_x_m, angle_deg
 surfaces[]          name, x_root_le_m (must be on the body; chords may overhang the tail),
                     layout (H X + 1 3), fin_position (top/bottom), dihedral_deg, root_offset (-1..1),
-                    exposed_span_m (from the body surface at the root LE station, along the panel),
+                    root (body: span from the body surface at the root LE; axis: span from the fuselage axis,
+                    panels meet in the centre, e.g. delta tail fins), span_m (per panel, along the panel),
                     chord_root_m, chord_tip_m, sweep_le_deg, incidence_deg, airfoil (AeroSandbox name),
                     mass_kg (whole set; optional, absent = computed)
 propulsion
@@ -60,9 +61,9 @@ sections
   mass_kg[]         optional, one per section: weighed printed mass (includes whatever is mounted in it), null = computed shell
 ```
 
-Panels keep the true root edge on the body (follows nose/tail cones) and use an equivalent aero root at the mean body radius under the root chord.
+Body-rooted panels keep the true root edge on the body (follows nose/tail cones) and use an equivalent aero root at the mean body radius under the root chord. Axis-rooted panels start on the axis; Barrowman uses their exposed part.
 
-Converted examples: `aircraft/m62v2.json` and `aircraft/quadlancet62.json` reproduce the old totals (1.1408 / 1.3732 kg, plus props 1.1608 / 1.4292 kg). The old modules are sections (cuts at the module boundaries, module mass as the section's weighed mass), couplers 21.36 g per joint, the battery is the only volume. Tail fins use exposed span from the body (m62v2: 24 mm at the root leading edge; the old model measured 55 mm from the centerline).
+Converted examples: `aircraft/m62v2.json` and `aircraft/quadlancet62.json` reproduce the old totals (1.1408 / 1.3732 kg, plus props 1.1608 / 1.4292 kg). The old modules are sections (cuts at the module boundaries, module mass as the section's weighed mass), couplers 21.36 g per joint, the battery is the only volume. m62v2 tail fins are axis-rooted, 55 mm span (delta: straight trailing edge, joined at the centre).
 
 ## 2. Libraries (data/)
 

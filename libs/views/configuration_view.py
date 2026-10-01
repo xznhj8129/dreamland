@@ -16,13 +16,13 @@ from tkinter import ttk
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-from libs.airframe import AXES, FIN_POSITIONS, JOINT_TYPES, LAYOUTS, MOUNT_TARGETS, THRUST_DIRECTIONS, VOLUME_SHAPES
+from libs.airframe import AXES, FIN_POSITIONS, JOINT_TYPES, LAYOUTS, MOUNT_TARGETS, SURFACE_ROOTS, THRUST_DIRECTIONS, VOLUME_SHAPES
 from libs.graphics import draw_canvas_view
 from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS
 
 MM_KEYS = {
     "length_m", "width_m", "height_m", "wall_radial_m", "insertion_depth_m", "diameter_m", "radial_position_m",
-    "from_x_m", "to_x_m", "x_root_le_m", "exposed_span_m", "chord_root_m", "chord_tip_m", "span_position_m",
+    "from_x_m", "to_x_m", "x_root_le_m", "span_m", "chord_root_m", "chord_tip_m", "span_position_m",
     "x_offset_m", "x_m", "y_m", "z_m", "flat_length_m", "curve_length_m", "nose_radius", "size_m", "printer_bed_m", "cuts_m",
 }
 GRAM_KEYS = {"mass_kg", "coupler_mass_kg"}
@@ -31,6 +31,7 @@ UNIT_SUFFIXES = ("_m_s", "_deg", "_kg", "_m")
 CHOICES = {
     "layout": list(LAYOUTS),
     "fin_position": list(FIN_POSITIONS),
+    "root": list(SURFACE_ROOTS),
     "axis": list(AXES),
     "on": list(MOUNT_TARGETS),
     "direction": list(THRUST_DIRECTIONS),
@@ -47,7 +48,7 @@ VOLUME_SHAPE_FIELDS = {
 }
 NEW_SURFACE = {
     "name": "wing", "x_root_le_m": 0.2, "layout": "H", "fin_position": "top", "dihedral_deg": 0.0, "root_offset": 0.0,
-    "exposed_span_m": 0.12, "chord_root_m": 0.1, "chord_tip_m": 0.07, "sweep_le_deg": 10.0, "incidence_deg": 0.0, "airfoil": "naca2412",
+    "root": "body", "span_m": 0.12, "chord_root_m": 0.1, "chord_tip_m": 0.07, "sweep_le_deg": 10.0, "incidence_deg": 0.0, "airfoil": "naca2412",
 }
 NEW_POD = {"diameter_m": 0.035, "flat_length_m": 0.02, "curve_length_m": 0.05, "profile": "elliptical"}
 DRAG_KEYS = {"volume": ("volumes", "x_m"), "surface": ("surfaces", "x_root_le_m")}  # cuts drag the sections.cuts_m entry itself
