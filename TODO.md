@@ -60,28 +60,17 @@
         - Motor mass from iloc[0] of matched rows (Brotherhobby F2008-1000 has 2 weights). Bell geometry uses stator dims.
         - Gravity 9.81 (simlib2.py, propulsion summary) vs 9.80665.
 
-- D. Aero:
-        - AeroBuildup has no wing-body interference: body-mounted H pair lift slope ~0.7x VLM carried through the body. Slender-body (1+r/s)^2 = 1.45 agrees with VLM (1.47). AeroBuildup camber lift at 0 deg is above VLM. The two cancel near 5 deg; aero_check fails at 2 deg (m62v2 main-wing 19%). Adding (1+r/s)^2 alone makes it worse (34%).
-        - Stability verdict (dCm/dCL fit, AoA +/- 4 deg) depends on operating point. m62v2: 10 m/s 0 deg -4.6% MAC unstable; 20 m/s 0/5 deg +16/+35%; 40 m/s +38/+25%. quadlancet62: 10 m/s 0 deg -12%; 20 m/s 0 deg +0.8%. Low-Re (45-65k) NeuralFoil section curves are bumpy; local NP per AoA jitters +/- 2-3 cm.
-        - Reference area includes vertical fins and X panels; c_ref is area-weighted MAC over all sets. Define main-wing reference explicitly.
-        - VLM view: wings only, reports SM %MAC +103% vs AeroBuildup -7.7% on default (V); resolution-sensitive (8x4: 64%). Label wings-only / drop SM column.
-        - VLM sweep: CL/Cm/SM identical across airspeed and altitude (V); run_with_stability_derivatives 12.8 s vs 7.4 s per point, beta/p/q/r derivatives discarded; default 44 points ~9 min. Solve once per AoA.
-        - vlm_view.py poll stops when thread exits before final drain (result lost, Run stays disabled). Sliders snap 2.5 -> 2.0 so selected point never matches (V).
-        - airfoil_analysis.py Lednicer DAT import parses count line as a point (V: CL 1.66, CD inf, no error). Stall detection returns nan when peak confidence low (naca0008). Two airfoil sources (asb.Airfoil vs data/airfoils.json; naca6409 missing from json).
-        - build_range_values: end < start or negative step -> empty list -> IndexError; step 0 ZeroDivisionError.
-        - Recompute 0.05 s -> ~0.9 s (AeroBuildup, 94 AoA points). 2.5 deg sweep step: ~0.35 s.
+- D. Aero (fast = AeroBuildup, live; detailed = lifting-line wings + AeroBuildup bodies, on demand):
+        - Fast model has no downwash between surfaces, no wing-body carry-over, and centres its finite-wing correction on 0 deg instead of the zero-lift angle (AeroSandbox TODO), over-crediting camber. m62v2 at 5 deg / 20 m/s: fast NP 0.365 m (+27.6 mm), detailed 0.3325 m (-5.0 mm); quadlancet62 fast +8 mm, detailed about 0. Owner: no control surfaces, FC always flying, jet-fighter-like stability (matches detailed).
+        - Detailed model: body-rooted panels carried to the axis (carry-over includes camber lift); bodies from AeroBuildup; totals only (no per-surface split); valid to about +-30 deg (lifting line NaN at 45 deg); ~50-60 s.
+        - aero_check.py reference is VLM carried through the body (inviscid; under-reads low-Re camber at 0 deg: m62v2 main wing 0.87 N vs lifting line 1.29 N). Use the carried-through lifting line as the reference instead.
+        - Stability verdict depends on operating point; low-Re (45-65k) NeuralFoil section curves are bumpy; local NP per AoA jitters +/- 2-3 cm.
+        - Recompute ~0.9 s (fast, 94 AoA points). 2.5 deg sweep step: ~0.35 s.
+        - Imported DAT airfoils cannot be assigned to surfaces (surfaces take AeroSandbox names only).
         - VSPAERO 3.43 (/usr/local/bin/vspaero) diverges (CL ~ -300 at 0 deg) on AeroSandbox export_OpenVSP_vspscript geometry.
 
 - E. GUI:
-        - After File->Load, Fuselage OD/ID and Material Density edits write to discarded startup config (V).
-        - Apply standard on: OD/ID boxes editable but overridden; not refreshed on re-apply (V).
-        - Battery/motor/standard dropdowns filled once; not refreshed after Part Editor save; deleting battery in use crashes light_recompute.
-        - Library editors: rename to existing name overwrites on disk; category change keeps old fields; unsaved edits / new module discarded on selection or view change.
-        - Every Return/FocusOut runs full recompute even if unchanged (V: 2 recomputes 2.1 s + 1.3 s).
-        - Length-field list duplicated (library_editors.py vs guibuilder.py), nose_radius labelled mm. library_editors.py re-implements palette, ordered_keys, format_field_value, field_label, parsing; NEW_PART_LIBRARY_DEFAULTS hardcoded.
-        - guibuilder.py invents part x from module cg when missing.
-        - Operating point box labelled "Surface Force Operating Point"; drives all aero now.
-        - Dead: open_module_editor/open_part_editor, heavy_dirty, recompute_analysis passthrough, sys.path.insert, "Builder V3" naming. 1800 px default window clips Apply checkbox at 1600 px.
+        - Part Editor (libs/library_editors.py): rename to an existing name overwrites on disk; category change keeps old fields; unsaved edits discarded on selection or view change; own copies of length-field list, palette, ordered_keys, format_field_value, field_label, parsing; NEW_PART_LIBRARY_DEFAULTS hardcoded.
 
 - F. JSBSim data not in model: inertia tensor and per-component y/z; empty vs payload/battery split; control surfaces (hinge, chord fraction, limits, mixing); per-motor thrust axis, spin direction, prop Ct/Cp vs J, rotor inertia, voltage sag; CL/CD/Cm vs alpha to +/-90 deg with body; CYb, Clb, Cnb, Cmq, Clp, Cnr, control derivatives; explicit reference area/span/chord; ground contact points.
 
