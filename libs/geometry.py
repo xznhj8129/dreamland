@@ -219,12 +219,13 @@ def superellipse_perimeter(width_m: float, height_m: float, shape: float) -> flo
     return sum(math.dist(a, b) for a, b in zip(points, points[1:] + points[:1]))
 
 
-def build_body(airframe: Airframe) -> Body:
+def build_body(airframe: Airframe, end_samples: int = END_PROFILE_SAMPLES) -> Body:
+    """Body stations; end_samples sets the nose/tail sampling density (CAD asks for more than aero)."""
     fuselage = airframe.fuselage
     width, height = fuselage.section.width_m, fuselage.section.height_m
     aspect = height / width
-    nose = sample_pointed_profile(fuselage.nose.profile, fuselage.nose.length_m, width / 2.0, END_PROFILE_SAMPLES, fuselage.nose.params)
-    tail = sample_pointed_profile(fuselage.tail.profile, fuselage.tail.length_m, width / 2.0, END_PROFILE_SAMPLES, fuselage.tail.params)
+    nose = sample_pointed_profile(fuselage.nose.profile, fuselage.nose.length_m, width / 2.0, end_samples, fuselage.nose.params)
+    tail = sample_pointed_profile(fuselage.tail.profile, fuselage.tail.length_m, width / 2.0, end_samples, fuselage.tail.params)
     tail_start = fuselage.length_m - fuselage.tail.length_m
     raw = [(x, r) for x, r in nose] + [(tail_start, width / 2.0)] + [(fuselage.length_m - x, r) for x, r in reversed(tail)]
     stations = []

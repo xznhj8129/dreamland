@@ -1,11 +1,22 @@
+"""
+Usage:
+from libs.views.cad_view import CADMainView
+
+CAD view: STEP/STL solid export and FreeCAD varset (AirframeParams) export of the current resolved airframe.
+"""
+
 from __future__ import annotations
 
+import json
 import re
 import traceback
 import tkinter as tk
+from pathlib import Path
 from tkinter import filedialog, ttk
 
-from libs.cad import export_step, export_stl
+from libs.cad import build_freecad_exports, export_step, export_stl
+
+STANDARDS_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "specs.json"
 
 STEP_MODE_LABELS = {
     "assembly": "Component assembly (named parts, for CAD)",
@@ -44,7 +55,8 @@ class CADMainView:
         button_bar = ttk.Frame(export_frame)
         button_bar.grid(row=3, column=0, sticky="w")
         ttk.Button(button_bar, text="Export STEP", command=self.on_export_step).grid(row=0, column=0, padx=(0, 8))
-        ttk.Button(button_bar, text="Export STL", command=self.on_export_stl).grid(row=0, column=1)
+        ttk.Button(button_bar, text="Export STL", command=self.on_export_stl).grid(row=0, column=1, padx=(0, 8))
+        ttk.Button(button_bar, text="Export FreeCAD params (JSON)", command=self.on_export_freecad).grid(row=0, column=2)
 
         self.status_var = tk.StringVar(value="")
         ttk.Label(export_frame, textvariable=self.status_var, wraplength=520, justify="left").grid(
@@ -52,12 +64,12 @@ class CADMainView:
         )
 
     def default_export_stem(self) -> str:
-        name = self.app.analysis["config_name"] or "airframe"
+        name = self.app.resolved.airframe.name or "airframe"
         return re.sub(r"[^A-Za-z0-9._-]+", "_", name)
 
     def on_export_step(self) -> None:
-        if self.app.analysis is None:
-            self.status_var.set("No analysis available yet; recompute the configuration first.")
+        if self.app.resolved is None:
+            self.status_var.set("No valid airframe yet; fix the definition first.")
             return
         path = filedialog.asksaveasfilename(
             title="Export STEP",
@@ -72,7 +84,7 @@ class CADMainView:
         self.frame.update_idletasks()
         try:
             written_mode = export_step(
-                self.app.analysis, path, mode=mode, include_prop_discs=self.prop_discs_var.get()
+                self.app.resolved, path, mode=mode, include_prop_discs=self.prop_discs_var.get()
             )
         except Exception as error:
             traceback.print_exc()
@@ -82,8 +94,8 @@ class CADMainView:
         self.status_var.set(f"STEP written ({written_mode}){note}: {path}")
 
     def on_export_stl(self) -> None:
-        if self.app.analysis is None:
-            self.status_var.set("No analysis available yet; recompute the configuration first.")
+        if self.app.resolved is None:
+            self.status_var.set("No valid airframe yet; fix the definition first.")
             return
         path = filedialog.asksaveasfilename(
             title="Export STL",
@@ -96,10 +108,28 @@ class CADMainView:
         self.status_var.set("Exporting STL...")
         self.frame.update_idletasks()
         try:
-            written_mode = export_stl(self.app.analysis, path, include_prop_discs=self.prop_discs_var.get())
+            written_mode = export_stl(self.app.resolved, path, include_prop_discs=self.prop_discs_var.get())
         except Exception as error:
             traceback.print_exc()
             self.status_var.set(f"STL export failed: {error}")
             return
         note = " (fuse failed, wrote unfused compound)" if written_mode == "compound" else ""
         self.status_var.set(f"STL written{note}: {path}")
+
+    def on_export_freecad(self) -> None:
+        if self.app.resolved is None:
+            self.status_var.set("No valid airframe yet; fix the definition first.")
+            return
+        path = filedialog.asksaveasfilename(
+            title="Export FreeCAD params",
+            defaultextension=".json",
+            initialfile=f"{self.default_export_stem()}_freecad.json",
+            filetypes=[("JSON", "*.json"), ("All files", "*.*")],
+        )
+        if not path:
+            return
+        with open(STANDARDS_PATH, "r") as file:
+            standards_data = json.load(file)
+        with open(path, "w") as file:
+            json.dump(build_freecad_exports(self.app.resolved, standards_data), file, indent=4)
+        self.status_var.set(f"FreeCAD params written: {path}")

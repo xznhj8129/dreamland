@@ -24,6 +24,7 @@ from libs.airframe import PARTS_PATH, SCHEMA, AirframeError, parse_airframe
 from libs.geometry import resolve_airframe
 from libs.report import build_report_text
 from libs.simlib2 import TestedMotorData
+from libs.views.cad_view import CADMainView
 from libs.views.configuration_view import ConfigurationMainView
 from libs.views.part_editor_view import PartEditorMainView
 
@@ -82,9 +83,11 @@ class BuilderApp:
         self.asb_draw_busy = False
         self.asb_last_size = (0, 0)
         self.configuration_view = None
+        self.cad_view = None
         self.part_editor_view = None
         self.part_editor_panel = None
         self.configuration_main_view = None
+        self.cad_main_view = None
         self.part_editor_main_view = None
         self.active_main_view = "Configuration"
         self.error_dialog: tk.Toplevel | None = None
@@ -301,16 +304,21 @@ class BuilderApp:
         main_view_host.rowconfigure(0, weight=1)
 
         self.configuration_main_view = ConfigurationMainView(self, main_view_host)
+        self.cad_main_view = CADMainView(self, main_view_host)
         self.part_editor_main_view = PartEditorMainView(self, main_view_host)
 
         bottom_bar = ttk.Frame(self.root, padding=(8, 0, 8, 8))
         bottom_bar.grid(row=1, column=0, sticky="ew")
         ttk.Button(bottom_bar, text="Configuration", command=lambda: self.show_main_view("Configuration")).pack(side="left")
+        ttk.Button(bottom_bar, text="CAD", command=lambda: self.show_main_view("CAD")).pack(side="left", padx=(8, 0))
         ttk.Button(bottom_bar, text="Part Editor", command=lambda: self.show_main_view("Part Editor")).pack(side="left", padx=(8, 0))
         self.show_main_view("Configuration")
 
     def show_main_view(self, view_name: str) -> None:
         self.active_main_view = view_name
+        if view_name == "CAD":
+            self.cad_view.tkraise()
+            return
         if view_name == "Part Editor":
             self.part_editor_panel.refresh_from_disk()
             self.part_editor_view.tkraise()
