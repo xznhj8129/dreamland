@@ -76,7 +76,11 @@ class SurfaceSet:
     panels: tuple[Panel, ...]
     planform_area_m2: float
     mac_m: float
-    body_half_extent_m: float  # body radius-like half extent at the root LE station (Barrowman)
+    body_half_extent_m: float  # mean body radius under the root chord (Barrowman)
+    exposed_x_root_le_m: float  # trapezoid outside the body, for Barrowman
+    exposed_span_m: float
+    exposed_chord_root_m: float
+    exposed_sweep_len_m: float
 
 
 @dataclass(frozen=True)
@@ -260,27 +264,37 @@ def body_surface_point(body: Body, x_m: float, angle_rad: float) -> tuple[Vec, f
 
 
 def build_surface(surface: Surface, body: Body) -> SurfaceSet:
-    sweep_len = surface.exposed_span_m * math.tan(math.radians(surface.sweep_le_deg))
+    """Panels for one surface set. root "body": the root edge lies on the body surface (following tapering cones) and
+    the aero root sits at the mean body radius under the root chord. root "axis": the panels start on the fuselage
+    axis and meet in the centre (e.g. delta tail fins); the body hides their inner part."""
+    on_axis = surface.root == "axis"
+    sweep_len = surface.span_m * math.tan(math.radians(surface.sweep_le_deg))
     incidence = math.radians(surface.incidence_deg)
     chord_root = surface.chord_root_m
     layout = surface_panel_layout(
-        layout=surface.layout, root_radius=1.0, span=surface.exposed_span_m, dihedral_deg=surface.dihedral_deg,
-        y_offset=surface.root_offset, fin_pos=surface.fin_position,
+        layout=surface.layout, root_radius=1.0, span=surface.span_m, dihedral_deg=surface.dihedral_deg,
+        y_offset=surface.root_offset, fin_pos=surface.fin_position, centerline_root=on_axis,
     )
     panels = []
-    aero_root_radii = []
+    mean_radii = []
     for spec in layout:
-        angle = math.atan2(spec["root_z"], spec["root_y"])
         dir_y, dir_z = spec["dir_y"], spec["dir_z"]
+        angle = math.atan2(dir_z, dir_y) if on_axis else math.atan2(spec["root_z"], spec["root_y"])
         normal = panel_normal(dir_y, dir_z)
-        attach_le, _ = body_surface_point(body, surface.x_root_le_m, angle)
-        tip_le = (attach_le[0] + sweep_len, attach_le[1] + surface.exposed_span_m * dir_y, attach_le[2] + surface.exposed_span_m * dir_z)
-        te_surface, _ = body_surface_point(body, surface.x_root_le_m + chord_root * math.cos(incidence), angle)
-        attach_te = tuple(point - chord_root * math.sin(incidence) * n for point, n in zip(te_surface, normal))
         radii = [body_surface_point(body, surface.x_root_le_m + chord_root * (k + 0.5) / ROOT_CHORD_SAMPLES, angle)[1] for k in range(ROOT_CHORD_SAMPLES)]
-        aero_radius = sum(radii) / len(radii)
-        aero_root_radii.append(aero_radius)
-        root_le = (surface.x_root_le_m, aero_radius * math.cos(angle), aero_radius * math.sin(angle))
+        mean_radius = sum(radii) / len(radii)
+        mean_radii.append(mean_radius)
+        te_x = surface.x_root_le_m + chord_root * math.cos(incidence)
+        if on_axis:
+            attach_le = (surface.x_root_le_m, 0.0, 0.0)
+            te_point = (te_x, 0.0, 0.0)
+            root_le = attach_le
+        else:
+            attach_le, _ = body_surface_point(body, surface.x_root_le_m, angle)
+            te_point, _ = body_surface_point(body, te_x, angle)
+            root_le = (surface.x_root_le_m, mean_radius * math.cos(angle), mean_radius * math.sin(angle))
+        attach_te = tuple(point - chord_root * math.sin(incidence) * n for point, n in zip(te_point, normal))
+        tip_le = (attach_le[0] + sweep_len, attach_le[1] + surface.span_m * dir_y, attach_le[2] + surface.span_m * dir_z)
         panels.append(Panel(
             surface=surface.name, index=spec["index"], xz_mirror=spec["xz_mirror"],
             attach_le=attach_le, attach_te=attach_te, root_le=root_le, tip_le=tip_le,
@@ -289,11 +303,17 @@ def build_surface(surface: Surface, body: Body) -> SurfaceSet:
             span_m=math.dist(root_le[1:], tip_le[1:]),
             incidence_deg=surface.incidence_deg, airfoil=surface.airfoil,
         ))
+    # Exposed trapezoid: an axis-rooted panel is cut at the mean body radius; a body-rooted panel is all exposed.
+    hidden = mean_radii[0] / surface.span_m if on_axis else 0.0
     return SurfaceSet(
         name=surface.name, definition=surface, panels=tuple(panels),
         planform_area_m2=sum(panel.span_m for panel in panels) * (chord_root + surface.chord_tip_m) / 2.0,
         mac_m=trapezoid_mac(chord_root, surface.chord_tip_m),
-        body_half_extent_m=aero_root_radii[0],
+        body_half_extent_m=mean_radii[0],
+        exposed_x_root_le_m=surface.x_root_le_m + sweep_len * hidden,
+        exposed_span_m=panels[0].span_m * (1.0 - hidden),
+        exposed_chord_root_m=chord_root + (surface.chord_tip_m - chord_root) * hidden,
+        exposed_sweep_len_m=sweep_len * (1.0 - hidden),
     )
 
 
@@ -320,7 +340,7 @@ def surface_mass_point(surface_set: SurfaceSet, density_kg_m3: float, infill: fl
         return MassPoint(f"surface {surface_set.name}", "surface", centroid, (definition.mass_kg, definition.mass_kg), False)
     unit_section_area = float(asb.Airfoil(definition.airfoil).area())
     cr, ct = definition.chord_root_m, definition.chord_tip_m
-    volume = len(surface_set.panels) * unit_section_area * definition.exposed_span_m * (cr * cr + cr * ct + ct * ct) / 3.0
+    volume = len(surface_set.panels) * unit_section_area * definition.span_m * (cr * cr + cr * ct + ct * ct) / 3.0
     mass = volume * infill * density_kg_m3
     return MassPoint(f"surface {surface_set.name}", "surface", centroid, (mass, mass), True)
 

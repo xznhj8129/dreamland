@@ -154,13 +154,13 @@ def barrowman(resolved: ResolvedAirframe) -> tuple[float, tuple[BarrowmanRow, ..
         effective_fin_count = 2.0 * sum(panel.span_dir[1] ** 2 for panel in surface_set.panels)
         cna, x_cp, mid_chord_line = barrowman_finset(
             effective_fin_count=effective_fin_count,
-            span=surface_set.panels[0].span_m,
-            chord_root=definition.chord_root_m,
+            span=surface_set.exposed_span_m,
+            chord_root=surface_set.exposed_chord_root_m,
             chord_tip=definition.chord_tip_m,
-            sweep_len=surface_set.panels[0].tip_le[0] - surface_set.panels[0].root_le[0],
+            sweep_len=surface_set.exposed_sweep_len_m,
             body_radius=surface_set.body_half_extent_m,
             ref_diameter=ref_diameter,
-            x_root_le=definition.x_root_le_m,
+            x_root_le=surface_set.exposed_x_root_le_m,
         )
         rows.append(BarrowmanRow(surface_set.name, cna, x_cp, f"N={len(surface_set.panels)} N_pitch={effective_fin_count:.2f} MCL={mid_chord_line:.3f} m"))
     total = sum(row.cna for row in rows)

@@ -32,6 +32,7 @@ INCH_M = 0.0254
 
 LAYOUTS = ("H", "X", "+", "1", "3")
 FIN_POSITIONS = ("top", "bottom")
+SURFACE_ROOTS = ("body", "axis")  # span measured from the body surface at the root LE, or from the fuselage axis (fins joined at the centre)
 VOLUME_SHAPES = ("box", "cylinder", "bore", "point")
 AXES = ("x", "y", "z")
 MOUNT_TARGETS = ("nose", "tail", "surface")
@@ -118,7 +119,8 @@ class Surface:
     fin_position: str
     dihedral_deg: float
     root_offset: float  # root height on the body, -1 bottom .. 0 equator .. 1 top (X: root angle)
-    exposed_span_m: float  # from the body surface at the root leading-edge station, along the panel
+    root: str  # "body" or "axis", see SURFACE_ROOTS
+    span_m: float  # per panel, from the root (body surface at the root LE, or the axis) along the panel
     chord_root_m: float
     chord_tip_m: float
     sweep_le_deg: float
@@ -344,7 +346,8 @@ def _surface(data: dict, path: str, fuselage_length_m: float) -> Surface:
         fin_position=fields.choice("fin_position", FIN_POSITIONS),
         dihedral_deg=fields.number("dihedral_deg"),
         root_offset=fields.number("root_offset"),
-        exposed_span_m=fields.positive("exposed_span_m"),
+        root=fields.choice("root", SURFACE_ROOTS),
+        span_m=fields.positive("span_m"),
         chord_root_m=fields.positive("chord_root_m"),
         chord_tip_m=fields.positive("chord_tip_m"),
         sweep_le_deg=fields.number("sweep_le_deg"),
@@ -478,8 +481,8 @@ def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], volumes: t
             if surface_name not in surface_names:
                 raise AirframeError(f"{mount_fields.at('surface')}: {surface_name!r} is not a defined surface")
             span_position_m = mount_fields.number("span_position_m", minimum=0.0)
-            if span_position_m > surface_names[surface_name].exposed_span_m:
-                raise AirframeError(f"{mount_fields.at('span_position_m')}: {span_position_m} is past the panel span {surface_names[surface_name].exposed_span_m}")
+            if span_position_m > surface_names[surface_name].span_m:
+                raise AirframeError(f"{mount_fields.at('span_position_m')}: {span_position_m} is past the panel span {surface_names[surface_name].span_m}")
             x_offset_m = mount_fields.number("x_offset_m")
         direction = mount_fields.choice("direction", THRUST_DIRECTIONS)
         if (on, direction) in (("nose", "pusher"), ("tail", "tractor")):
