@@ -1,0 +1,234 @@
+
+
+# diff
+
+# version
+# INAV/JHEMCUF405 8.0.0 Jan 21 2025 / 16:17:52 (ec2106af) 
+# GCC-13.2.1 20231009
+
+# start the command batch
+batch start
+
+# resources
+
+# Timer overrides
+timer_output_mode 0 SERVOS
+timer_output_mode 1 MOTORS
+timer_output_mode 2 MOTORS
+timer_output_mode 3 SERVOS
+timer_output_mode 7 SERVOS
+
+# Outputs [servo]
+servo 1 975 2050 1575 100
+servo 2 900 2100 1500 100
+servo 3 900 2100 1500 100
+servo 4 825 2025 1425 100
+
+# safehome
+
+# Fixed Wing Approach
+
+# geozone
+
+# geozone vertices
+
+# features
+feature GPS
+feature PWM_OUTPUT_ENABLE
+
+# beeper
+
+# blackbox
+blackbox -NAV_ACC
+blackbox -NAV_POS
+blackbox -NAV_PID
+blackbox -MAG
+blackbox ACC
+blackbox ATTI
+blackbox RC_DATA
+blackbox RC_COMMAND
+blackbox MOTORS
+blackbox GYRO_RAW
+blackbox PEAKS_R
+blackbox PEAKS_P
+blackbox PEAKS_Y
+blackbox SERVOS
+
+# Receiver: Channel map
+
+# Ports
+serial 0 0 115200 115200 0 115200
+serial 1 1 115200 115200 0 115200
+serial 2 64 115200 115200 0 115200
+serial 3 2048 115200 115200 0 115200
+serial 5 2 115200 115200 0 115200
+
+# LEDs
+
+# LED color
+
+# LED mode_color
+
+# Modes [aux]
+aux 0 0 0 1800 2100
+aux 1 1 1 1400 2100
+aux 2 62 3 1800 2100
+aux 3 63 3 1400 1600
+aux 4 13 2 1800 2075
+aux 5 60 2 1300 1700
+aux 6 26 0 1800 2100
+aux 7 27 4 1800 2100
+
+# Adjustments [adjrange]
+
+# Receiver rxrange
+
+# temp_sensor
+
+# Mission Control Waypoints [wp]
+#wp 0 invalid
+
+# OSD [osd_layout]
+osd_layout 0 0 1 10 V
+osd_layout 0 1 1 1 V
+osd_layout 0 2 0 0 V
+osd_layout 0 3 8 6 V
+osd_layout 0 7 13 11 V
+osd_layout 0 9 1 4 V
+osd_layout 0 10 1 11 H
+osd_layout 0 12 23 3 H
+osd_layout 0 13 22 7 V
+osd_layout 0 14 1 9 V
+osd_layout 0 15 21 6 V
+osd_layout 0 25 20 4 V
+osd_layout 0 26 21 7 H
+osd_layout 0 28 23 1 V
+osd_layout 0 30 1 12 V
+osd_layout 0 32 13 1 V
+osd_layout 0 41 1 9 H
+osd_layout 0 54 1 2 V
+osd_layout 0 86 23 11 V
+osd_layout 0 112 1 11 V
+osd_layout 0 128 2 7 V
+osd_layout 0 147 10 7 V
+
+# Programming: logic
+logic 0 1 -1 1 2 38 0 2 0
+logic 2 1 -1 8 4 0 4 1 0
+logic 3 1 -1 12 4 2 0 0 0
+logic 4 1 3 2 2 16 0 45 0
+logic 5 0 2 0 0 0 0 0 0
+logic 6 0 2 0 0 0 0 0 0
+logic 7 0 3 0 0 0 0 0 0
+logic 8 0 3 0 0 0 0 0 0
+logic 9 0 2 0 0 0 0 0 0
+logic 10 0 2 0 0 0 0 0 0
+
+# Programming: global variables
+
+# Programming: PID controllers
+
+# OSD: custom elements
+osd_custom_elements 0 1 0 0 0 0 0 2 4 "TRANSITION"
+
+# master
+set gyro_main_lpf_hz = 90
+set dynamic_gyro_notch_q = 250
+set dynamic_gyro_notch_min_hz = 60
+set dynamic_gyro_notch_mode = 3D
+set setpoint_kalman_q = 200
+set gyro_zero_x = 3
+set gyro_zero_y = -10
+set gyro_zero_z = -11
+set ins_gravity_cmss =  975.169
+set acc_hardware = ICM42605
+set acczero_x = -1
+set acczero_y = -1
+set acczero_z = 6
+set accgain_x = 4078
+set accgain_y = 4095
+set accgain_z = 4101
+set align_mag = CW270FLIP
+set mag_hardware = NONE
+set align_mag_pitch = 1800
+set align_mag_yaw = 2700
+set baro_hardware = SPL06
+set serialrx_provider = CRSF
+set blackbox_rate_denom = 2
+set motor_pwm_protocol = DSHOT300
+set failsafe_procedure = DROP
+set align_board_roll = 4
+set align_board_pitch = -900
+set applied_defaults = 5
+set gps_ublox_use_galileo = ON
+set gps_ublox_use_glonass = ON
+set airmode_type = THROTTLE_THRESHOLD
+set osd_video_system = NTSC
+
+# control_profile
+control_profile 2
+
+set mc_p_pitch = 44
+set mc_i_pitch = 82
+set mc_d_pitch = 29
+set mc_cd_pitch = 110
+set mc_i_roll = 75
+set mc_d_roll = 26
+set mc_cd_roll = 100
+set mc_p_yaw = 45
+set mc_i_yaw = 80
+set mc_cd_yaw = 100
+set dterm_lpf_hz = 85
+set mc_iterm_relax = RPY
+set d_boost_min =  1.000
+set d_boost_max =  1.200
+set antigravity_gain =  2.000
+set antigravity_accelerator =  5.000
+set smith_predictor_delay =  1.768
+set tpa_rate = 20
+set tpa_breakpoint = 1200
+set rc_expo = 80
+set rc_yaw_expo = 80
+set roll_rate = 70
+set pitch_rate = 70
+set yaw_rate = 60
+set ez_enabled = ON
+set ez_filter_hz = 90
+set ez_response = 101
+set ez_damping = 115
+set ez_rate = 134
+set ez_expo = 118
+
+# mixer_profile
+mixer_profile 2
+
+set motor_direction_inverted = ON
+set model_preview_type = 3
+set motorstop_on_low = OFF
+set mixer_pid_profile_linking = ON
+
+# Mixer: motor mixer
+
+mmix reset
+
+mmix 0  1.000 -1.000  1.000  1.000
+mmix 1  1.000  1.000 -1.000  1.000
+mmix 2  1.000  1.000  1.000 -1.000
+mmix 3  1.000 -1.000 -1.000 -1.000
+
+# Mixer: servo mixer
+smix reset
+
+smix 0 1 11 100 0 -1
+
+# battery_profile
+battery_profile 1
+
+
+# save configuration
+save
+
+# end the command batch
+batch end
+
+# 

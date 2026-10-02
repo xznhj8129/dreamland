@@ -14,9 +14,10 @@ and the thrust axis, so hover is pitch +90 deg; INAV flies it as a multirotor wi
 whose front is the aircraft belly (-z) and right is +y.
 
 Model choices (best estimates where no data exists):
-- Motor: the bench data's RPM does not fit a DC-motor model at the rated KV, so the engine is a JSBSim electric engine
-  and a throttle table reproduces the measured static thrust per throttle (thrust ~ throttle^2 below the lowest row).
-  Full power = MOTOR_SHAFT_EFFICIENCY x measured electrical power at 100 %; that sets Cp, not the RPM.
+- Motor: JSBSim brushless DC motor at the rated KV, fitted to the bench rows (fit_motor): duty 1 at full throttle fixes
+  the effective resistance (motor, ESC, wiring); the no-load current is fitted to the measured battery currents. A
+  throttle table maps the command to motor voltage so static RPM and thrust match the bench at every throttle (thrust ~
+  throttle^2 below the lowest row). Back-EMF limits the RPM at speed. No battery sag (bench pack voltage).
 - Prop: static Ct from the bench rows; Ct(J) linear to zero at J = pitch / diameter (Tyto formula, as libs/simlib2.py);
   Cp(J) shaped like JSBSim's bundled APC 9x4.5E table, scaled to that zero-thrust J. Rotor inertia = prop only.
 - Aerodynamics: AeroSandbox AeroBuildup on the whole aircraft over AoA -180..180 and sideslip -90..90 at the operating
@@ -35,6 +36,8 @@ import aerosandbox as asb
 import jsbsim
 import numpy as np
 
+from scipy.optimize import least_squares
+
 from libs.aero import AERO_MODEL_SIZE, build_asb_airplane
 from libs.airframe import MOTORDATA_PATH
 from libs.geometry import STANDARD_GRAVITY_M_S2, Inertia, ResolvedAirframe, Vec
@@ -42,7 +45,6 @@ from libs.simlib2 import TestedMotorData
 
 INCH_M = 0.0254
 BENCH_AIR_DENSITY_KG_M3 = 1.225  # ISA sea level; the bench conditions were not recorded
-MOTOR_SHAFT_EFFICIENCY = 0.70  # shaft / electrical power at full throttle (motor + ESC); sets Cp only
 LOW_THROTTLE_THRUST_EXPONENT = 2.0  # thrust ~ throttle^2 below the lowest measured row
 THROTTLE_TABLE_POINTS = 21
 PROP_J_TABLE_POINTS = 25
@@ -57,6 +59,8 @@ CONTACT_FRICTION = (0.8, 0.5)  # static, dynamic (as JSBSim's F450)
 CONTACT_TYPE = "STRUCTURE"  # BOGEY is a wheel: its rolling direction degenerates with the body axis vertical and the contact explodes
 INAV_THROTTLE_IDLE_PCT = 8  # INAV default; motor output = idle + stick x (1 - idle)
 MOTOR_THROTTLE_PROPERTY = "fcs/throttle-cmd-norm[{index}]"
+# INAV quad X output order as (front, right) in the hover frame: rear-right, front-right, rear-left, front-left.
+INAV_QUAD_X_ORDER = ((False, True), (True, True), (False, False), (True, False))
 
 
 @dataclass(frozen=True)
@@ -64,10 +68,35 @@ class JSBSimExport:
     model_name: str
     model_dir: Path  # holds aircraft/<model>/ and engine/
     inav_cli_path: Path
-    motor_properties: tuple[str, ...]  # driven by INAV motor output 1, 2, ... (resolved motor order)
+    motor_properties: tuple[str, ...]  # driven by INAV motor output 1, 2, ... (inav_motor_order)
+    inav_mixers: dict[str, tuple[tuple[float, float, float], ...]]  # "hover" / "forward": (roll, pitch, yaw) per INAV
+                                                                    # output, yaw as with motor_direction_inverted = OFF
     hover_motor_fraction: float  # predicted motor command in hover
     hover_stick_us: int  # nav_mc_hover_thr
     stance_height_m: float  # CG height when standing on the contact points, nose up (start here; JSBSim's ground trim crashes on it)
+
+
+def inav_motor_order(resolved: ResolvedAirframe) -> tuple[int, ...]:
+    """Resolved motor index of each INAV motor output: quad X order in the hover frame (front = belly -z, right = +y)
+    for 4 motors one per quadrant, else the resolved order."""
+    quadrants = [(motor.position[2] < 0.0, motor.position[1] > 0.0) for motor in resolved.motors]
+    off_axes = all(abs(motor.position[1]) > 1e-9 and abs(motor.position[2]) > 1e-9 for motor in resolved.motors)
+    if len(resolved.motors) == 4 and off_axes and len(set(quadrants)) == 4:
+        return tuple(quadrants.index(quadrant) for quadrant in INAV_QUAD_X_ORDER)
+    return tuple(range(len(resolved.motors)))
+
+
+def inav_mixers(resolved: ResolvedAirframe, order: tuple[int, ...]) -> dict[str, tuple[tuple[float, float, float], ...]]:
+    """INAV mmix (roll, pitch, yaw) weights per output. Hover (multirotor frame: front = belly, right = +y): roll + for
+    left motors, pitch + for rear (dorsal), yaw + for ccw. Forward flight is the same motors seen nose-first: roll
+    from prop torque (-hover yaw), pitch unchanged, yaw from left/right thrust (hover roll)."""
+    reach_y = max(abs(motor.position[1]) for motor in resolved.motors)
+    reach_z = max(abs(motor.position[2]) for motor in resolved.motors)
+    hover = tuple(
+        (-resolved.motors[index].position[1] / reach_y, resolved.motors[index].position[2] / reach_z, 1.0 if resolved.motors[index].spin == "ccw" else -1.0)
+        for index in order
+    )
+    return {"hover": hover, "forward": tuple((-yaw, pitch, roll) for roll, pitch, yaw in hover)}
 
 
 def jsbsim_inertia(inertia: Inertia) -> tuple[float, float, float, float, float, float]:
@@ -97,6 +126,51 @@ def thrust_curve(points: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]
     values = np.interp(grid, throttle, thrust)
     values[low] = thrust[0] * (grid[low] / throttle[0]) ** LOW_THROTTLE_THRUST_EXPONENT
     return grid, values
+
+
+@dataclass(frozen=True)
+class MotorFit:
+    """DC motor + prop fitted to bench rows: motor current = shaft power / back-EMF + no-load current, motor voltage =
+    back-EMF + current x resistance, battery power = motor power (lossless ESC), duty 1 at full throttle."""
+    kv_rpm_v: float
+    resistance_ohm: float
+    no_load_current_a: float
+    full_voltage_v: float  # pack voltage under load at full throttle
+    ct0: float
+    cp0: float
+    battery_current_error: float  # largest relative battery-current misfit over the rows
+
+
+def fit_motor(points: dict[str, np.ndarray], kv_rpm_v: float, diameter_m: float, rho: float) -> MotorFit:
+    revs = points["rpm"] / 60.0
+    back_emf = points["rpm"] / kv_rpm_v
+    voltage, current = points["voltage_v"], points["current_a"]
+    ct0 = float(np.mean(points["thrust_g"] / 1000.0 * STANDARD_GRAVITY_M_S2 / (rho * revs ** 2 * diameter_m ** 4)))
+    resistance = float((voltage[-1] - back_emf[-1]) / current[-1])
+
+    def motor_current(no_load_a: float) -> tuple[np.ndarray, float]:
+        cp0 = (current[-1] - no_load_a) * back_emf[-1] / (rho * revs[-1] ** 3 * diameter_m ** 5)
+        return cp0 * rho * revs ** 3 * diameter_m ** 5 / back_emf + no_load_a, cp0
+
+    def battery_current_misfit(no_load: np.ndarray) -> np.ndarray:
+        motor_a, _cp0 = motor_current(float(no_load[0]))
+        return ((back_emf + motor_a * resistance) * motor_a / voltage - current) / current
+
+    no_load = float(least_squares(battery_current_misfit, [1.0], bounds=([0.0], [float(current[-1])])).x[0])
+    _motor_a, cp0 = motor_current(no_load)
+    return MotorFit(
+        kv_rpm_v=kv_rpm_v, resistance_ohm=resistance, no_load_current_a=no_load, full_voltage_v=float(voltage[-1]),
+        ct0=ct0, cp0=float(cp0), battery_current_error=float(np.max(np.abs(battery_current_misfit(np.array([no_load]))))),
+    )
+
+
+def motor_voltage_fraction(fit: MotorFit, rpm: np.ndarray, diameter_m: float, rho: float) -> np.ndarray:
+    """Fraction of full voltage that holds each static RPM against the prop."""
+    revs = rpm / 60.0
+    back_emf = rpm / fit.kv_rpm_v
+    with np.errstate(divide="ignore", invalid="ignore"):
+        motor_a = np.where(rpm > 0.0, fit.cp0 * rho * revs ** 3 * diameter_m ** 5 / back_emf + fit.no_load_current_a, 0.0)
+    return np.where(rpm > 0.0, (back_emf + motor_a * fit.resistance_ohm) / fit.full_voltage_v, 0.0)
 
 
 def apc_shape() -> tuple[np.ndarray, np.ndarray, float]:
@@ -170,15 +244,11 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
     diameter_m = info["diameter_in"] * INCH_M
     rho = BENCH_AIR_DENSITY_KG_M3
 
-    # Prop: static Ct from every row; the full-throttle row fixes RPM, power and Cp.
-    revs = points["rpm"] / 60.0
-    thrust_n = points["thrust_g"] / 1000.0 * STANDARD_GRAVITY_M_S2
-    ct0 = float(np.mean(thrust_n / (rho * revs ** 2 * diameter_m ** 4)))
+    fit = fit_motor(points, float(motor.kv), diameter_m, rho)
+    ct0, cp0 = fit.ct0, fit.cp0
+    # Throttle command -> motor voltage: the static RPM that gives the measured thrust at each command.
     throttle_grid, thrust_grid = thrust_curve(points)
-    full_revs = math.sqrt(thrust_grid[-1] / (ct0 * rho * diameter_m ** 4))
-    full_power_w = MOTOR_SHAFT_EFFICIENCY * float(points["watts"][-1])
-    cp0 = full_power_w / (rho * full_revs ** 3 * diameter_m ** 5)
-    power_fraction = (thrust_grid / thrust_grid[-1]) ** 1.5  # static: thrust ~ n^2, power ~ n^3
+    voltage_fraction = motor_voltage_fraction(fit, 60.0 * np.sqrt(thrust_grid / (ct0 * rho * diameter_m ** 4)), diameter_m, rho)
     zero_j = info["pitch_in"] / info["diameter_in"]
     apc_j, apc_cp_shape, apc_zero_j = apc_shape()
     j_grid = np.linspace(0.0, PROP_J_TABLE_END * zero_j, PROP_J_TABLE_POINTS)
@@ -198,10 +268,15 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
     engine_dir.mkdir(parents=True, exist_ok=True)
     motor_file, prop_file = f"{model_name}_motor", f"{model_name}_prop"
     (engine_dir / f"{motor_file}.xml").write_text(f"""<?xml version="1.0"?>
-<!-- quadrocketbuilder: {motor.brand} {motor.model} {motor.kv}KV, {cells}S. Full power = {MOTOR_SHAFT_EFFICIENCY} x {points['watts'][-1]:.1f} W measured at 100 %. -->
-<electric_engine name="{motor.brand} {motor.model} {motor.kv}KV">
-  <power unit="WATTS"> {full_power_w:.3f} </power>
-</electric_engine>
+<!-- quadrocketbuilder: {motor.brand} {motor.model} {motor.kv}KV, {cells}S, fitted to the bench rows: effective resistance
+     (motor + ESC + wiring) from duty 1 at full throttle, no-load current from the battery currents (worst misfit
+     {fit.battery_current_error * 100.0:.1f} %); maxvolts = pack voltage under load at full throttle. -->
+<brushless_dc_motor name="{motor.brand} {motor.model} {motor.kv}KV">
+  <velocityconstant> {fit.kv_rpm_v:.1f} </velocityconstant>
+  <coilresistance> {fit.resistance_ohm:.5f} </coilresistance>
+  <noloadcurrent> {fit.no_load_current_a:.4f} </noloadcurrent>
+  <maxvolts> {fit.full_voltage_v:.3f} </maxvolts>
+</brushless_dc_motor>
 """)
     (engine_dir / f"{prop_file}.xml").write_text(f"""<?xml version="1.0"?>
 <!-- quadrocketbuilder: {motor.prop}. Static Ct {ct0:.4f} from the bench rows; Ct(J) linear to zero at J = p/D = {zero_j:.3f};
@@ -252,7 +327,7 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
           <table>
             <independentVar lookup="row">{MOTOR_THROTTLE_PROPERTY.format(index=index)}</independentVar>
             <tableData>
-{table_rows(zip(throttle_grid, power_fraction))}
+{table_rows(zip(throttle_grid, voltage_fraction))}
             </tableData>
           </table>
         </function>
@@ -319,17 +394,16 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
 </fdm_config>
 """)
 
-    # INAV multirotor frame: front = belly (-z), right = +y. Roll weight + for left motors, pitch + for rear, yaw + for ccw.
-    reach_y = max(abs(placement.position[1]) for placement in resolved.motors)
-    reach_z = max(abs(placement.position[2]) for placement in resolved.motors)
+    order = inav_motor_order(resolved)
+    mixers = inav_mixers(resolved, order)
     mmix = [
-        f"mmix {index} 1.000 {-placement.position[1] / reach_y:+.3f} {placement.position[2] / reach_z:+.3f} {1.0 if placement.spin == 'ccw' else -1.0:+.3f}    # {placement.name}, {placement.spin}"
-        for index, placement in enumerate(resolved.motors)
+        f"mmix {output} 1.000 {roll:+.3f} {pitch:+.3f} {yaw:+.3f}    # {resolved.motors[index].name}, {resolved.motors[index].spin}"
+        for output, (index, (roll, pitch, yaw)) in enumerate(zip(order, mixers["hover"]))
     ]
     cli_path = out_dir / "inav_aircraft.cli"
     cli_path.write_text("\n".join([
         f"# quadrocketbuilder export of {airframe.name}: INAV multirotor (hover) profile of the tailsitter.",
-        "# Motor outputs follow the resolved motor order; front = aircraft belly, right = +y.",
+        "# Motor outputs in INAV quad X order where it applies; front = aircraft belly, right = +y.",
         "set platform_type = MULTIROTOR",
         "set tailsitter_orientation_offset = ON",
         "set motor_direction_inverted = OFF",
@@ -341,7 +415,7 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
     ]))
     return JSBSimExport(
         model_name=model_name, model_dir=out_dir, inav_cli_path=cli_path,
-        motor_properties=tuple(MOTOR_THROTTLE_PROPERTY.format(index=index) for index in range(len(resolved.motors))),
+        motor_properties=tuple(MOTOR_THROTTLE_PROPERTY.format(index=index) for index in order), inav_mixers=mixers,
         hover_motor_fraction=hover_fraction, hover_stick_us=hover_stick_us,
         stance_height_m=max(point[0] for point in contacts) - cg[0],
     )
