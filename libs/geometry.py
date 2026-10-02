@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import aerosandbox as asb
 
-from libs.airframe import Airframe, AirframeError, Surface
+from libs.airframe import Airframe, AirframeError, Surface, Volume
 from libs.pointed_shapes import sample_pointed_profile
 
 END_PROFILE_SAMPLES = 14
@@ -33,6 +33,9 @@ STANDARD_GRAVITY_M_S2 = 9.80665
 GRAMS_FORCE_PER_NEWTON = 1000.0 / STANDARD_GRAVITY_M_S2
 
 Vec = tuple[float, float, float]
+# Inertia tensor components (Ixx, Iyy, Izz, Ixy, Ixz, Iyz), products as tensor entries (-sum m a b), in this frame.
+Inertia = tuple[float, float, float, float, float, float]
+NO_INERTIA: Inertia = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
 
 
 @dataclass(frozen=True)
@@ -93,6 +96,7 @@ class MotorPlacement:
     bell_diameter_m: float
     bell_length_m: float
     pod_stations: tuple[tuple[float, float], ...]  # (x_m, radius_m) on the motor's axis line, nose to tail
+    spin: str  # "cw" / "ccw" seen from where the thrust points (from above in hover)
 
 
 @dataclass(frozen=True)
@@ -102,6 +106,8 @@ class MassPoint:
     position: Vec
     mass_kg: tuple[float, float]  # (min, max)
     computed: bool  # True when derived from geometry rather than given
+    estimate_kg: float | None  # mass estimated from geometry and print settings, shown next to a weighed value; None = no estimate
+    inertia_per_kg: Inertia  # about the point's own centroid, from its shape
 
 
 @dataclass(frozen=True)
@@ -122,6 +128,7 @@ class ResolvedAirframe:
     mass_kg: tuple[float, float]
     cg_m: Vec  # with every ranged mass at the middle of its range
     cg_x_range_m: tuple[float, float]  # forward-most and aft-most over all ranged-mass combinations
+    inertia_kg_m2: Inertia  # about cg_m, ranged masses at the middle of their range
     reference: Reference
 
 
@@ -328,59 +335,131 @@ def panel_strips(panel: Panel):
         yield chord, width, (le[0] + chord / 2.0, le[1], le[2])
 
 
-def surface_mass_point(surface_set: SurfaceSet, density_kg_m3: float, infill: float | None) -> MassPoint:
-    area_sum = 0.0
-    moment = [0.0, 0.0, 0.0]
-    for panel in surface_set.panels:
-        for chord, width, mid in panel_strips(panel):
-            area_sum += chord * width
-            moment = [m + chord * width * c for m, c in zip(moment, mid)]
-    centroid = tuple(m / area_sum for m in moment)
+def combine_inertia(parts: list[tuple[float, Vec, Inertia]]) -> tuple[float, Vec, Inertia]:
+    """Total weight, centroid and inertia about the centroid of (weight, position, inertia per unit weight about its
+    own centroid) parts."""
+    total = sum(weight for weight, _, _ in parts)
+    centroid = tuple(sum(weight * position[axis] for weight, position, _ in parts) / total for axis in range(3))
+    inertia = [0.0] * 6
+    for weight, position, local in parts:
+        dx, dy, dz = (position[axis] - centroid[axis] for axis in range(3))
+        shift = (dy * dy + dz * dz, dx * dx + dz * dz, dx * dx + dy * dy, -dx * dy, -dx * dz, -dy * dz)
+        for index in range(6):
+            inertia[index] += weight * (local[index] + shift[index])
+    return total, centroid, tuple(inertia)
+
+
+def per_unit(inertia: Inertia, weight: float) -> Inertia:
+    return tuple(value / weight for value in inertia)
+
+
+def ring_inertia(half_width_m: float, half_height_m: float) -> Inertia:
+    """Thin elliptical ring around the x axis, per kg."""
+    a2, b2 = half_width_m * half_width_m, half_height_m * half_height_m
+    return ((a2 + b2) / 2.0, b2 / 2.0, a2 / 2.0, 0.0, 0.0, 0.0)
+
+
+def box_inertia(size_m: Vec) -> Inertia:
+    sx, sy, sz = (value * value for value in size_m)
+    return ((sy + sz) / 12.0, (sx + sz) / 12.0, (sx + sy) / 12.0, 0.0, 0.0, 0.0)
+
+
+def cylinder_inertia(radius_m: float, length_m: float, axis: str) -> Inertia:
+    """Solid cylinder along axis x, y or z, per kg."""
+    along = radius_m * radius_m / 2.0
+    across = radius_m * radius_m / 4.0 + length_m * length_m / 12.0
+    return (*(along if name == axis else across for name in "xyz"), 0.0, 0.0, 0.0)
+
+
+def rotor_inertia(radius_m: float) -> Inertia:
+    """Two-blade prop spinning about x, as a rod of length 2R averaged over a turn, per kg."""
+    spin = radius_m * radius_m / 3.0
+    return (spin, spin / 2.0, spin / 2.0, 0.0, 0.0, 0.0)
+
+
+def surface_mass_point(surface_set: SurfaceSet, density_kg_m3: float | None) -> MassPoint:
+    """Mass at the volume centroid of the panels; estimate = solid airfoil volume x printed bulk density."""
+    strips = [  # weight ~ local airfoil volume (chord^2 x width); each strip is a thin rod along its chord
+        (chord * chord * width, mid, (0.0, chord * chord / 12.0, chord * chord / 12.0, 0.0, 0.0, 0.0))
+        for panel in surface_set.panels for chord, width, mid in panel_strips(panel)
+    ]
+    weight, centroid, inertia = combine_inertia(strips)
     definition = surface_set.definition
-    if definition.mass_kg is not None:
-        return MassPoint(f"surface {surface_set.name}", "surface", centroid, (definition.mass_kg, definition.mass_kg), False)
-    unit_section_area = float(asb.Airfoil(definition.airfoil).area())
-    cr, ct = definition.chord_root_m, definition.chord_tip_m
-    volume = len(surface_set.panels) * unit_section_area * definition.span_m * (cr * cr + cr * ct + ct * ct) / 3.0
-    mass = volume * infill * density_kg_m3
-    return MassPoint(f"surface {surface_set.name}", "surface", centroid, (mass, mass), True)
+    estimate = None
+    if density_kg_m3 is not None:
+        unit_section_area = float(asb.Airfoil(definition.airfoil).area())
+        cr, ct = definition.chord_root_m, definition.chord_tip_m
+        estimate = len(surface_set.panels) * unit_section_area * definition.span_m * (cr * cr + cr * ct + ct * ct) / 3.0 * density_kg_m3
+    mass = definition.mass_kg if definition.mass_kg is not None else estimate
+    return MassPoint(f"surface {surface_set.name}", "surface", centroid, (mass, mass), definition.mass_kg is None, estimate, per_unit(inertia, weight))
 
 
-def shell_between(body: Body, x0: float, x1: float, wall_m: float, density_kg_m3: float) -> tuple[float, float]:
-    """(mass, centroid x) of the body shell between two stations."""
+def shell_between(body: Body, x0: float, x1: float, wall_m: float, density_kg_m3: float) -> tuple[float, Vec, Inertia]:
+    """(mass, centroid, inertia per kg) of the body shell between two stations, as thin rings along x."""
     xs = [x0] + [station.x_m for station in body.stations if x0 < station.x_m < x1] + [x1]
     sections = [(x, *body_half_extents(body, x)) for x in xs]
-    mass = 0.0
-    moment_x = 0.0
+    rings = []
     for (xa, wa, ha), (xb, wb, hb) in zip(sections, sections[1:]):
         perimeter = (superellipse_perimeter(2.0 * wa, 2.0 * ha, body.shape) + superellipse_perimeter(2.0 * wb, 2.0 * hb, body.shape)) / 2.0
         segment = perimeter * math.hypot(xb - xa, wb - wa) * wall_m * density_kg_m3
-        mass += segment
-        moment_x += segment * (xa + xb) / 2.0
-    return mass, moment_x / mass if mass > 0.0 else (x0 + x1) / 2.0
+        ring = ring_inertia((wa + wb) / 2.0, (ha + hb) / 2.0)
+        length_term = (xb - xa) ** 2 / 12.0
+        rings.append((segment, ((xa + xb) / 2.0, 0.0, 0.0), (ring[0], ring[1] + length_term, ring[2] + length_term, 0.0, 0.0, 0.0)))
+    mass, centroid, inertia = combine_inertia(rings)
+    return mass, centroid, per_unit(inertia, mass)
 
 
 def structure_mass_points(airframe: Airframe, body: Body, density_kg_m3: float) -> list[MassPoint]:
-    """One mass point per fuselage section (weighed, or shell computed from geometry) and one per coupler."""
+    """One mass point per fuselage section (weighed, or the shell estimate) and one per coupler. A weighed section
+    keeps the shell's centroid and inertia shape."""
     sections = airframe.sections
+    wall = airframe.fuselage.section.wall_radial_m
     bounds = [0.0, *sections.cuts_m, body.length_m]
     points = []
     for index, (x0, x1) in enumerate(zip(bounds, bounds[1:])):
-        computed_mass, centroid_x = shell_between(body, x0, x1, airframe.fuselage.section.wall_radial_m, density_kg_m3)
+        estimate, centroid, inertia = shell_between(body, x0, x1, wall, density_kg_m3)
         weighed = sections.mass_kg[index]
-        mass = computed_mass if weighed is None else weighed
-        points.append(MassPoint(f"section {index + 1} ({x0 * 1000:.0f}-{x1 * 1000:.0f} mm)", "structure", (centroid_x, 0.0, 0.0), (mass, mass), weighed is None))
+        mass = estimate if weighed is None else weighed
+        points.append(MassPoint(f"section {index + 1} ({x0 * 1000:.0f}-{x1 * 1000:.0f} mm)", "structure", centroid, (mass, mass), weighed is None, estimate, inertia))
     coupler_mass = airframe.fuselage.joints.coupler_mass_kg
     if coupler_mass is not None:
         for index, cut in enumerate(sections.cuts_m):
-            points.append(MassPoint(f"coupler {index + 1}", "structure", (cut, 0.0, 0.0), (coupler_mass, coupler_mass), False))
+            half_w, half_h = body_half_extents(body, cut)
+            points.append(MassPoint(f"coupler {index + 1}", "structure", (cut, 0.0, 0.0), (coupler_mass, coupler_mass), False, None, ring_inertia(half_w - wall, half_h - wall)))
     return points
+
+
+def volume_inertia(volume: Volume, body: Body, wall_m: float) -> Inertia:
+    if volume.shape == "box":
+        return box_inertia(volume.size_m)
+    if volume.shape == "cylinder":
+        return cylinder_inertia(volume.diameter_m / 2.0, volume.length_m, volume.axis)
+    if volume.shape == "bore":  # fills the internal section: solid elliptic cylinder along x
+        half_w, half_h = body_half_extents(body, volume.x_m)
+        a2, b2 = (half_w - wall_m) ** 2, (half_h - wall_m) ** 2
+        length_term = volume.length_m ** 2 / 12.0
+        return ((a2 + b2) / 4.0, b2 / 4.0 + length_term, a2 / 4.0 + length_term, 0.0, 0.0, 0.0)
+    return NO_INERTIA
+
+
+def motor_spins(prop_spin: str | tuple[str, ...], positions: list[Vec]) -> tuple[str, ...]:
+    """Spin per motor, seen from where the thrust points. props_out / props_in use INAV's tailsitter hover frame:
+    multirotor front = aircraft belly (-z), right = +y; props out = front-right and rear-left cw."""
+    if not isinstance(prop_spin, str):
+        if len(prop_spin) != len(positions):
+            raise AirframeError(f"propulsion.prop_spin lists {len(prop_spin)} spins for {len(positions)} motors")
+        return prop_spin
+    quadrants = [(y > 0.0, z < 0.0) for _x, y, z in positions]  # (right, front)
+    if len(positions) != 4 or any(abs(y) < 1e-9 or abs(z) < 1e-9 for _x, y, z in positions) or len(set(quadrants)) != 4:
+        raise AirframeError(f"propulsion.prop_spin {prop_spin!r} needs 4 motors, one per quadrant off the y and z axes; list 'cw'/'ccw' per motor instead")
+    props_out = prop_spin == "props_out"
+    return tuple("cw" if (right == front) == props_out else "ccw" for right, front in quadrants)
 
 
 def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[MotorPlacement, ...]:
     propulsion = airframe.propulsion
     bell_len = propulsion.bell_length_m
-    motors = []
+    placements = []  # (name, position, prop_side, pod_stations)
     for mount_index, mount in enumerate(propulsion.mounts):
         if mount.on == "surface":
             surface_set = next(item for item in surfaces if item.name == mount.surface)
@@ -404,13 +483,17 @@ def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[
                 curve = sample_pointed_profile(mount.pod.profile, mount.pod.curve_length_m, pod_radius, POD_PROFILE_SAMPLES)
                 stations += [(flat_end - prop_side * (mount.pod.curve_length_m - x), r) for x, r in curve[:-1]]
                 pod_stations = tuple(sorted(stations))
-            motors.append(MotorPlacement(
-                name=f"motor {mount_index + 1} {name}", position=position, thrust_dir=(-1.0, 0.0, 0.0),
-                prop_center=(position[0] + prop_side * (bell_len / 2.0 + PROP_SHAFT_LEN_M), position[1], position[2]),
-                prop_radius_m=propulsion.prop_diameter_m / 2.0, bell_diameter_m=propulsion.bell_diameter_m,
-                bell_length_m=bell_len, pod_stations=pod_stations,
-            ))
-    return tuple(motors)
+            placements.append((f"motor {mount_index + 1} {name}", position, prop_side, pod_stations))
+    spins = motor_spins(propulsion.prop_spin, [position for _name, position, _side, _pod in placements])
+    return tuple(
+        MotorPlacement(
+            name=name, position=position, thrust_dir=(-1.0, 0.0, 0.0),
+            prop_center=(position[0] + prop_side * (bell_len / 2.0 + PROP_SHAFT_LEN_M), position[1], position[2]),
+            prop_radius_m=propulsion.prop_diameter_m / 2.0, bell_diameter_m=propulsion.bell_diameter_m,
+            bell_length_m=bell_len, pod_stations=pod_stations, spin=spin,
+        )
+        for (name, position, prop_side, pod_stations), spin in zip(placements, spins)
+    )
 
 
 def center_of_mass(points: tuple[MassPoint, ...], masses: list[float]) -> Vec:
@@ -474,11 +557,16 @@ def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirf
     motors = build_motors(airframe, surfaces)
 
     points = structure_mass_points(airframe, body, density)
-    points += [surface_mass_point(surface_set, density, airframe.print.surface_infill) for surface_set in surfaces]
-    points += [MassPoint(f"volume {volume.name}", "volume", (volume.x_m, volume.y_m, volume.z_m), volume.mass_kg, False) for volume in airframe.volumes]
+    points += [surface_mass_point(surface_set, airframe.print.surface_bulk_density_kg_m3) for surface_set in surfaces]
+    wall = airframe.fuselage.section.wall_radial_m
+    points += [
+        MassPoint(f"volume {volume.name}", "volume", (volume.x_m, volume.y_m, volume.z_m), volume.mass_kg, False, None, volume_inertia(volume, body, wall))
+        for volume in airframe.volumes
+    ]
     for motor in motors:
-        points.append(MassPoint(motor.name, "motor", motor.position, (airframe.propulsion.motor_mass_kg,) * 2, False))
-        points.append(MassPoint(f"prop {motor.name}", "prop", motor.prop_center, (airframe.propulsion.prop_mass_kg,) * 2, False))
+        bell = cylinder_inertia(motor.bell_diameter_m / 2.0, motor.bell_length_m, "x")
+        points.append(MassPoint(motor.name, "motor", motor.position, (airframe.propulsion.motor_mass_kg,) * 2, False, None, bell))
+        points.append(MassPoint(f"prop {motor.name}", "prop", motor.prop_center, (airframe.propulsion.prop_mass_kg,) * 2, False, None, rotor_inertia(motor.prop_radius_m)))
     points = tuple(points)
 
     ranged = [index for index, point in enumerate(points) if point.mass_kg[0] != point.mass_kg[1]]
@@ -494,6 +582,7 @@ def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirf
         airframe=airframe, body=body, surfaces=surfaces, motors=motors, mass_points=points,
         mass_kg=(sum(point.mass_kg[0] for point in points), sum(point.mass_kg[1] for point in points)),
         cg_m=center_of_mass(points, nominal), cg_x_range_m=(min(cg_xs), max(cg_xs)),
+        inertia_kg_m2=combine_inertia([(mass, point.position, point.inertia_per_kg) for mass, point in zip(nominal, points)])[2],
         reference=build_reference(surfaces, body),
     )
     return resolved, volume_checks(airframe, body)

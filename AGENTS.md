@@ -2,37 +2,39 @@
 
 ## Scope
 
-This directory is the modular tube-aircraft configuration frontend.
+This directory is the plane-first tube-aircraft design tool.
 
 Primary files:
 - `guibuilder.py`: Tk window and widget wiring
-- `libs/analysis.py`: headless configuration expansion and analysis
+- `libs/airframe.py`: airframe/2 schema loader and validator (the saved aircraft definition)
+- `libs/geometry.py`: `resolve_airframe`: shared geometry, mass points, CG, checks; every consumer reads it
+- `libs/aero.py`: aero (lifting-line wings + AeroBuildup bodies), Barrowman cross-check, VLM sweep
+- `libs/report.py`: plain-text report shared by the GUI and `analyze_airframe.py`
 - `libs/cad.py`: CAD export: FreeCAD-style varsets plus CadQuery solid geometry (STEP/STL, built in mm)
 - `libs/graphics.py`: orthographic drawing on Tk canvas
-- `libs/library_editors.py`: main-window editor panels for `data/modules.json` and `data/parts.json`
-- `libs/views/configuration_view.py`: configuration main-view layout and assembly-card rendering
+- `libs/library_editors.py`: main-window editor panel for `data/parts.json`
+- `libs/airfoil_analysis.py`: NeuralFoil 2D airfoil comparison and DAT import
+- `libs/views/configuration_view.py`: configuration main-view layout and definition editors
 - `libs/views/aero_analysis_view.py`: Aero Analysis main-view layout and NeuralFoil airfoil comparison
 - `libs/views/vlm_view.py`: VLM main-view layout and selectors
 - `libs/views/cad_view.py`: CAD main-view with STEP/STL export controls
-- `libs/views/module_editor_view.py`: module-editor main-view mount
 - `libs/views/part_editor_view.py`: part-editor main-view mount
 - `libs/pointed_shapes.py`: pointed-profile geometry helpers
 - `libs/simlib2.py`: propulsion test-data helpers
 - `libs/motordata.csv`: measured motor test data
 - `libs/batterydata.csv`: battery cell data
-- `analyze_headless.py`: non-GUI validation entrypoint
-- `cad_example.py`: simple non-GUI example of CAD export usage
-- `library_editors_example.py`: simple launch example for the library editors
-- `data/default.json`: built-in aircraft config
-- `data/templates.json`: field types and creation templates
+- `analyze_airframe.py`: non-GUI analysis and STEP/STL export entrypoint
+- `aero_check.py`: aero cross-check
+- `airfoil_analysis_example.py`: simple non-GUI example of the airfoil comparison
+- `aircraft/*.json`: airframe/2 aircraft definitions
 - `data/parts.json`: part library data
-- `data/modules.json`: module and surface library data
+- `data/airfoils.json`: imported airfoil coordinates
 - `data/specs.json`: optional standards catalog
 
 ## Rules
 
 - Do not silently invent missing aircraft data at runtime.
-- If a field is required, put it in `data/default.json`, `data/templates.json`, or the saved config and then use it directly.
+- If a field is required, put it in the airframe/2 schema (`libs/airframe.py`, `PLAN.md` section 1) or `data/parts.json` and then use it directly.
 - If required data is missing, let it fail visibly.
 - Keep UI behavior documented in `docs/ui/ui_layout.md`, do not detail implementation there, only visible UI.
 - Keep README about design philosophy and analysis staging, not widget details.
@@ -42,22 +44,15 @@ Primary files:
 
 ## Save / Load Contract
 
-- Save:
-  - `assembly_name`
-  - `config`
-  - `analysis`
-- Saved `analysis` must not include the expanded `assembly` field.
-- Load ignores saved `analysis` and recomputes from `config`.
+- Save writes the airframe/2 definition only; nothing computed is saved.
+- Load accepts airframe/2 files only and recomputes everything.
 
 ## Current Caveats
 
-- `material_density_g_cm3` is stored and editable, but not yet used by analysis or drawing.
-- `standard_profile` and `apply_standard` exist, but standards are only used to lock dimensions such as fuselage OD/ID. No DRC is applied yet.
-- Assembly cards can load a module block directly from `data/modules.json`; this is instance replacement, not a live link.
 - The aero path (`libs/aero.py` `analyze_aero`) is lifting-line wings (AeroSandbox `LiftingLine` algorithm, batched over AoA in `lifting_line_sweep`) plus AeroBuildup bodies, with a Barrowman cross-check. Keep `lifting_line_sweep` equal to `asb.LiftingLine`.
 - AeroSandbox 3D exists in the main center-pane `ASB` tab.
-- VLM sweep now exists in the main-window `VLM` view.
-- `Aero Analysis` now provides NeuralFoil-backed 2D airfoil comparison plots and summary output.
+- VLM sweep exists in the main-window `VLM` view.
+- `Aero Analysis` provides NeuralFoil-backed 2D airfoil comparison plots and summary output.
 - The right side of the `VLM` view uses the selected solved-point controls and a `Show` button that opens the normal external AeroSandbox/PyVista window.
 - The displayed VLM view should come from the actual AeroSandbox draw path, not a custom renderer.
 - That transient VLM cache is display-only and must not be saved to disk.
@@ -66,10 +61,9 @@ Primary files:
 
 ## Remember
 
-- If saved analysis grows, keep computed results but avoid duplicating expanded config-derived geometry.
-- When adding editable config fields:
-  - add them to `data/default.json`
-  - add type info to `data/templates.json`
+- When adding editable definition fields:
+  - add them to the schema in `libs/airframe.py` and to `aircraft/*.json`
+  - document them in `PLAN.md` section 1
   - expose them in UI if intended
   - update `docs/ui/ui_layout.md`
-- Keep `analyze_headless.py` working as the simplest validation path for config and analysis changes.
+- Keep `analyze_airframe.py` working as the simplest validation path for definition and analysis changes.

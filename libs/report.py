@@ -26,9 +26,19 @@ def build_report_text(resolved: ResolvedAirframe, aero: AeroResult, problems: li
     lines.append(f"  CG               : x {resolved.cg_m[0]:.4f} m  y {resolved.cg_m[1]:.4f}  z {resolved.cg_m[2]:.4f}")
     if resolved.cg_x_range_m[0] != resolved.cg_x_range_m[1]:
         lines.append(f"  CG x range       : {resolved.cg_x_range_m[0]:.4f} - {resolved.cg_x_range_m[1]:.4f} m (mass ranges)")
+    inertia = resolved.inertia_kg_m2
+    lines.append(f"  Inertia at CG    : Ixx {inertia[0]:.5f}  Iyy {inertia[1]:.5f}  Izz {inertia[2]:.5f} kg m^2 (x aft, y right, z up)")
+    lines.append(f"                     Ixy {inertia[3]:.6f}  Ixz {inertia[4]:.6f}  Iyz {inertia[5]:.6f} (tensor entries, -sum m a b)")
     for point in resolved.mass_points:
         mass_text = f"{point.mass_kg[0] * 1000:7.1f}" if point.mass_kg[0] == point.mass_kg[1] else f"{point.mass_kg[0] * 1000:.1f}-{point.mass_kg[1] * 1000:.1f}"
-        lines.append(f"    {point.name:<34} {mass_text:>12} g  x {point.position[0]:.4f}{'  (computed)' if point.computed else ''}")
+        note = "  (estimated)" if point.computed else f"  (estimate {point.estimate_kg * 1000:.1f} g)" if point.estimate_kg is not None else ""
+        lines.append(f"    {point.name:<34} {mass_text:>12} g  x {point.position[0]:.4f}{note}")
+    estimated = [point for point in resolved.mass_points if point.estimate_kg is not None]
+    if any(not point.computed for point in estimated):
+        given_g = sum(point.mass_kg[0] for point in estimated) * 1000.0
+        estimate_g = sum(point.estimate_kg for point in estimated) * 1000.0
+        lines.append(f"  Printed parts    : {given_g:.1f} g as given, {estimate_g:.1f} g estimated (sections: shell wall x material density;")
+        lines.append("                     surfaces: solid airfoil volume x print.surface_bulk_density_kg_m3)")
     lines.append("")
     lines.append("Geometry")
     lines.append(f"  Fuselage         : {airframe.fuselage.length_m:.3f} m, section {airframe.fuselage.section.width_m * 1000:.1f} x {airframe.fuselage.section.height_m * 1000:.1f} mm")
@@ -36,6 +46,8 @@ def build_report_text(resolved: ResolvedAirframe, aero: AeroResult, problems: li
     for surface_set in resolved.surfaces:
         lines.append(f"  {surface_set.name:<16} : {surface_set.definition.layout} x{len(surface_set.panels)}, area {surface_set.planform_area_m2:.4f} m^2, MAC {surface_set.mac_m:.4f} m")
     lines.append(f"  Motors           : {len(resolved.motors)} x {airframe.propulsion.motor.brand} {airframe.propulsion.motor.model} {airframe.propulsion.motor.kv}KV, {airframe.propulsion.motor.prop}")
+    spin_text = airframe.propulsion.prop_spin if isinstance(airframe.propulsion.prop_spin, str) else "listed"
+    lines.append(f"  Prop spin        : {spin_text}, seen from where the thrust points: " + ", ".join(f"{motor.name} {motor.spin}" for motor in resolved.motors))
     if problems:
         lines.append("")
         lines.append("Layout problems")

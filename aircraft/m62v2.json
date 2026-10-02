@@ -10,6 +10,7 @@
     },
     "print": {
         "material": "elegoo_pla_plus",
+        "surface_bulk_density_kg_m3": 318.3,
         "printer_bed_m": [
             0.24,
             0.24,
@@ -103,6 +104,7 @@
             "prop": "GF7042"
         },
         "battery_volume": "battery",
+        "prop_spin": "props_out",
         "mounts": [
             {
                 "on": "surface",

@@ -13,9 +13,9 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, ttk
 
-import matplotlib.pyplot as plt
 import numpy as np
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
 
 from libs.airfoil_analysis import (
     DEFAULT_AIRFOIL_OPERATING_POINT,
@@ -227,7 +227,8 @@ class AeroAnalysisMainView:
         frame.grid(row=0, column=0, sticky="nsew")
         frame.columnconfigure(0, weight=1)
         frame.rowconfigure(0, weight=1)
-        self.plot_figure, axes = plt.subplots(2, 2, figsize=(10.5, 8.0), dpi=100)
+        self.plot_figure = Figure(figsize=(10.5, 8.0), dpi=100)
+        axes = self.plot_figure.subplots(2, 2)
         self.plot_axes = {
             "drag_polar": axes[0][0],
             "lift_curve": axes[0][1],

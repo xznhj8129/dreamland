@@ -24,36 +24,21 @@
 - Review 2026-10-01 (4 parallel reviews; V = verified by running). Order and plane-first redesign: PLAN.md.
 
 - A. Data model (one source of truth):
-        - Saved configs embed full module blocks under library names that drifted from the library (V: batt-1 mass 0.065 vs 0.089, endcap 0.015/len 0.02 vs 0.027/0.07, qrwing-7in 0.025 vs 0.059, quad-wingmount-v3 len 0.11 vs 0.15). guibuilder.py normalize_config_from_templates expands references; headless cannot run reference configs (KeyError 'x'). One normalizer for GUI + headless; references + explicit overrides.
-        - guibuilder.py apply_template_values fills missing keys from templates and drops unknown keys (V: qrwing-7in-fwd gets motor_y_pos 0.1 / pod_* 0.028 invented; avionics, diam, model, motor_n dropped). Fail on missing/unknown keys.
-        - Operating point (AoA, airspeed, altitude) not saved in config (V: m62v2 saved at 5 deg/20 m/s "stable" reloads at 0/10 "unstable").
-        - semispan measured from centerline on end modules, from tube surface on wingmounts (V: tailfin root (0,0), main wing root 0.031). Inflates Barrowman tailfin CNa (6.32 vs ~1.8) and reference area. One definition: exposed span from local body radius.
-        - Units/semantics: motor_x_pos is metres on wings, fraction on end caps (ignored there, analysis.py end-motor at mid-module); cg is fraction of length on modules, of MAC on surfaces; OD and battery dims in mm, rest in m; aoa_ang is incidence; wings_ang is dihedral/X angle.
-        - modules.json motor_dir: 4 wings use ints (+/-1), rest "front"/"back"; -1 becomes pusher (V). motor_cap has no motor_dir (KeyError). Enum + validation.
-        - Fields never read: config vtol, powered, material_density_g_cm3, thrust_axis_tilt_deg; module esc, avionics, model, diam, motor_n; part pitch/yaw/roll; surface ctl_surface, all_moving; parts.json esc section; module-level payload_mass/ballast_mass (UI shows them, edits do nothing, V); wing_phase/phase_deg/dihedral_sign; legacy wings_n path.
-        - Unknown wing layout silently becomes "H"/2 wings (layout_wing_count, derive_wings_layout).
-        - Coupler hardcoded "joint-ring-c" (M62) at every joint regardless of standard_profile.
-        - Computed surface mass is airfoil volume x infill only; printed perimeter walls not modelled (m62v2 main wing: 34 g computed vs 50 g given).
+        - Surface estimate = solid airfoil volume x print.surface_bulk_density_kg_m3 (318.3: weighed 77 g NACA2408 105 x 400 mm segment, single wall 5 % infill; build_calculator test_area.py's 637 is against half the airfoil area). Estimate vs given: m62v2 main-wing 55.4 / 50 g, qrwing-7in 58.6 / 100 g, tailfin 13.5 / 4 g; quadlancer62 9in-puller 77.8 / 100 g; quadlancer62 new-wing 100 g was a placeholder, now estimated (302.8 g; total 1632 g).
+        - Section shell estimate vs weighed: plain tube sections 1.03-1.21x; nose 2.9x; motor-wing section 2.6x (m62v2) and 3.5x (quadlancer62); m62v2 tail with fins 2.4x.
+        - Open: m62v2 motor-wing section = section 4 (122 g, old quad-wingmount-v3 module) + qrwing-7in (4 x 25 g, old wing entries), counted as 222 g. Estimate for the one-piece print: tube 47.5 g + wings 58.6 g. Owner to confirm whether the printed piece weighs ~122 g or ~222 g.
         - spar_rods has no rod length/start (assumes full fuselage length); real m62v2/quadlancer62 use 4 x 2.5 mm x 400 mm carbon rods; no carbon material entry.
-        - Save writes vlm_results (not in AGENTS.md contract) and a saved analysis with old schema that is never read.
-        - Two names: assembly_name ("default") vs config.name.
 
-- B. Shared geometry model (replaces 3 traversals: graphics.py, build_asb_airplane, cad.py):
-        - Nose/tail role of end modules: CAD/ASB use first/second end, drawing uses x_start == 0 (V: no-nose config pinches fuselage mid-length in CAD/ASB; body_x_start > body_x_end). Assign role once; raise on invalid stacks.
+- B. Geometry (found on the module model; verify on the plane-first model):
         - Incidence on unpaired vertical fins opposite in CAD vs ASB (V: bottom fin chord y -0.086 CAD, +0.087 ASB); drawing applies c*sin(aoa)*cos(roll) to all panels. Emit explicit chord/normal unit vectors per panel.
-        - Fused CAD pushes centerline-rooted fins 0.75R past the axis (cad.py root_extend).
         - End-cap motor at mid-module: bell pokes through cone, prop disc cuts cone (V: motor_cap).
         - pointed_shapes: tangent ogive L<R leaves open tip; blunted nose_radius >= R math error; bi_conic break_fraction 0 div-by-zero; pod shape params never passed (parabolic pod KeyError 'k_prime').
-        - PROP_SHAFT_LEN_M defined twice; surface_force_rows matches airplane.wings by position.
 
 - C. Physics (mass, propulsion):
         - Hover point below lowest measured throttle: simlib2.py inserts fake (0,0,0) and interpolates linearly (V: m62v2 needs 285 g/motor, lowest data 793 g at 40%; reports 14.4%, 4643 rpm, 89 W, 8.2 min; T~rpm^2 from 40% point gives 7743 rpm, 53 W, 13.7 min). is_extrapolated never set. Flag or extrapolate with stated law.
         - motordata.csv non-monotonic: Uangel A2807 GF7042X2 6S thrust 1948 g at 90%, 1836 g at 100%; max thrust taken from 100% row; thrust->throttle inversion ambiguous.
         - 4 LiPo batteries mass 0.0 in parts.json (GNB 5300/4000, Tattu 6000/4500), accepted silently (V: m62v2 with GNB-5300 total 0.839 kg, hover 26.9 min).
         - Multiple battery bays: mass per bay, Wh for one pack only (V).
-        - Wing set mass in total but not in module_rows (V: 0.154 kg of 1.1408 missing).
-        - No prop mass in data model.
-        - CG x only; no y/z, no inertia tensor (needed for JSBSim).
         - pack_voltage_v is loaded voltage at lowest data point; LiPo Wh inline 3.7 V/cell; hover/full-throttle time use 100% Wh, no avionics load.
         - No check of total motor current vs battery current (m62v2: 160 A vs 154 A); propulsion warnings always empty.
         - parse_motor_name mangles '-' and spaces: "DarwinFPV 1504-3-3800", "iFlight XING 2RAW 2812-1150" never resolve (V). Case handling inconsistent between find_motor_group and TestedMotorData.
@@ -62,7 +47,7 @@
 
 - D. Aero (live: lifting-line wings + AeroBuildup bodies, libs/aero.py analyze_aero, ~1.5 s):
         - Lifting line = asb.LiftingLine's algorithm solved for all AoA at once (lifting_line_sweep). Matches asb.LiftingLine to 1e-14 N and the old on-demand detailed model (~50 s) to 1e-9 on m62v2 and quadlancer62. Replaced AeroBuildup wings (no downwash, no carry-over, camber over-credited): m62v2 at 5 deg / 20 m/s was +27.6 mm, now -5.0 mm.
-        - Margins at 20 m/s: m62v2 -5.0 mm at 5 deg; quadlancer62 +4.5 / +6.0 / +6.2 / +3.8 / -8.1 mm at 2 / 4 / 5 / 6 / 8 deg, -7.7 mm at its saved 0 deg / 15 m/s. Owner: no control surfaces, FC always flying, jet-fighter-like stability.
+        - Margins at 20 m/s: m62v2 -4.9 mm at 5 deg; quadlancer62 +6.2 / +7.7 / +7.9 / +5.5 / -6.5 mm at 2 / 4 / 5 / 6 / 8 deg, -6.0 mm at its saved 0 deg / 15 m/s. Owner: no control surfaces, FC always flying, jet-fighter-like stability.
         - Sweep -30..30 deg. Above ~35 deg the wind runs backwards along swept vertical fins in the strip model (negative Re, NaN polars, whole solve NaN). Operating point outside the sweep: summary says why, no aero.
         - m62v2 tail fins carry ~0 lift at 5 deg (0.007 N; AeroBuildup said 0.33 N): downwash from the main wing and X-wing. Wind-aligned wake moves NP only 1.5 mm.
         - NeuralFoil section polars (n_crit 9, Re ~100k) make Cm(AoA) wavy, so NP depends on the fit window (m62v2 at 5 deg: -5.0 mm over +-4 deg, -9 mm over +-2 deg). The sweep table's local NP column is meaningless near stall (dCL/dAoA -> 0).
@@ -73,13 +58,21 @@
 - E. GUI:
         - Part Editor (libs/library_editors.py): rename to an existing name overwrites on disk; category change keeps old fields; unsaved edits discarded on selection or view change; own copies of length-field list, palette, ordered_keys, format_field_value, field_label, parsing; NEW_PART_LIBRARY_DEFAULTS hardcoded.
 
-- F. JSBSim data not in model: inertia tensor and per-component y/z; empty vs payload/battery split; control surfaces (hinge, chord fraction, limits, mixing); per-motor thrust axis, spin direction, prop Ct/Cp vs J, rotor inertia, voltage sag; CL/CD/Cm vs alpha to +/-90 deg with body; CYb, Clb, Cnb, Cmq, Clp, Cnr, control derivatives; explicit reference area/span/chord; ground contact points.
+- F. JSBSim export, for INAV SITL via inav_development/inav-jsbsim-bench (MSP_SIMULATOR HITL; INAV does the mixing, the bench writes per-motor commands into JSBSim properties):
+        - Have: inertia tensor about the CG (component shapes), per-motor prop spin (propulsion.prop_spin), motor positions and thrust axis, reference area/span/chord.
+        - Model files after the bundled F450 (jsbsim/aircraft/F450: Metrics, Mass, Gear, Propulsion, Effectors, Aero); motor inputs as plain properties driving fcs/throttle-pos-norm[i], no internal FCS. Motor order = INAV mmix (quad X: 1 rear-right, 2 front-right, 3 rear-left, 4 front-left, in the MC hover frame).
+        - Bench Plant loads bundled JSBSim models only: needs set_aircraft_path / set_engine_path / set_systems_path. No tailsitter vehicle or profile yet (INAV: AIRPLANE mixer profile + MC profile with tailsitter_orientation_offset = ON).
+        - Body x = nose = thrust axis, so hover is theta 90 deg: bench rangefinder() returns -1 and truth() Euler angles hit gimbal lock there.
+        - Ground contact: it stands on its tail; 3 contact points at the tail (F450 notes 4-point ground trim trouble); bench ground start uses do_simple_trim = 2.
+        - Aero tables: lifting line only to +-30 deg; hover and transition need +-90..180 deg (AeroBuildup post-stall), beta, Cmq, Clp, Cnr.
+        - Prop: no forward-flight data. Static Ct from motordata.csv (T / (rho n^2 D^4)); Ct(J) only from simlib2's Tyto formula (linear, zero at J ~ p/D); no Cp(J) (electrical power only). Motor block needs Kv, coil resistance, no-load current: no Flashobby A2807 entry in dronebuildcalc motorlib (DYS X2807-1300 60 mOhm / 1.0 A, EMAX ECOII-2807 1300KV 58 mOhm / 1.3 A). Rotor inertia: rod estimate (geometry.rotor_inertia) from parts.json prop mass.
+        - No control surfaces in the model; control surface design tools to add.
+        - No battery sag in the bench (JSBSim maxvolts only).
 
 - Housekeeping:
         - No requirements file. Deps (aerosandbox, neuralfoil, cadquery) only present in conda env "drone".
         - AGENTS.md lists cad_example.py and library_editors_example.py, which do not exist, and the legacy files below as primary.
-        - Legacy module-stack path still present: analyze_headless.py, libs/analysis.py (1308 lines), root m62v2.json / quadlancer62.json, data/default.json, data/modules.json. analyze_headless.py --export-step crashes (passes the legacy analysis dict to libs/cad.export_step, which takes a resolved airframe). No headless STEP/STL export on the plane-first model; GUI CAD view only.
-        - docs/ui predates the plane-first GUI (Builder V3 window, Controls tab, Module Editor).
+        - docs/ui predates the plane-first GUI (Builder V3 window, Controls tab, assembly cards).
 
 - Bring over from cadbuildsystem (predecessor):
         - cadparams/ FreeCAD spreadsheets (AirframeParams, WingVars, ParamAirfoil, CanardsAirfoil). Fix Fuselage_Thickness expr: OD - ID gives 2x wall; libs/cad.py uses (OD - ID) / 2.

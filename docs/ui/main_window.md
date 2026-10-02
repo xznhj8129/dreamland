@@ -30,7 +30,6 @@ GUIBuilderWindow [fill]
         AeroAnalysisView
         VLMView
         CADView
-        ModuleEditorView
         PartEditorView
 
     * BottomBar [docked:bottom, arrange:row]
@@ -97,7 +96,6 @@ Configuration  -> configuration_view.md
 Aero Analysis  -> aero_analysis_view.md
 VLM            -> vlm_view.md
 CAD            -> cad_view.md
-Module Editor  -> module_editor_view.md
 Part Editor    -> part_editor_view.md
 ```
 
@@ -110,7 +108,6 @@ BottomBar [docked:bottom, arrange:row]
     - Aero Analysis
     - VLM
     - CAD
-    - Module Editor
     - Part Editor
 ```
 
@@ -128,10 +125,6 @@ VLM
 
 CAD
     - raises the CAD view
-
-Module Editor
-    - refreshes data/modules.json from disk
-    - raises the module-library editor view
 
 Part Editor
     - refreshes data/parts.json from disk

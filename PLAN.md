@@ -15,6 +15,8 @@ Status: draft spec, awaiting approval. Supersedes the Lego module-stack model as
 - Current joint: 8 radial screws into a coupler, plus longitudinal spar rods for stiffness (M62 standard in `data/specs.json`).
 - The builder's definition is the master. CAD (CadQuery, optionally FreeCAD) is a downstream consumer, not a second aircraft model.
 - Generating printable section bodies (shells, bulkheads, mounts, channel cuts) is later CAD work.
+- A motor-wing section (tube, X-wing arms, motor mounts) is printed in one piece (monocoque). Joining long wings: later.
+- Printed surface mass: solid airfoil volume x effective bulk density (owner's calibration from a weighed printed segment).
 - Main design driver after the overall shape: user-defined internal volumes (like battery and payload) with a size (e.g. 20x20x20 mm, or internal diameter x 50 mm), a mass (fixed, e.g. 20 g, or a range, e.g. 10-30 g), dragged to where they are needed. They drive and constrain everything else.
 - CadQuery generates the bigger sections and volumes; final fine adjustments may be done in FreeCAD. Not every facet and cut is defined in spec files.
 - Old part sums are approximately accurate (m62v2 ~1.1 kg real).
@@ -29,7 +31,8 @@ name, notes
 preset              optional label (M62, M75); values are always written out in full
 operating_point     aoa_deg, airspeed_m_s, altitude_m
 print               material (parts.json material), printer_bed_m [x, y, z],
-                    surface_infill (required only if a surface has no mass_kg)
+                    surface_bulk_density_kg_m3 (printed surface mass per solid airfoil volume; required only if a surface
+                    has no mass_kg; 318.3 = single-wall 5 % infill PLA, from a weighed 77 g NACA2408 105 x 400 mm segment)
 fuselage
   length_m
   section           width_m, height_m, shape (superellipse exponent; 2 = circle), wall_radial_m
@@ -47,6 +50,9 @@ propulsion
   motor             brand, model, kv, prop (must have bench data in libs/motordata.csv for the battery's cell count;
                     motor mass from the same data, one consistent weight required)
   battery_volume    name of the volume whose part is battery:<name>
+  prop_spin         props_out | props_in (4 motors in an X: INAV tailsitter hover frame, multirotor front = aircraft
+                    belly, props out = front-right and rear-left cw), or a list of cw / ccw per motor; spin is seen
+                    from where the thrust points
   mounts[]          on (nose | tail | surface); for surface: surface, span_position_m (from panel root),
                     x_offset_m (from root LE); direction (tractor | pusher);
                     pod optional: diameter_m, flat_length_m, curve_length_m, profile (parameter-free)
@@ -71,7 +77,7 @@ Converted examples: `aircraft/m62v2.json` and `aircraft/quadlancer62.json` repro
 - Motors: `libs/motordata.csv` (bench data), later `dronebuildcalc` motorlib for untested motors.
 - `specs.json`: tube standards, couplers, fasteners, openings, printer bed (exists).
 - Airfoils: one source (AeroSandbox names), `data/airfoils.json` only for imported coordinates.
-- `modules.json`: kept only as reference geometry for converting the two example aircraft, then retired.
+- `modules.json`: retired 2026-10-01 after converting the two example aircraft.
 
 ## 3. Derived model (one pass, everything else reads it)
 

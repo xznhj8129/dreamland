@@ -38,5 +38,4 @@ Component [attr, attr]          Layout/behavior properties
 - [aero_analysis_view.md](docs/ui/aero_analysis_view.md)
 - [vlm_view.md](docs/ui/vlm_view.md)
 - [cad_view.md](docs/ui/cad_view.md)
-- [module_editor_view.md](docs/ui/module_editor_view.md)
 - [part_editor_view.md](docs/ui/part_editor_view.md)

@@ -37,6 +37,10 @@ VOLUME_SHAPES = ("box", "cylinder", "bore", "point")
 AXES = ("x", "y", "z")
 MOUNT_TARGETS = ("nose", "tail", "surface")
 THRUST_DIRECTIONS = ("tractor", "pusher")
+# Prop spin, seen from where the thrust points (from above in hover). The patterns name the multirotor convention for
+# 4 motors in an X, in INAV's tailsitter hover frame; other layouts list one spin per motor.
+PROP_SPIN_PATTERNS = ("props_out", "props_in")
+PROP_SPINS = ("cw", "ccw")
 JOINT_TYPES = ("radial_screws",)
 
 
@@ -54,7 +58,7 @@ class OperatingPoint:
 @dataclass(frozen=True)
 class PrintSettings:
     material: str
-    surface_infill: float | None  # needed only for surfaces without mass_kg
+    surface_bulk_density_kg_m3: float | None  # printed surface mass per solid airfoil volume; needed for surfaces without mass_kg
     printer_bed_m: tuple[float, float, float]
 
 
@@ -165,6 +169,7 @@ class Propulsion:
     bell_length_m: float  # stator height from bench data
     prop_diameter_m: float
     prop_mass_kg: float  # per prop, from parts.json prop sizes
+    prop_spin: str | tuple[str, ...]  # a PROP_SPIN_PATTERNS name, or one of PROP_SPINS per motor in resolved motor order
 
 
 @dataclass(frozen=True)
@@ -504,13 +509,20 @@ def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], volumes: t
         mounts.append(Mount(on=on, surface=surface_name, span_position_m=span_position_m, x_offset_m=x_offset_m, direction=direction, pod=pod))
     if not mounts:
         raise AirframeError(f"{fields.at('mounts')}: at least one mount is required")
+    prop_spin = fields.required("prop_spin")
+    if isinstance(prop_spin, list):
+        if not prop_spin or any(spin not in PROP_SPINS for spin in prop_spin):
+            raise AirframeError(f"{fields.at('prop_spin')}: a list must hold one of {PROP_SPINS} per motor, got {prop_spin!r}")
+        prop_spin = tuple(prop_spin)
+    elif prop_spin not in PROP_SPIN_PATTERNS:
+        raise AirframeError(f"{fields.at('prop_spin')}: {prop_spin!r} is not one of {PROP_SPIN_PATTERNS} or a list of {PROP_SPINS} per motor")
     fields.done()
     motor_mass_kg, bell_diameter_m, bell_length_m = bench_motor_specs(motor)
     prop_diameter_in = tested.prop_info(motor.prop)["diameter_in"]
     return Propulsion(
         motor=motor, battery_volume=battery_volume, mounts=tuple(mounts), motor_mass_kg=motor_mass_kg,
         bell_diameter_m=bell_diameter_m, bell_length_m=bell_length_m, prop_diameter_m=prop_diameter_in * INCH_M,
-        prop_mass_kg=prop_mass_kg(prop_diameter_in, parts_data),
+        prop_mass_kg=prop_mass_kg(prop_diameter_in, parts_data), prop_spin=prop_spin,
     )
 
 
@@ -538,15 +550,15 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     bed = print_fields.required("printer_bed_m")
     if type(bed) is not list or len(bed) != 3:
         raise AirframeError(f"{print_fields.at('printer_bed_m')}: expected [x, y, z], got {bed!r}")
-    infill = print_fields.optional("surface_infill", None)
+    bulk_density = print_fields.optional("surface_bulk_density_kg_m3", None)
     print_settings = PrintSettings(
         material=material,
-        surface_infill=None if infill is None else print_fields.number("surface_infill", minimum=0.0, exclusive=True, value=infill),
+        surface_bulk_density_kg_m3=None if bulk_density is None else print_fields.number("surface_bulk_density_kg_m3", minimum=0.0, exclusive=True, value=bulk_density),
         printer_bed_m=tuple(print_fields.number("printer_bed_m", minimum=0.0, exclusive=True, value=item) for item in bed),
     )
     print_fields.done()
-    if print_settings.surface_infill is not None and print_settings.surface_infill > 1.0:
-        raise AirframeError(f"{print_fields.at('surface_infill')}: {print_settings.surface_infill} must be <= 1")
+    if print_settings.surface_bulk_density_kg_m3 is not None and print_settings.surface_bulk_density_kg_m3 > parts_data["material"][material]["density_kg_m3"]:
+        raise AirframeError(f"{print_fields.at('surface_bulk_density_kg_m3')}: {print_settings.surface_bulk_density_kg_m3} is denser than solid {material}")
 
     fuselage = _fuselage(fields.required("fuselage"), fields.at("fuselage"))
     if fuselage.spar_rods is not None and fuselage.spar_rods.material not in parts_data["material"]:
@@ -557,8 +569,8 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
         for index, surface_data in enumerate(fields.required("surfaces"))
     )
     unweighed = [surface.name for surface in surfaces if surface.mass_kg is None]
-    if unweighed and print_settings.surface_infill is None:
-        raise AirframeError(f"{print_fields.at('surface_infill')}: required to compute the mass of surfaces {unweighed}")
+    if unweighed and print_settings.surface_bulk_density_kg_m3 is None:
+        raise AirframeError(f"{print_fields.at('surface_bulk_density_kg_m3')}: required to compute the mass of surfaces {unweighed}")
     volumes = tuple(
         _volume(volume_data, f"{fields.at('volumes')}[{index}]", parts_data)
         for index, volume_data in enumerate(fields.required("volumes"))

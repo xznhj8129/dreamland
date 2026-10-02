@@ -509,7 +509,7 @@ def main():
         print(f"  {motor.from_rpm(PROP, rpm).summary()}")
 
     # -- Airspeed sweep at 100% throttle -----------------------------------
-    print(f"\n--- Airspeed sweep @ 100% throttle ---")
+    print("\n--- Airspeed sweep @ 100% throttle ---")
     print(f"  {'m/s':>5}  {'km/h':>6}  {'thrust':>7}  {'amps':>6}  {'watts':>6}  "
           f"{'Vpitch':>7}")
     for op in motor.sweep_airspeed(PROP, 100):
@@ -520,7 +520,7 @@ def main():
         )
 
     # -- Endurance estimate ------------------------------------------------
-    print(f"\n--- Endurance estimate ---")
+    print("\n--- Endurance estimate ---")
     AUW = 2000
     hover_g = AUW / 4
     print(f"  4-motor quad, AUW = {AUW}g, hover thrust = {hover_g:.0f}g/motor")
@@ -545,7 +545,7 @@ def main():
     print(f"  Cruise endurance: ~{endurance_c:.1f} min ({total_wc:.0f}W total)")
 
     # -- Compare all tested props at 100% throttle -------------------------
-    print(f"\n--- All tested props @ 100% throttle (static, REAL DATA) ---")
+    print("\n--- All tested props @ 100% throttle (static, REAL DATA) ---")
     print(f"  {'prop':<12}  {'d×p':>7}  {'RPM':>7}  {'thrust':>7}  "
           f"{'amps':>6}  {'watts':>6}  {'g/W':>5}  {'Vpitch':>7}  {'Mach':>5}")
     for pn in props:
@@ -568,7 +568,7 @@ def main():
               f"{op.efficiency_gw:.2f}  M{op.tip_mach:.2f}")
 
     # -- Untested prop error -----------------------------------------------
-    print(f"\n--- Untested prop error ---")
+    print("\n--- Untested prop error ---")
     try:
         motor.from_throttle("FANTASY_PROP_9999", 100)
     except ValueError as e:

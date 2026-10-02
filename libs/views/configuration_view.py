@@ -16,9 +16,13 @@ from tkinter import ttk
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 
-from libs.airframe import AXES, FIN_POSITIONS, JOINT_TYPES, LAYOUTS, MOUNT_TARGETS, SURFACE_ROOTS, THRUST_DIRECTIONS, VOLUME_SHAPES
+from libs.airframe import AXES, FIN_POSITIONS, JOINT_TYPES, LAYOUTS, MOUNT_TARGETS, PROP_SPIN_PATTERNS, SURFACE_ROOTS, THRUST_DIRECTIONS, VOLUME_SHAPES
 from libs.graphics import draw_canvas_view
 from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS
+
+# AeroSandbox's matplotlib draw needs a pyplot figure. With pyplot on Agg those figures get no Tk window of their
+# own (a TkAgg pyplot window keeps Tk's mainloop alive after the app closes); the view embeds them itself.
+plt.switch_backend("Agg")
 
 MM_KEYS = {
     "length_m", "width_m", "height_m", "wall_radial_m", "insertion_depth_m", "diameter_m", "radial_position_m",
@@ -26,8 +30,7 @@ MM_KEYS = {
     "x_offset_m", "x_m", "y_m", "z_m", "flat_length_m", "curve_length_m", "nose_radius", "size_m", "printer_bed_m", "cuts_m",
 }
 GRAM_KEYS = {"mass_kg", "coupler_mass_kg"}
-PERCENT_KEYS = {"surface_infill"}
-UNIT_SUFFIXES = ("_m_s", "_deg", "_kg", "_m")
+UNIT_SUFFIXES = ("_kg_m3", "_m_s", "_deg", "_kg", "_m")
 CHOICES = {
     "layout": list(LAYOUTS),
     "fin_position": list(FIN_POSITIONS),
@@ -61,12 +64,12 @@ def field_label(key: str) -> str:
         if base.endswith(suffix):
             base = base[: -len(suffix)]
             break
-    unit = "mm" if key in MM_KEYS else "g" if key in GRAM_KEYS else "%" if key in PERCENT_KEYS else "deg" if key.endswith("_deg") else "m/s" if key.endswith("_m_s") else "m" if key.endswith("_m") else ""
+    unit = "mm" if key in MM_KEYS else "g" if key in GRAM_KEYS else "deg" if key.endswith("_deg") else "m/s" if key.endswith("_m_s") else "kg/m^3" if key.endswith("_kg_m3") else "m" if key.endswith("_m") else ""
     return f"{base.replace('_', ' ')} ({unit})" if unit else base.replace("_", " ")
 
 
 def display_factor(key: str) -> float:
-    return 1000.0 if key in MM_KEYS or key in GRAM_KEYS else 100.0 if key in PERCENT_KEYS else 1.0
+    return 1000.0 if key in MM_KEYS or key in GRAM_KEYS else 1.0
 
 
 def format_value(key: str, value) -> str:
@@ -433,7 +436,7 @@ class ConfigurationMainView:
                 print_settings = definition["print"]
                 self.add_choice(group, 0, print_settings, "material", sorted(self.app.parts_data["material"]))
                 next_row = self.add_vector_entries(group, 1, print_settings, "printer_bed_m", ("x", "y", "z"))
-                self.add_entry(group, next_row, print_settings, "surface_infill", optional=True)
+                self.add_entry(group, next_row, print_settings, "surface_bulk_density_kg_m3", optional=True)
             else:
                 self.add_fields(group, definition[key])
         fuselage = definition["fuselage"]
@@ -538,6 +541,7 @@ class ConfigurationMainView:
         motor_box.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=1)
         props = sorted({combo["prop"] for combo in combos if (combo["brand"], combo["motor"], combo["kv"]) == (motor["brand"], motor["model"], motor["kv"])})
         self.add_choice(group, 2, motor, "prop", props)
+        self.add_choice(group, 3, propulsion, "prop_spin", list(PROP_SPIN_PATTERNS))  # per-motor lists are edited in the file
 
         def select_motor(_event=None) -> None:
             chosen = next(combo for combo in combos if f"{combo['brand']} {combo['motor']} {combo['kv']}KV" == motor_var.get())
