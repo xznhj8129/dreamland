@@ -127,7 +127,7 @@ VLM
     - raises the VLM sweep view
 
 CAD
-    - raises the CAD placeholder view
+    - raises the CAD view
 
 Module Editor
     - refreshes data/modules.json from disk

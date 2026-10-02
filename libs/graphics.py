@@ -1,7 +1,7 @@
 """
 Usage:
 from libs.graphics import draw_canvas_view
-metrics = draw_canvas_view(canvas, resolved, aero, detailed, "Longitudinal", roll_deg, ui_draw, ui_bg)
+metrics = draw_canvas_view(canvas, resolved, aero, "Longitudinal", roll_deg, ui_draw, ui_bg)
 
 Orthographic Tk drawing of a resolved airframe (libs/geometry.py). Everything drawn comes from the resolved model.
 Volumes carry the canvas tags ("drag", "volume:<index>"), wing sets ("drag", "surface:<index>") and section cuts
@@ -22,8 +22,8 @@ VOLUME_COLOR = "#ffcc33"
 CUT_COLOR = "#33ccff"
 CUT_OVERHANG_PX = 14
 MARKER_RADIUS_PX = 5
-MARKER_COLORS = {"cg": "blue", "np": "red", "lift": "green", "np_detailed": "orange"}
-MARKER_LABELS = {"cg": "CG", "np": "Neutral point (fast)", "lift": "Lift @ AoA", "np_detailed": "Neutral point (detailed)"}
+MARKER_COLORS = {"cg": "blue", "np": "red", "lift": "green"}
+MARKER_LABELS = {"cg": "CG", "np": "Neutral point", "lift": "Lift @ AoA"}
 
 
 def longitudinal_transverse(y_value: float, z_value: float, roll_rad: float) -> float:
@@ -66,21 +66,19 @@ def volume_half_extents(resolved: ResolvedAirframe, volume) -> tuple[float, floa
     return 0.0, 0.0, 0.0
 
 
-def marker_positions(resolved: ResolvedAirframe, aero, detailed) -> dict:
-    positions = {"cg": resolved.cg_m[0], "np": float("nan"), "lift": float("nan"), "np_detailed": float("nan")}
+def marker_positions(resolved: ResolvedAirframe, aero) -> dict:
+    positions = {"cg": resolved.cg_m[0], "np": float("nan"), "lift": float("nan")}
     if aero is not None:
         positions["np"] = aero.x_np_m
         positions["lift"] = aero.lift_center_x_m
-    if detailed is not None:
-        positions["np_detailed"] = detailed.x_np_m
     return positions
 
 
 def draw_marker_guide(canvas: tk.Canvas) -> None:
-    for index, key in enumerate(("cg", "np", "np_detailed", "lift")):
-        canvas.create_text(12, 12 + index * 16, anchor="nw", text=MARKER_LABELS[key], fill=MARKER_COLORS[key], font=("TkDefaultFont", 9))
-    canvas.create_text(12, 12 + 4 * 16, anchor="nw", text="Volumes (drag along x)", fill=VOLUME_COLOR, font=("TkDefaultFont", 9))
-    canvas.create_text(12, 12 + 5 * 16, anchor="nw", text="Section cuts (drag along x); * = computed mass", fill=CUT_COLOR, font=("TkDefaultFont", 9))
+    guide = [(MARKER_LABELS[key], color) for key, color in MARKER_COLORS.items()]
+    guide += [("Volumes (drag along x)", VOLUME_COLOR), ("Section cuts (drag along x); * = computed mass", CUT_COLOR)]
+    for index, (text, color) in enumerate(guide):
+        canvas.create_text(12, 12 + index * 16, anchor="nw", text=text, fill=color, font=("TkDefaultFont", 9))
 
 
 def measure_longitudinal_view(resolved: ResolvedAirframe, roll_deg: float, width: float, height: float) -> dict:
@@ -146,7 +144,7 @@ def measure_front_view(resolved: ResolvedAirframe, width: float, height: float) 
     }
 
 
-def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, detailed, roll_deg: float, ui_draw: str, zoom_scale: float, pan_x: float, pan_y: float) -> dict:
+def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, roll_deg: float, ui_draw: str, zoom_scale: float, pan_x: float, pan_y: float) -> dict:
     canvas.delete("all")
     width = max(canvas.winfo_width(), 10)
     height = max(canvas.winfo_height(), 10)
@@ -233,7 +231,7 @@ def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, 
         prop_radius = motor.prop_radius_m * scale
         canvas.create_line(shaft_outer, t_screen - prop_radius, shaft_outer, t_screen + prop_radius, fill="red", width=2)
 
-    for key, x_value in marker_positions(resolved, aero, detailed).items():
+    for key, x_value in marker_positions(resolved, aero).items():
         if math.isfinite(x_value):
             x_screen = x_to_screen(x_value)
             canvas.create_oval(x_screen - MARKER_RADIUS_PX, center_y - MARKER_RADIUS_PX, x_screen + MARKER_RADIUS_PX, center_y + MARKER_RADIUS_PX, fill=MARKER_COLORS[key], outline="")
@@ -299,7 +297,6 @@ def draw_canvas_view(
     canvas: tk.Canvas,
     resolved: ResolvedAirframe,
     aero,
-    detailed,
     view_mode: str,
     roll_deg: float,
     ui_draw: str,
@@ -308,7 +305,7 @@ def draw_canvas_view(
     pan_x: float = 0.0,
     pan_y: float = 0.0,
 ) -> dict:
-    """aero / detailed are the fast and detailed aero results for this geometry, or None when not (yet) computed."""
+    """aero is the aero result for this geometry, or None when not (yet) computed."""
     if view_mode == "Longitudinal":
-        return draw_longitudinal_view(canvas, resolved, aero, detailed, roll_deg, ui_draw, zoom_scale, pan_x, pan_y)
+        return draw_longitudinal_view(canvas, resolved, aero, roll_deg, ui_draw, zoom_scale, pan_x, pan_y)
     return draw_front_view(canvas, resolved, ui_draw, ui_bg, zoom_scale, pan_x, pan_y)

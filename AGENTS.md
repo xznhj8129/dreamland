@@ -54,10 +54,7 @@ Primary files:
 - `material_density_g_cm3` is stored and editable, but not yet used by analysis or drawing.
 - `standard_profile` and `apply_standard` exist, but standards are only used to lock dimensions such as fuselage OD/ID. No DRC is applied yet.
 - Assembly cards can load a module block directly from `data/modules.json`; this is instance replacement, not a live link.
-- The aero path is still:
-  - assembled modular geometry
-  - Barrowman-like static stability
-  - simple linear AoA pass
+- The aero path (`libs/aero.py` `analyze_aero`) is lifting-line wings (AeroSandbox `LiftingLine` algorithm, batched over AoA in `lifting_line_sweep`) plus AeroBuildup bodies, with a Barrowman cross-check. Keep `lifting_line_sweep` equal to `asb.LiftingLine`.
 - AeroSandbox 3D exists in the main center-pane `ASB` tab.
 - VLM sweep now exists in the main-window `VLM` view.
 - `Aero Analysis` now provides NeuralFoil-backed 2D airfoil comparison plots and summary output.

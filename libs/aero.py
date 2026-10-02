@@ -1,16 +1,14 @@
 """
 Usage:
-from libs.aero import analyze_aero, analyze_aero_detailed
-result = analyze_aero(resolved)            # fast: AeroBuildup, ~1 s
-detailed = analyze_aero_detailed(resolved)  # hybrid: lifting-line wings + AeroBuildup bodies, ~30-60 s
+from libs.aero import analyze_aero
+result = analyze_aero(resolved)  # ~1-2 s
 
 Aerodynamics of a resolved airframe (libs/geometry.py). Geometry is read from the resolved model only.
-- Fast (analyze_aero): AeroSandbox AeroBuildup over the AoA sweep and the operating point, neutral point from a
-  dCm/dCL fit, Barrowman rocket-style cross-check. No downwash between surfaces, no wing-body carry-over, and its
-  finite-wing correction is centred on 0 deg rather than the zero-lift angle (over-credits camber).
-- Detailed (analyze_aero_detailed): AeroSandbox LiftingLine for all wings (downwash between surfaces, viscous
-  NeuralFoil section polars, stall), body-rooted panels carried through the body to the axis (lift carried across
-  the body), plus AeroBuildup for the bodies alone (fuselage, pods, motors). Totals only; valid to about +-30 deg.
+- analyze_aero: AeroSandbox's lifting line for all wings (downwash between surfaces, viscous NeuralFoil section
+  polars, stall), body-rooted panels carried through the body to the axis (lift carried across the body), plus
+  AeroBuildup for the bodies alone (fuselage, pods, motors). Neutral point from a dCm/dCL fit, Barrowman
+  rocket-style cross-check. The lifting line is asb.LiftingLine's algorithm solved for every AoA at once
+  (lifting_line_sweep); aero_check.py verifies it against asb.LiftingLine.
 - VLM sweep (run_vlm_sweep): wings only, inviscid; see its report header.
 """
 
@@ -19,18 +17,21 @@ import math
 from dataclasses import dataclass, replace
 
 import aerosandbox as asb
+import aerosandbox.numpy as asb_np
 import numpy as np
+from aerosandbox.aerodynamics.aero_3D.singularities.uniform_strength_horseshoe_singularities import calculate_induced_velocity_horseshoe
 
 from libs.geometry import STANDARD_GRAVITY_M_S2, ResolvedAirframe
 
 AERO_MODEL_SIZE = "large"
-AOA_SWEEP_DEG = range(-45, 46)
+# Beyond about +-35 deg the wind runs backwards along swept vertical fins in asb.LiftingLine's strip model
+# (negative Reynolds number, NaN section polars), which poisons the whole solve.
+AOA_SWEEP_DEG = range(-30, 31)
 STABILITY_MARGINAL_PCT = 5.0
 NEUTRAL_POINT_FIT_HALF_WINDOW_DEG = 4.0
-DETAILED_SWEEP_DEG = range(-30, 31, 2)  # the lifting line returns NaN beyond about +-40 deg
-DETAILED_FIT_OFFSETS_DEG = (-4.0, -2.0, 0.0, 2.0, 4.0)
 LIFTING_LINE_SPANWISE_RESOLUTION = 10
 LIFTING_LINE_CORE_RADIUS_M = 1e-3  # finite vortex core: panels carried to the axis meet there
+LIFTING_LINE_TRAILING_DIRECTION = np.array([1.0, 0.0, 0.0])  # asb.LiftingLine default: trailing legs along +x
 VLM_SETTING_KEYS = (
     "aoa_start", "aoa_end", "aoa_increment", "airspeed_start", "airspeed_end", "airspeed_increment",
     "altitude_start", "altitude_end", "altitude_increment", "vlm_threads", "vlm_span_res", "vlm_chord_res",
@@ -182,21 +183,176 @@ def barrowman(resolved: ResolvedAirframe) -> tuple[float, tuple[BarrowmanRow, ..
     return sum(row.cna * row.x_cp_m for row in rows) / total, tuple(rows)
 
 
+def carried_to_axis(wing: asb.Wing) -> asb.Wing:
+    """Copy of a body-rooted wing with an extra inner section where its span line comes closest to the fuselage axis,
+    so the lifting line carries its lift across the body."""
+    root, tip = wing.xsecs[0], wing.xsecs[-1]
+    span = np.array(tip.xyz_le[1:], dtype=float) - np.array(root.xyz_le[1:], dtype=float)
+    span /= np.linalg.norm(span)
+    root_yz = np.array(root.xyz_le[1:], dtype=float)
+    inner = asb.WingXSec(xyz_le=[root.xyz_le[0], *(root_yz - float(root_yz @ span) * span)], chord=root.chord, twist=root.twist, airfoil=root.airfoil)
+    return asb.Wing(name=wing.name, symmetric=wing.symmetric, xsecs=[inner, *wing.xsecs])
+
+
+def build_hybrid_airplanes(resolved: ResolvedAirframe) -> tuple[asb.Airplane, asb.Airplane, tuple[int, ...]]:
+    """(wings for the lifting line, bodies for AeroBuildup, resolved.surfaces index of each wing), sharing references
+    and the CG moment reference."""
+    airplane = build_asb_airplane(resolved)
+    # airplane.wings holds one wing per panel that is not an XZ-mirror copy, in resolved.surfaces order.
+    owners = tuple(index for index, surface_set in enumerate(resolved.surfaces) for panel in surface_set.panels if panel.xz_mirror != "copy")
+    wings = [carried_to_axis(wing) if resolved.surfaces[owner].definition.root == "body" else wing for wing, owner in zip(airplane.wings, owners)]
+    references = dict(xyz_ref=airplane.xyz_ref, s_ref=airplane.s_ref, c_ref=airplane.c_ref, b_ref=airplane.b_ref)
+    return (
+        asb.Airplane(name=f"{airplane.name} wings", wings=wings, fuselages=[], **references),
+        asb.Airplane(name=f"{airplane.name} bodies", wings=[], fuselages=airplane.fuselages, **references),
+        owners,
+    )
+
+
+@dataclass(frozen=True)
+class LiftingLineMesh:
+    """asb.LiftingLine's horseshoe panels (one chordwise panel per spanwise strip), meshed once for every AoA."""
+    owners: np.ndarray  # resolved.surfaces index of each panel
+    normals: np.ndarray
+    areas: np.ndarray
+    chords: np.ndarray
+    forward: np.ndarray
+    centers: np.ndarray  # bound-leg midpoints
+    bound_legs: np.ndarray
+    airfoil_groups: tuple[tuple[asb.Airfoil, np.ndarray], ...]  # (airfoil, indices of the panels using it)
+    induced: np.ndarray  # (3, panels, panels): velocity at panel i's centre per unit circulation of horseshoe j
+
+
+@dataclass(frozen=True)
+class SurfaceLoads:
+    """Lifting-line loads per surface set (rows, resolved.surfaces order) and AoA (columns)."""
+    lift_n: np.ndarray
+    drag_n: np.ndarray
+    pitch_moment_nm: np.ndarray  # about the moment reference (the CG), nose-up positive
+
+
+def build_lifting_line_mesh(wing_plane: asb.Airplane, owners: tuple[int, ...]) -> LiftingLineMesh:
+    """The same panels, strip airfoils and induced-velocity kernel as asb.LiftingLine.wing_aerodynamics."""
+    corners, airfoils, panel_owners = [], [], []
+    for wing, owner in zip(wing_plane.wings, owners):
+        wing = wing.subdivide_sections(ratio=LIFTING_LINE_SPANWISE_RESOLUTION, spacing_function=asb_np.cosspace)
+        points, faces = wing.mesh_thin_surface(method="quad", chordwise_resolution=1, add_camber=False)
+        strip_airfoils = [a.airfoil.blend_with_another_airfoil(airfoil=b.airfoil, blend_fraction=0.5) for a, b in zip(wing.xsecs[:-1], wing.xsecs[1:])]
+        if wing.symmetric:
+            strip_airfoils *= 2  # mesh_thin_surface lists the right side, then the mirrored left side
+        if len(strip_airfoils) != len(faces):
+            raise ValueError(f"lifting line mesh of {wing.name}: {len(faces)} panels but {len(strip_airfoils)} strip airfoils")
+        corners.append(points[faces])
+        airfoils += strip_airfoils
+        panel_owners += [owner] * len(faces)
+    front_left, back_left, back_right, front_right = (np.concatenate([wing_corners[:, i] for wing_corners in corners]) for i in range(4))
+    cross = np.cross(front_right - back_left, front_left - back_right)
+    cross_norm = np.linalg.norm(cross, axis=1)
+    normals = cross / cross_norm[:, None]
+    left = 0.75 * front_left + 0.25 * back_left
+    right = 0.75 * front_right + 0.25 * back_right
+    bound_legs = right - left
+    centers = (left + right) / 2.0
+    induced = np.array(calculate_induced_velocity_horseshoe(
+        x_field=centers[:, :1], y_field=centers[:, 1:2], z_field=centers[:, 2:3],
+        x_left=left[None, :, 0], y_left=left[None, :, 1], z_left=left[None, :, 2],
+        x_right=right[None, :, 0], y_right=right[None, :, 1], z_right=right[None, :, 2],
+        trailing_vortex_direction=LIFTING_LINE_TRAILING_DIRECTION, gamma=1.0, vortex_core_radius=LIFTING_LINE_CORE_RADIUS_M,
+    ))
+    groups: dict[str, tuple[asb.Airfoil, list[int]]] = {}
+    for index, airfoil in enumerate(airfoils):
+        groups.setdefault(airfoil.name, (airfoil, []))[1].append(index)
+    return LiftingLineMesh(
+        owners=np.array(panel_owners), normals=normals, areas=cross_norm / 2.0,
+        chords=np.linalg.norm((back_left + back_right) / 2.0 - (front_left + front_right) / 2.0, axis=1),
+        forward=np.cross(normals, bound_legs / np.linalg.norm(bound_legs, axis=1)[:, None]),
+        centers=centers, bound_legs=bound_legs,
+        airfoil_groups=tuple((airfoil, np.array(indices)) for airfoil, indices in groups.values()),
+        induced=induced,
+    )
+
+
+def lifting_line_sweep(
+    mesh: LiftingLineMesh, xyz_ref, surface_count: int, atmosphere: asb.Atmosphere, airspeed_m_s: float, aoa_values: np.ndarray,
+) -> SurfaceLoads:
+    """asb.LiftingLine.run for every AoA at once. Its influence matrix does not depend on AoA (trailing legs along +x),
+    so it is built once, and each section polar pass is one NeuralFoil call per airfoil over all panels and AoAs.
+    Like asb.LiftingLine: section lift linearised with a 2 pi slope at the geometric AoA, one solve for the
+    circulation, then section drag and moment at the induced AoA."""
+    op_points = [asb.OperatingPoint(atmosphere=atmosphere, velocity=airspeed_m_s, alpha=float(aoa)) for aoa in aoa_values]
+    freestream = np.array([op_point.compute_freestream_velocity_geometry_axes() for op_point in op_points])  # (aoa, 3), where the wind goes
+    freestream_dir = freestream / np.linalg.norm(freestream, axis=1, keepdims=True)
+    alpha_geometric = 90.0 - np.degrees(np.arccos(np.clip(mesh.normals @ freestream_dir.T, -1.0, 1.0)))  # (panels, aoa)
+    cos_sweep = -(mesh.forward @ freestream_dir.T)
+    mach = op_points[0].mach() * cos_sweep
+    reynolds = airspeed_m_s * mesh.chords[:, None] / atmosphere.kinematic_viscosity() * cos_sweep
+
+    def section_polars(alpha: np.ndarray) -> dict[str, np.ndarray]:
+        polars = {key: np.empty_like(alpha) for key in ("CL", "CD", "CM")}
+        for airfoil, indices in mesh.airfoil_groups:
+            aero = airfoil.get_aero_from_neuralfoil(
+                alpha=alpha[indices].ravel(), Re=reynolds[indices].ravel(), mach=mach[indices].ravel(), model_size=AERO_MODEL_SIZE,
+            )
+            for key, values in polars.items():
+                values[indices] = np.reshape(aero[key], alpha[indices].shape)
+        return polars
+
+    alpha_influence = np.einsum("knm,nk->nm", mesh.induced, mesh.normals) / airspeed_m_s  # rad of AoA per unit circulation
+    cl_geometric = section_polars(alpha_geometric)["CL"]
+    circulation = np.empty_like(alpha_geometric)
+    for column, velocity in enumerate(freestream):
+        v_cross_l = np.linalg.norm(np.cross(velocity, mesh.bound_legs), axis=1)
+        system = alpha_influence * 2.0 * np.pi - np.diag(2.0 * v_cross_l / (airspeed_m_s * cos_sweep[:, column]) ** 2 / mesh.areas)
+        circulation[:, column] = np.linalg.solve(system, -cl_geometric[:, column])
+    sections = section_polars(alpha_geometric + np.degrees(alpha_influence @ circulation))
+
+    density = atmosphere.density()
+    arms = mesh.centers - np.asarray(xyz_ref, dtype=float)
+    bound_legs_yz = mesh.bound_legs * np.array([0.0, 1.0, 1.0])
+    membership = (mesh.owners[None, :] == np.arange(surface_count)[:, None]).astype(float)  # (surfaces, panels)
+    loads = SurfaceLoads(*(np.empty((surface_count, len(op_points))) for _ in range(3)))
+    for column, op_point in enumerate(op_points):
+        velocities = np.einsum("knm,m->nk", mesh.induced, circulation[:, column]) + freestream[column]
+        speeds = np.linalg.norm(velocities, axis=1)
+        forces = (
+            density * np.cross(velocities, mesh.bound_legs) * circulation[:, column, None]
+            + 0.5 * density * velocities * (speeds * sections["CD"][:, column] * mesh.areas)[:, None]
+        )
+        moments = np.cross(arms, forces) + (0.5 * density * speeds ** 2 * sections["CM"][:, column] * mesh.chords ** 2)[:, None] * bound_legs_yz
+        force_wind = op_point.convert_axes(*(membership @ forces).T, from_axes="geometry", to_axes="wind")
+        moment_body = op_point.convert_axes(*(membership @ moments).T, from_axes="geometry", to_axes="body")
+        loads.lift_n[:, column] = -force_wind[2]
+        loads.drag_n[:, column] = -force_wind[0]
+        loads.pitch_moment_nm[:, column] = moment_body[1]
+    return loads
+
+
 def analyze_aero(resolved: ResolvedAirframe) -> AeroResult:
     operating_point = resolved.airframe.operating_point
+    if not AOA_SWEEP_DEG.start <= operating_point.aoa_deg <= AOA_SWEEP_DEG.stop - 1:
+        raise ValueError(f"aero covers AoA {AOA_SWEEP_DEG.start} to {AOA_SWEEP_DEG.stop - 1} deg; operating point AoA is {operating_point.aoa_deg} deg")
     cg_x = resolved.cg_m[0]
     reference = resolved.reference
-    airplane = build_asb_airplane(resolved)
     atmosphere = asb.Atmosphere(altitude=operating_point.altitude_m)
+    wing_plane, body_plane, owners = build_hybrid_airplanes(resolved)
 
-    # One vectorized AeroBuildup run: the sweep plus the operating point appended at eval_index.
+    # The sweep plus the operating point appended at eval_index, in one pass of each model.
     sweep_aoa = np.array(AOA_SWEEP_DEG, dtype=float)
     eval_index = len(sweep_aoa)
-    op_point = asb.OperatingPoint(atmosphere=atmosphere, velocity=operating_point.airspeed_m_s, alpha=np.append(sweep_aoa, operating_point.aoa_deg))
-    aero = asb.AeroBuildup(airplane=airplane, op_point=op_point, model_size=AERO_MODEL_SIZE).run()
-    dynamic_pressure = float(op_point.dynamic_pressure())
-    cl_all = np.asarray(aero["CL"])
-    cm_all = np.asarray(aero["Cm"])
+    aoa_values = np.append(sweep_aoa, operating_point.aoa_deg)
+    op_point = asb.OperatingPoint(atmosphere=atmosphere, velocity=operating_point.airspeed_m_s, alpha=aoa_values)
+    body = asb.AeroBuildup(airplane=body_plane, op_point=op_point, model_size=AERO_MODEL_SIZE).run()
+    wings = lifting_line_sweep(
+        build_lifting_line_mesh(wing_plane, owners), wing_plane.xyz_ref, len(resolved.surfaces), atmosphere, operating_point.airspeed_m_s, aoa_values,
+    )
+    dynamic_pressure = float(asb.OperatingPoint(atmosphere=atmosphere, velocity=operating_point.airspeed_m_s).dynamic_pressure())
+    force_scale = dynamic_pressure * reference.area_m2
+    lift_all = wings.lift_n.sum(axis=0) + np.asarray(body["L"])
+    drag_all = wings.drag_n.sum(axis=0) + np.asarray(body["D"])
+    moment_all = wings.pitch_moment_nm.sum(axis=0) + np.asarray(body["M_b"][1])
+    cl_all = lift_all / force_scale
+    cd_all = drag_all / force_scale
+    cm_all = moment_all / (force_scale * reference.chord_m)
 
     with np.errstate(divide="ignore", invalid="ignore"):
         sweep_x_np = cg_x - np.gradient(cm_all[:eval_index], sweep_aoa) / np.gradient(cl_all[:eval_index], sweep_aoa) * reference.chord_m
@@ -204,43 +360,34 @@ def analyze_aero(resolved: ResolvedAirframe) -> AeroResult:
     for index, aoa in enumerate(sweep_aoa):
         cm = float(cm_all[index])
         pitch = "nose-up" if cm > 0.0 else "nose-down" if cm < 0.0 else "trim"
-        sweep.append(SweepRow(float(aoa), float(cl_all[index]), float(aero["CD"][index]), cm, float(aero["L"][index]), float(sweep_x_np[index]), pitch))
+        sweep.append(SweepRow(float(aoa), float(cl_all[index]), float(cd_all[index]), cm, float(lift_all[index]), float(sweep_x_np[index]), pitch))
 
     # NeuralFoil's low-Re section curves are bumpy, so a local derivative jitters by centimetres.
     # The neutral point uses the least-squares dCm/dCL over sweep points within the window around the operating point.
     window = np.abs(sweep_aoa - operating_point.aoa_deg) <= NEUTRAL_POINT_FIT_HALF_WINDOW_DEG
     dcm_dcl = float(np.polyfit(cl_all[:eval_index][window], cm_all[:eval_index][window], 1)[0])
 
-    # airplane.wings holds one wing per panel that is not an XZ-mirror copy, in resolved.surfaces order.
-    wing_components = iter(aero["wing_aero_components"])
     surfaces = []
-    for surface_set in resolved.surfaces:
-        lift = drag = pitch_moment = 0.0
-        for panel in surface_set.panels:
-            if panel.xz_mirror == "copy":
-                continue
-            component = next(wing_components)
-            lift += float(component.L[eval_index])
-            drag += float(component.D[eval_index])
-            pitch_moment += float(component.M_b[1][eval_index])
+    for index, surface_set in enumerate(resolved.surfaces):
+        lift = float(wings.lift_n[index, eval_index])
+        drag = float(wings.drag_n[index, eval_index])
         area = surface_set.planform_area_m2
         surfaces.append(SurfaceForce(
             name=surface_set.name, airfoil=surface_set.definition.airfoil, area_m2=area,
             cl=lift / (dynamic_pressure * area), cd=drag / (dynamic_pressure * area), lift_n=lift, drag_n=drag,
-            x_lift_m=cg_x - pitch_moment / lift if abs(lift) > 1e-9 else float("nan"),
+            x_lift_m=cg_x - float(wings.pitch_moment_nm[index, eval_index]) / lift if abs(lift) > 1e-9 else float("nan"),
         ))
 
-    lift = float(aero["L"][eval_index])
+    lift = float(lift_all[eval_index])
     barrowman_cp, barrowman_rows = barrowman(resolved)
     return AeroResult(
         aoa_deg=operating_point.aoa_deg, airspeed_m_s=operating_point.airspeed_m_s, altitude_m=operating_point.altitude_m,
         density_kg_m3=float(atmosphere.density()), dynamic_pressure_pa=dynamic_pressure,
-        lift_n=lift, drag_n=float(aero["D"][eval_index]), cl=float(cl_all[eval_index]), cd=float(aero["CD"][eval_index]),
+        lift_n=lift, drag_n=float(drag_all[eval_index]), cl=float(cl_all[eval_index]), cd=float(cd_all[eval_index]),
         cm=float(cm_all[eval_index]),
-        lift_center_x_m=cg_x - float(aero["M_b"][1][eval_index]) / lift if abs(lift) > 1e-9 else float("nan"),
+        lift_center_x_m=cg_x - float(moment_all[eval_index]) / lift if abs(lift) > 1e-9 else float("nan"),
         surfaces=tuple(surfaces),
-        body_lift_n=sum(float(component.L[eval_index]) for component in aero["fuselage_aero_components"]),
-        body_drag_n=sum(float(component.D[eval_index]) for component in aero["fuselage_aero_components"]),
+        body_lift_n=float(body["L"][eval_index]), body_drag_n=float(body["D"][eval_index]),
         x_np_m=cg_x - dcm_dcl * reference.chord_m, sweep=tuple(sweep),
         barrowman_cp_m=barrowman_cp, barrowman=barrowman_rows,
     )
@@ -367,90 +514,4 @@ def run_vlm_sweep(resolved: ResolvedAirframe, settings: dict, progress_callback=
         solutions={aoa: vlm for aoa, (vlm, _coefficients) in solved.items()}, report_text="",
     )
     return replace(result, report_text=build_vlm_report_text(result))
-
-
-@dataclass(frozen=True)
-class DetailedAeroResult:
-    aoa_deg: float
-    airspeed_m_s: float
-    altitude_m: float
-    lift_n: float
-    drag_n: float
-    cl: float
-    cd: float
-    cm: float
-    body_lift_n: float
-    lift_center_x_m: float
-    x_np_m: float
-    sweep: tuple[SweepRow, ...]
-
-
-def carried_to_axis(wing: asb.Wing) -> asb.Wing:
-    """Copy of a body-rooted wing with an extra inner section where its span line comes closest to the fuselage axis,
-    so the lifting line carries its lift across the body."""
-    root, tip = wing.xsecs[0], wing.xsecs[-1]
-    span = np.array(tip.xyz_le[1:], dtype=float) - np.array(root.xyz_le[1:], dtype=float)
-    span /= np.linalg.norm(span)
-    root_yz = np.array(root.xyz_le[1:], dtype=float)
-    inner = asb.WingXSec(xyz_le=[root.xyz_le[0], *(root_yz - float(root_yz @ span) * span)], chord=root.chord, twist=root.twist, airfoil=root.airfoil)
-    return asb.Wing(name=wing.name, symmetric=wing.symmetric, xsecs=[inner, *wing.xsecs])
-
-
-def build_hybrid_airplanes(resolved: ResolvedAirframe) -> tuple[asb.Airplane, asb.Airplane]:
-    """(wings for the lifting line, bodies for AeroBuildup), sharing references and the CG moment reference."""
-    airplane = build_asb_airplane(resolved)
-    owners = [surface_set for surface_set in resolved.surfaces for panel in surface_set.panels if panel.xz_mirror != "copy"]
-    wings = [carried_to_axis(wing) if owner.definition.root == "body" else wing for wing, owner in zip(airplane.wings, owners)]
-    references = dict(xyz_ref=airplane.xyz_ref, s_ref=airplane.s_ref, c_ref=airplane.c_ref, b_ref=airplane.b_ref)
-    return (
-        asb.Airplane(name=f"{airplane.name} wings", wings=wings, fuselages=[], **references),
-        asb.Airplane(name=f"{airplane.name} bodies", wings=[], fuselages=airplane.fuselages, **references),
-    )
-
-
-def analyze_aero_detailed(resolved: ResolvedAirframe, progress_callback=None) -> DetailedAeroResult:
-    operating_point = resolved.airframe.operating_point
-    limit = max(abs(DETAILED_SWEEP_DEG.start), abs(DETAILED_SWEEP_DEG.stop - 1))
-    if abs(operating_point.aoa_deg) + max(DETAILED_FIT_OFFSETS_DEG) > limit:
-        raise ValueError(f"detailed aero covers +-{limit} deg; operating point AoA {operating_point.aoa_deg} deg is too close to that")
-    aoa_values = np.array(sorted({float(a) for a in DETAILED_SWEEP_DEG} | {operating_point.aoa_deg + offset for offset in DETAILED_FIT_OFFSETS_DEG}))
-    wing_plane, body_plane = build_hybrid_airplanes(resolved)
-    atmosphere = asb.Atmosphere(altitude=operating_point.altitude_m)
-    op_points = asb.OperatingPoint(atmosphere=atmosphere, velocity=operating_point.airspeed_m_s, alpha=aoa_values)
-    body = asb.AeroBuildup(airplane=body_plane, op_point=op_points, model_size=AERO_MODEL_SIZE).run()
-
-    totals = {key: [] for key in ("CL", "CD", "Cm", "L", "D", "M")}
-    for index, aoa_deg in enumerate(aoa_values):
-        wings = asb.LiftingLine(
-            airplane=wing_plane,
-            op_point=asb.OperatingPoint(atmosphere=atmosphere, velocity=operating_point.airspeed_m_s, alpha=float(aoa_deg)),
-            model_size=AERO_MODEL_SIZE, spanwise_resolution=LIFTING_LINE_SPANWISE_RESOLUTION, vortex_core_radius=LIFTING_LINE_CORE_RADIUS_M,
-        ).run()
-        for key in ("CL", "CD", "Cm", "L", "D"):
-            totals[key].append(float(wings[key]) + float(body[key][index]))
-        totals["M"].append(float(wings["M_b"][1]) + float(body["M_b"][1][index]))
-        if progress_callback is not None:
-            progress_callback(index + 1, len(aoa_values), f"AoA {aoa_deg:g} deg")
-    cl, cm = np.array(totals["CL"]), np.array(totals["Cm"])
-    cg_x = resolved.cg_m[0]
-    chord = resolved.reference.chord_m
-    window = np.abs(aoa_values - operating_point.aoa_deg) <= NEUTRAL_POINT_FIT_HALF_WINDOW_DEG
-    x_np = cg_x - float(np.polyfit(cl[window], cm[window], 1)[0]) * chord
-    with np.errstate(divide="ignore", invalid="ignore"):
-        local_np = cg_x - np.gradient(cm, aoa_values) / np.gradient(cl, aoa_values) * chord
-    sweep = []
-    for index, aoa_deg in enumerate(aoa_values):
-        if float(aoa_deg) not in DETAILED_SWEEP_DEG:
-            continue
-        pitch = "nose-up" if cm[index] > 0.0 else "nose-down" if cm[index] < 0.0 else "trim"
-        sweep.append(SweepRow(float(aoa_deg), float(cl[index]), totals["CD"][index], float(cm[index]), totals["L"][index], float(local_np[index]), pitch))
-    eval_index = int(np.argmin(np.abs(aoa_values - operating_point.aoa_deg)))
-    lift = totals["L"][eval_index]
-    return DetailedAeroResult(
-        aoa_deg=operating_point.aoa_deg, airspeed_m_s=operating_point.airspeed_m_s, altitude_m=operating_point.altitude_m,
-        lift_n=lift, drag_n=totals["D"][eval_index], cl=float(cl[eval_index]), cd=totals["CD"][eval_index], cm=float(cm[eval_index]),
-        body_lift_n=float(body["L"][eval_index]),
-        lift_center_x_m=cg_x - totals["M"][eval_index] / lift if abs(lift) > 1e-9 else float("nan"),
-        x_np_m=x_np, sweep=tuple(sweep),
-    )
 

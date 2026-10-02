@@ -1,7 +1,7 @@
 """
 Usage:
 python aero_check.py
-python aero_check.py aircraft/m62v2.json aircraft/quadlancet62.json --aoa 0 2 5 --airspeed 20
+python aero_check.py aircraft/m62v2.json aircraft/quadlancer62.json --aoa 0 2 5 --airspeed 20
 
 Cross-checks the fast configuration aero (libs/aero.py, AeroBuildup) per lifting-surface set against the
 AeroSandbox lifting line with body-rooted panels carried to the axis (the same wing treatment as the detailed
@@ -26,7 +26,7 @@ from libs.aero import AERO_MODEL_SIZE, LIFTING_LINE_CORE_RADIUS_M, LIFTING_LINE_
 from libs.airframe import PARTS_PATH, load_airframe
 from libs.geometry import resolve_airframe
 
-DEFAULT_AIRFRAMES = (Path("aircraft/m62v2.json"), Path("aircraft/quadlancet62.json"))
+DEFAULT_AIRFRAMES = (Path("aircraft/m62v2.json"), Path("aircraft/quadlancer62.json"))
 VLM_SPANWISE_RESOLUTION = 12
 VLM_CHORDWISE_RESOLUTION = 8
 

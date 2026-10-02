@@ -145,7 +145,7 @@
                     "ballast_mass": 0.0
                 },
                 "surfaces": {
-                    "name": "saggerwing-7in",
+                    "name": "qrwing-7in",
                     "type": "wing",
                     "semispan": 0.1,
                     "mass": 0.025,
@@ -453,7 +453,7 @@
                 "mount_factor": 1.0
             },
             {
-                "name": "saggerwing-7in",
+                "name": "qrwing-7in",
                 "module": "quad-wingmount-v3",
                 "count": 4,
                 "span": 0.1,
@@ -1244,7 +1244,7 @@
                 "notes": "N=2 span=0.120 m area=0.0222 m^2 MCL=0.120 m"
             },
             {
-                "component": "saggerwing-7in",
+                "component": "qrwing-7in",
                 "cna": 20.538099695931418,
                 "x_cp": 0.43905811814022216,
                 "notes": "N=4 span=0.100 m area=0.0360 m^2 MCL=0.101 m"
@@ -2024,7 +2024,7 @@
                 "load_pct": 38.61267728464969
             },
             {
-                "name": "saggerwing-7in",
+                "name": "qrwing-7in",
                 "module": "quad-wingmount-v3",
                 "airfoil": "naca0008",
                 "alpha_eff_deg": 5.0,

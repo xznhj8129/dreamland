@@ -69,9 +69,6 @@ ControlsTab [arrange:column]
             - Airspeed (m/s) [ui:number entry]
             - Altitude (m) [ui:number entry]
             used by the Summary -> Surface Forces block
-
-        - static note:
-            "Cheap aero sweep is always recomputed from -45 to 45 deg."
 ```
 
 ## Center Pane
@@ -136,14 +133,14 @@ OrthographicView [fill, switchable, pannable, zoomable]
         - draw lifting surfaces as projected trapezoids through roll angle
         - draw lifting-surface chord angle using aoa_ang, positive = front up
         - draw internal objects with known size as dashed outlines
-        - draw top-left colored point guide: blue CG, red Static CP, green Lift @ AoA
+        - draw top-left colored point guide: blue CG, red Neutral point, green Lift @ AoA
         - draw pods, motors, shafts, props, CG, CP, CL
 
     mode Front
         - draw body as circular cross-section
         - draw lifting surfaces as radial lines
         - draw internal objects with known size as dashed outlines
-        - draw top-left colored point guide: blue CG, red Static CP, green Lift @ AoA
+        - draw top-left colored point guide: blue CG, red Neutral point, green Lift @ AoA
         - draw motor / pod / prop cross-sections
 ```
 

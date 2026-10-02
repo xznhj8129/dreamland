@@ -1,7 +1,7 @@
 """
 Usage:
 python guibuilder.py
-python guibuilder.py aircraft/quadlancet62.json
+python guibuilder.py aircraft/quadlancer62.json
 
 Tk front end for plane-first airframes (airframe/2 files, see PLAN.md): edit the aircraft definition and see
 the drawing, mass/CG, aerodynamics and stability update. Geometry and mass update immediately; aero runs in
@@ -19,10 +19,10 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from libs.aero import analyze_aero, analyze_aero_detailed, build_asb_airplane
+from libs.aero import analyze_aero, build_asb_airplane
 from libs.airframe import PARTS_PATH, SCHEMA, AirframeError, parse_airframe
 from libs.geometry import resolve_airframe
-from libs.report import build_detailed_report_text, build_report_text
+from libs.report import build_report_text
 from libs.simlib2 import TestedMotorData
 from libs.views.aero_analysis_view import AeroAnalysisMainView
 from libs.views.cad_view import CADMainView
@@ -70,8 +70,6 @@ class BuilderApp:
         self.resolved = None
         self.problems: list[str] = []
         self.aero = None
-        self.detailed = None  # hybrid aero result for the current resolved airframe, run on demand
-        self.detailed_generation = 0
         self.asb_airplane = None
         self.aero_generation = 0
         self.aero_queue: queue.Queue = queue.Queue()
@@ -126,9 +124,6 @@ class BuilderApp:
         self.resolved = resolved
         self.problems = problems
         self.aero = None
-        self.detailed = None
-        self.detailed_generation += 1
-        self.configuration_main_view.detailed_status_var.set("Detailed aero: not run for this airframe")
         self.vlm_main_view.mark_stale()
         self.configuration_main_view.draw_active_view()
         if not run_aero:
@@ -137,74 +132,35 @@ class BuilderApp:
         self.recompute_status_var.set("Computing aero...")
         threading.Thread(target=self.run_aero, args=(self.aero_generation, resolved), daemon=True).start()
 
-    def start_detailed_aero(self) -> None:
-        if self.resolved is None:
-            return
-        generation = self.detailed_generation
-        self.configuration_main_view.detailed_status_var.set("Detailed aero: starting...")
-        threading.Thread(target=self.run_detailed_aero, args=(generation, self.resolved), daemon=True).start()
-
-    def run_detailed_aero(self, generation: int, resolved) -> None:
-        def progress(completed: int, total: int, status: str) -> None:
-            self.aero_queue.put(("detailed_progress", generation, f"Detailed aero: {completed}/{total} ({status})"))
-
-        try:
-            self.aero_queue.put(("detailed", generation, analyze_aero_detailed(resolved, progress), None))
-        except ValueError as error:  # operating point outside the detailed range: show the reason
-            self.aero_queue.put(("detailed_invalid", generation, str(error)))
-        except Exception:  # thread boundary: hand the traceback to the Tk thread for the error dialog
-            self.aero_queue.put(("detailed", generation, None, traceback.format_exc()))
-
     def run_aero(self, generation: int, resolved) -> None:
         try:
-            self.aero_queue.put(("fast", generation, resolved, analyze_aero(resolved), None))
+            self.aero_queue.put((generation, analyze_aero(resolved), None, None))
+        except ValueError as error:  # operating point outside the aero range: show the reason
+            self.aero_queue.put((generation, None, str(error), None))
         except Exception:  # thread boundary: hand the traceback to the Tk thread for the error dialog
-            self.aero_queue.put(("fast", generation, resolved, None, traceback.format_exc()))
+            self.aero_queue.put((generation, None, None, traceback.format_exc()))
 
     def poll_aero_queue(self) -> None:
         while not self.aero_queue.empty():
-            message = self.aero_queue.get()
-            kind = message[0]
-            if kind == "fast":
-                _, generation, resolved, aero, error_text = message
-                if error_text is not None:
-                    self.recompute_status_var.set("Aero failed")
-                    self.show_error_dialog(error_text)
-                    continue
-                if generation != self.aero_generation:
-                    continue
-                self.aero = aero
-                self.write_summary(self.summary_text_with_detailed())
-                self.recompute_status_var.set("Up to date")
-                self.configuration_main_view.draw_active_view()
+            generation, aero, invalid_text, error_text = self.aero_queue.get()
+            if generation != self.aero_generation:
                 continue
-            generation = message[1]
-            if generation != self.detailed_generation:
-                continue
-            if kind == "detailed_progress":
-                self.configuration_main_view.detailed_status_var.set(message[2])
-            elif kind == "detailed_invalid":
-                self.configuration_main_view.detailed_status_var.set(f"Detailed aero: {message[2]}")
-            elif message[3] is not None:
-                self.configuration_main_view.detailed_status_var.set("Detailed aero failed")
-                self.show_error_dialog(message[3])
+            if invalid_text is not None:
+                self.recompute_status_var.set("Aero not computed")
+                self.write_summary(f"Aero not computed: {invalid_text}")
+            elif error_text is not None:
+                self.recompute_status_var.set("Aero failed")
+                self.show_error_dialog(error_text)
             else:
-                self.detailed = message[2]
-                self.configuration_main_view.detailed_status_var.set("Detailed aero: up to date")
-                self.write_summary(self.summary_text_with_detailed())
+                self.aero = aero
+                self.write_summary(build_report_text(self.resolved, aero, self.problems, sweep=True))
+                self.recompute_status_var.set("Up to date")
                 self.configuration_main_view.draw_active_view()
         self.poll_after_id = self.root.after(AERO_QUEUE_POLL_MS, self.poll_aero_queue)
 
     def shutdown(self) -> None:
         self.root.after_cancel(self.poll_after_id)
         self.root.destroy()
-
-    def summary_text_with_detailed(self) -> str:
-        """Fast report followed by the detailed comparison, once both exist for the current airframe."""
-        text = build_report_text(self.resolved, self.aero, self.problems, sweep=True) if self.aero is not None else ""
-        if self.detailed is not None and self.aero is not None:
-            text = build_detailed_report_text(self.resolved, self.aero, self.detailed) + "\n\n" + text
-        return text
 
     def write_summary(self, text: str) -> None:
         self.summary_text.delete("1.0", tk.END)

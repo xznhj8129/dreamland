@@ -63,7 +63,7 @@
             "mass_kg": 0.05
         },
         {
-            "name": "saggerwing-7in",
+            "name": "qrwing-7in",
             "x_root_le_m": 0.395,
             "layout": "X",
             "fin_position": "top",
@@ -106,7 +106,7 @@
         "mounts": [
             {
                 "on": "surface",
-                "surface": "saggerwing-7in",
+                "surface": "qrwing-7in",
                 "span_position_m": 0.1,
                 "x_offset_m": 0.12,
                 "direction": "pusher",

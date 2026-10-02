@@ -140,7 +140,7 @@
                 "wings_y_offset": 0.0
             },
             "surfaces": {
-                "name": "saggerwing-7in",
+                "name": "qrwing-7in",
                 "type": "wing",
                 "semispan": 0.1,
                 "mass": 0.025,

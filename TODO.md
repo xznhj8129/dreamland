@@ -24,8 +24,8 @@
 - Review 2026-10-01 (4 parallel reviews; V = verified by running). Order and plane-first redesign: PLAN.md.
 
 - A. Data model (one source of truth):
-        - Saved configs embed full module blocks under library names that drifted from the library (V: batt-1 mass 0.065 vs 0.089, endcap 0.015/len 0.02 vs 0.027/0.07, saggerwing-7in 0.025 vs 0.059, quad-wingmount-v3 len 0.11 vs 0.15). guibuilder.py normalize_config_from_templates expands references; headless cannot run reference configs (KeyError 'x'). One normalizer for GUI + headless; references + explicit overrides.
-        - guibuilder.py apply_template_values fills missing keys from templates and drops unknown keys (V: saggerwing-7in-fwd gets motor_y_pos 0.1 / pod_* 0.028 invented; avionics, diam, model, motor_n dropped). Fail on missing/unknown keys.
+        - Saved configs embed full module blocks under library names that drifted from the library (V: batt-1 mass 0.065 vs 0.089, endcap 0.015/len 0.02 vs 0.027/0.07, qrwing-7in 0.025 vs 0.059, quad-wingmount-v3 len 0.11 vs 0.15). guibuilder.py normalize_config_from_templates expands references; headless cannot run reference configs (KeyError 'x'). One normalizer for GUI + headless; references + explicit overrides.
+        - guibuilder.py apply_template_values fills missing keys from templates and drops unknown keys (V: qrwing-7in-fwd gets motor_y_pos 0.1 / pod_* 0.028 invented; avionics, diam, model, motor_n dropped). Fail on missing/unknown keys.
         - Operating point (AoA, airspeed, altitude) not saved in config (V: m62v2 saved at 5 deg/20 m/s "stable" reloads at 0/10 "unstable").
         - semispan measured from centerline on end modules, from tube surface on wingmounts (V: tailfin root (0,0), main wing root 0.031). Inflates Barrowman tailfin CNa (6.32 vs ~1.8) and reference area. One definition: exposed span from local body radius.
         - Units/semantics: motor_x_pos is metres on wings, fraction on end caps (ignored there, analysis.py end-motor at mid-module); cg is fraction of length on modules, of MAC on surfaces; OD and battery dims in mm, rest in m; aoa_ang is incidence; wings_ang is dihedral/X angle.
@@ -34,7 +34,7 @@
         - Unknown wing layout silently becomes "H"/2 wings (layout_wing_count, derive_wings_layout).
         - Coupler hardcoded "joint-ring-c" (M62) at every joint regardless of standard_profile.
         - Computed surface mass is airfoil volume x infill only; printed perimeter walls not modelled (m62v2 main wing: 34 g computed vs 50 g given).
-        - spar_rods has no rod length/start (assumes full fuselage length); real m62v2/quadlancet62 use 4 x 2.5 mm x 400 mm carbon rods; no carbon material entry.
+        - spar_rods has no rod length/start (assumes full fuselage length); real m62v2/quadlancer62 use 4 x 2.5 mm x 400 mm carbon rods; no carbon material entry.
         - Save writes vlm_results (not in AGENTS.md contract) and a saved analysis with old schema that is never read.
         - Two names: assembly_name ("default") vs config.name.
 
@@ -60,12 +60,13 @@
         - Motor mass from iloc[0] of matched rows (Brotherhobby F2008-1000 has 2 weights). Bell geometry uses stator dims.
         - Gravity 9.81 (simlib2.py, propulsion summary) vs 9.80665.
 
-- D. Aero (fast = AeroBuildup, live; detailed = lifting-line wings + AeroBuildup bodies, on demand):
-        - Fast model has no downwash between surfaces, no wing-body carry-over, and centres its finite-wing correction on 0 deg instead of the zero-lift angle (AeroSandbox TODO), over-crediting camber. m62v2 at 5 deg / 20 m/s: fast NP 0.365 m (+27.6 mm), detailed 0.3325 m (-5.0 mm); quadlancet62 fast +8 mm, detailed about 0. Owner: no control surfaces, FC always flying, jet-fighter-like stability (matches detailed).
-        - Detailed model: body-rooted panels carried to the axis (carry-over includes camber lift); bodies from AeroBuildup; totals only (no per-surface split); valid to about +-30 deg (lifting line NaN at 45 deg); ~50-60 s.
-        - aero_check.py (reference: lifting line, body-rooted panels carried to the axis) at 5 deg / 20 m/s: fast model m62v2 main wing -20 %, X-wing -57 % (0.98 vs 2.28 N), tail fins +25 %; quadlancet62 long-span X main wing 1 %, short 9in-puller X -42 %. Fast model has no carry-over, so short X-wings on the tube are badly under-counted.
-        - Stability verdict depends on operating point; low-Re (45-65k) NeuralFoil section curves are bumpy; local NP per AoA jitters +/- 2-3 cm.
-        - Recompute ~0.9 s (fast, 94 AoA points). 2.5 deg sweep step: ~0.35 s.
+- D. Aero (live: lifting-line wings + AeroBuildup bodies, libs/aero.py analyze_aero, ~1.5 s):
+        - Lifting line = asb.LiftingLine's algorithm solved for all AoA at once (lifting_line_sweep). Matches asb.LiftingLine to 1e-14 N and the old on-demand detailed model (~50 s) to 1e-9 on m62v2 and quadlancer62. Replaced AeroBuildup wings (no downwash, no carry-over, camber over-credited): m62v2 at 5 deg / 20 m/s was +27.6 mm, now -5.0 mm.
+        - Margins at 20 m/s: m62v2 -5.0 mm at 5 deg; quadlancer62 +4.5 / +6.0 / +6.2 / +3.8 / -8.1 mm at 2 / 4 / 5 / 6 / 8 deg, -7.7 mm at its saved 0 deg / 15 m/s. Owner: no control surfaces, FC always flying, jet-fighter-like stability.
+        - Sweep -30..30 deg. Above ~35 deg the wind runs backwards along swept vertical fins in the strip model (negative Re, NaN polars, whole solve NaN). Operating point outside the sweep: summary says why, no aero.
+        - m62v2 tail fins carry ~0 lift at 5 deg (0.007 N; AeroBuildup said 0.33 N): downwash from the main wing and X-wing. Wind-aligned wake moves NP only 1.5 mm.
+        - NeuralFoil section polars (n_crit 9, Re ~100k) make Cm(AoA) wavy, so NP depends on the fit window (m62v2 at 5 deg: -5.0 mm over +-4 deg, -9 mm over +-2 deg). The sweep table's local NP column is meaningless near stall (dCL/dAoA -> 0).
+        - aero_check.py still compares each surface set of the live model against that set alone in the lifting line; differences are now downwash between sets, not errors. Rework: check lifting_line_sweep against asb.LiftingLine; keep VLM columns for information.
         - Imported DAT airfoils cannot be assigned to surfaces (surfaces take AeroSandbox names only).
         - VSPAERO 3.43 (/usr/local/bin/vspaero) diverges (CL ~ -300 at 0 deg) on AeroSandbox export_OpenVSP_vspscript geometry.
 
@@ -75,9 +76,10 @@
 - F. JSBSim data not in model: inertia tensor and per-component y/z; empty vs payload/battery split; control surfaces (hinge, chord fraction, limits, mixing); per-motor thrust axis, spin direction, prop Ct/Cp vs J, rotor inertia, voltage sag; CL/CD/Cm vs alpha to +/-90 deg with body; CYb, Clb, Cnb, Cmq, Clp, Cnr, control derivatives; explicit reference area/span/chord; ground contact points.
 
 - Housekeeping:
-        - __pycache__/*.pyc committed despite .gitignore.
         - No requirements file. Deps (aerosandbox, neuralfoil, cadquery) only present in conda env "drone".
-        - AGENTS.md lists cad_example.py and library_editors_example.py, which do not exist; AGENTS.md caveats still describe linear AoA pass; docs/ui/configuration_view.md says red marker is Static CP; main_window.md calls CAD a placeholder.
+        - AGENTS.md lists cad_example.py and library_editors_example.py, which do not exist, and the legacy files below as primary.
+        - Legacy module-stack path still present: analyze_headless.py, libs/analysis.py (1308 lines), root m62v2.json / quadlancer62.json, data/default.json, data/modules.json. analyze_headless.py --export-step crashes (passes the legacy analysis dict to libs/cad.export_step, which takes a resolved airframe). No headless STEP/STL export on the plane-first model; GUI CAD view only.
+        - docs/ui predates the plane-first GUI (Builder V3 window, Controls tab, Module Editor).
 
 - Bring over from cadbuildsystem (predecessor):
         - cadparams/ FreeCAD spreadsheets (AirframeParams, WingVars, ParamAirfoil, CanardsAirfoil). Fix Fuselage_Thickness expr: OD - ID gives 2x wall; libs/cad.py uses (OD - ID) / 2.

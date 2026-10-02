@@ -7,7 +7,7 @@ Status: draft spec, awaiting approval. Supersedes the Lego module-stack model as
 - Design the aircraft as a whole, then cut it into printable sections. The module library is not the core.
 - Sectioning: tool proposes cuts automatically; user can move or lock cut lines.
 - Printed structure mass: computed from geometry and print settings; any section or part can be overridden with a weighed value.
-- `m62v2.json` and `quadlancet62.json` (real built aircraft) are re-entered plane-first as validation cases.
+- `m62v2.json` and `quadlancer62.json` (real built aircraft) are re-entered plane-first as validation cases.
 - Component data differences (e.g. battery weight) are data errors, not design variants.
 - Keep it parametric and define everything. Tube standards (M62, M75) are presets that fill parameters, not constraints.
 - Fuselage cross-section is not limited to circular (rectangular, octagonal, rounded corners later); circular first.
@@ -63,7 +63,7 @@ sections
 
 Body-rooted panels keep the true root edge on the body (follows nose/tail cones) and use an equivalent aero root at the mean body radius under the root chord. Axis-rooted panels start on the axis; Barrowman uses their exposed part.
 
-Converted examples: `aircraft/m62v2.json` and `aircraft/quadlancet62.json` reproduce the old totals (1.1408 / 1.3732 kg, plus props 1.1608 / 1.4292 kg). The old modules are sections (cuts at the module boundaries, module mass as the section's weighed mass), couplers 21.36 g per joint, the battery is the only volume. m62v2 tail fins are axis-rooted, 55 mm span (delta: straight trailing edge, joined at the centre).
+Converted examples: `aircraft/m62v2.json` and `aircraft/quadlancer62.json` reproduce the old totals (1.1408 / 1.3732 kg, plus props 1.1608 / 1.4292 kg). The old modules are sections (cuts at the module boundaries, module mass as the section's weighed mass), couplers 21.36 g per joint, the battery is the only volume. m62v2 tail fins are axis-rooted, 55 mm span (delta: straight trailing edge, joined at the centre).
 
 ## 2. Libraries (data/)
 
@@ -106,7 +106,7 @@ Then minimise section count, then balance lengths. Infeasible combinations (e.g.
 
 ## 6. Validation
 
-Re-enter `m62v2` and `quadlancet62` plane-first. Compare derived total mass and CG with the module-sum values (m62v2: 1.1408 kg, CG 0.334 m) and with real measured values if available. `aero_check.py` keeps cross-checking aero.
+Re-enter `m62v2` and `quadlancer62` plane-first. Compare derived total mass and CG with the module-sum values (m62v2: 1.1408 kg, CG 0.334 m) and with real measured values if available. `aero_check.py` keeps cross-checking aero.
 
 ## 7. Phases (approval between phases)
 
