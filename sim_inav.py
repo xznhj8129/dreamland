@@ -10,6 +10,10 @@ real board's hardware and calibration lines removed (listed when run).
 hover: standing on its tail, arm in ANGLE, climb, then NAV POSHOLD (NAV ALTHOLD if the config has no POSHOLD) hover;
        compares the hover motor command with the export's prediction. JSBSim pitch is +90 deg in hover, so tilt is
        90 - pitch; INAV's roll/pitch are in the hover frame.
+cruise: takeoff and cruise efficiency, flown like the VTOL plane it is: standing, arm, climb in ANGLE straight to
+       TAKEOFF_ALT_M, switch to the forward profile in ACRO, the script pilot pitches over and holds altitude; then level flight at descending motor
+       commands, each until the airspeed settles: speed, AoA, battery power, Wh/km, endurance and range. Battery power
+       uses the JSBSim motor's own constants (V = throttle position x pack voltage, I = (V - rpm/Kv) / R).
 dash:  full-throttle level dash in forward flight: airborne, level, from rest, in the forward mixer profile
        (MIXER PROFILE 2) without ANGLE (ACRO, as flown). The script is the pilot: it holds altitude, wings level and heading with the
        rate sticks, and runs until the airspeed stops rising.
@@ -45,13 +49,13 @@ SITL_SENSOR_LINES = (
 GENERATED_CONFIG_LINES = (
     "set mag_hardware = FAKE",
     "set nav_mc_althold_throttle = MID_STICK    # centre stick holds altitude",
-    "# switches: AUX1 arm, AUX2 angle, AUX3 mid althold / high poshold, AUX4 mid RTH / high WP",
+    "# switches: AUX1 arm, AUX2 angle, AUX3 mid althold / high poshold, AUX4 mid mixer transition / high mixer profile 2",
     "aux 0 0 0 1700 2100",
     "aux 1 1 1 1300 2100",
     "aux 2 3 2 1300 1700",
     "aux 3 11 2 1700 2100",
-    "aux 4 10 3 1300 1700",
-    "aux 5 28 3 1700 2100",
+    "aux 4 63 3 1300 1700",
+    "aux 5 62 3 1700 2100",
 )
 # From a real (INAV 8) diff only what defines the aircraft goes into the INAV 10 SITL: the mixer profiles (platform,
 # motor mix, motor direction, tailsitter offset, profile linking) and the mode switches on AUX1-4 (all MSP_SIMULATOR
@@ -69,6 +73,17 @@ STANCE_CLEARANCE_M = 0.0005
 HOVER_MIXER_PROFILE = 0  # INAV mixer profile 1
 FORWARD_MIXER_PROFILE = 1  # INAV mixer profile 2
 DASH_ALT_M = 100.0
+TAKEOFF_ALT_M = 60.0
+TAKEOFF_CLIMB_STICK_ABOVE_HOVER = 0.15
+TAKEOFF_MAX_S = 30.0
+CRUISE_MOTOR_STEPS = (0.70, 0.60, 0.55, 0.52, 0.50, 0.48, 0.46, 0.44, 0.42)  # throttle targets, descending (mean motor runs lower: pitch control)
+CRUISE_STEP_MIN_S = 8.0
+CRUISE_STEP_MAX_S = 25.0
+CRUISE_STEADY_S = 3  # settled when airspeed changed less than CRUISE_STEADY_M_S over this many seconds
+CRUISE_STEADY_M_S = 0.2
+CRUISE_ALT_TOLERANCE_M = 5.0  # a step that cannot hold altitude within this ends the sweep
+USABLE_BATTERY_FRACTION = 0.8  # of nominal LiPo energy (3.7 V/cell)
+LIPO_NOMINAL_CELL_V = 3.7
 ATTITUDE_SETTLE_DEG = 3.0  # arm once INAV's roll/pitch agree with truth this closely after the profile switch
 ATTITUDE_SETTLE_MAX_S = 20.0
 DASH_START_SPEED_M_S = 0.0  # a held start at speed feeds INAV moving GPS with an IMU at rest: its multirotor attitude estimate drifts
@@ -165,6 +180,100 @@ def hover_test(bench: Bench, export, motor_count: int, hold_s: float) -> None:
           f"({(mean / export.hover_motor_fraction - 1.0) * 100.0:+.1f} %)")
 
 
+def battery_power_w(fdm, fit, motor_count: int) -> float:
+    """Battery power of all motors from the JSBSim motor's constants (lossless ESC)."""
+    total = 0.0
+    for index in range(motor_count):
+        volts = fdm[f"fcs/throttle-pos-norm[{index}]"] * fit.full_voltage_v
+        amps = max(0.0, (volts - fdm[f"propulsion/engine[{index}]/propeller-rpm"] / fit.kv_rpm_v) / fit.resistance_ohm)
+        total += volts * amps
+    return total
+
+
+@dataclass(frozen=True)
+class CruisePoint:
+    motor: float
+    airspeed_m_s: float
+    aoa_deg: float
+    pitch_deg: float
+    power_w: float
+    altitude_error_m: float
+
+
+def cruise_test(bench: Bench, export, motor_count: int, battery_wh: float) -> None:
+    fdm = bench.plant.fdm
+    hover_stick = (export.hover_stick_us - 1000) / 1000.0
+    idle = INAV_THROTTLE_IDLE_PCT / 100.0
+    bench.release()  # stand on the tail contacts
+    bench.run(STAND_S)
+    bench.mode("ANGLE")
+    bench.arm()
+    start = bench.elapsed
+    bench.sticks(throttle=min(1.0, hover_stick + TAKEOFF_CLIMB_STICK_ABOVE_HOVER))
+    max_tilt = 0.0
+
+    def climbed(b: Bench) -> bool:
+        nonlocal max_tilt
+        max_tilt = max(max_tilt, 90.0 - b.truth()["pitch"])
+        return b.truth()["agl_m"] >= TAKEOFF_ALT_M
+
+    if not bench.run(TAKEOFF_MAX_S, until=climbed):
+        raise RuntimeError(f"takeoff did not reach {TAKEOFF_ALT_M} m in {TAKEOFF_MAX_S} s: agl {bench.truth()['agl_m']:.1f} m")
+    print(f"takeoff: {TAKEOFF_ALT_M:.0f} m in {bench.elapsed - start:.1f} s, max tilt {max_tilt:.1f} deg")
+    # transition: forward profile, ACRO, the pilot pitches over and holds this altitude
+    pilot = DashPilot(target_alt_m=bench.truth()["agl_m"], target_heading_deg=fdm["attitude/psi-deg"])
+    bench.mode("ANGLE", on=False)
+    bench.mode("MIXER PROFILE 2")
+    bench.sticks(throttle=(CRUISE_MOTOR_STEPS[0] - idle) / (1.0 - idle), **pilot.sticks(fdm))
+    start = bench.elapsed
+    lowest = bench.truth()["agl_m"]
+    while 90.0 - abs(fdm["attitude/theta-deg"]) < 70.0 or bench.mixer_profile != FORWARD_MIXER_PROFILE:
+        bench.sticks(**pilot.sticks(fdm))
+        bench.run(0.02)
+        lowest = min(lowest, bench.truth()["agl_m"])
+        if bench.elapsed - start > TAKEOFF_MAX_S:
+            raise RuntimeError(f"transition did not level out: pitch {fdm['attitude/theta-deg']:.1f} deg, profile {bench.mixer_profile}")
+    print(f"transition: pitch under 20 deg after {bench.elapsed - start:.1f} s, lowest {lowest:.1f} m (from {pilot.target_alt_m:.1f} m)")
+
+    points = []
+    print(f"\n{'motor':>6} {'airspeed':>9} {'AoA':>6} {'pitch':>6} {'battery W':>10} {'A @pack':>8} {'Wh/km':>6} {'alt err':>8}")
+    for motor_target in CRUISE_MOTOR_STEPS:
+        bench.sticks(throttle=(motor_target - idle) / (1.0 - idle))
+        step_start = bench.elapsed
+        next_sample = step_start + 1.0
+        speeds = []
+        while bench.elapsed - step_start < CRUISE_STEP_MAX_S:
+            bench.sticks(**pilot.sticks(fdm))
+            bench.run(0.02)
+            if bench.elapsed < next_sample:
+                continue
+            next_sample += 1.0
+            speeds.append(fdm["velocities/vt-fps"] * FT)
+            if bench.elapsed - step_start >= CRUISE_STEP_MIN_S and len(speeds) > CRUISE_STEADY_S and abs(speeds[-1] - speeds[-1 - CRUISE_STEADY_S]) < CRUISE_STEADY_M_S:
+                break
+        power = battery_power_w(fdm, export.motor_fit, motor_count)
+        point = CruisePoint(
+            motor=sum(motor_fraction(us) for us in bench.motors[:motor_count]) / motor_count, airspeed_m_s=speeds[-1],
+            aoa_deg=fdm["aero/alpha-deg"], pitch_deg=fdm["attitude/theta-deg"], power_w=power,
+            altitude_error_m=bench.truth()["agl_m"] - pilot.target_alt_m,
+        )
+        print(f"{point.motor:6.3f} {point.airspeed_m_s:7.1f} m/s {point.aoa_deg:+5.1f} {point.pitch_deg:+5.1f} {point.power_w:9.0f}  "
+              f"{point.power_w / export.motor_fit.full_voltage_v:7.1f} {point.power_w / (3.6 * point.airspeed_m_s):6.2f} {point.altitude_error_m:+7.1f} m")
+        if abs(point.altitude_error_m) > CRUISE_ALT_TOLERANCE_M:
+            print(f"  cannot hold altitude at motor {point.motor:.3f}: sweep ends")
+            break
+        points.append(point)
+
+    usable_wh = USABLE_BATTERY_FRACTION * battery_wh
+    best_range = min(points, key=lambda p: p.power_w / p.airspeed_m_s)
+    best_endurance = min(points, key=lambda p: p.power_w)
+    print(f"\nOn {USABLE_BATTERY_FRACTION:.0%} of {battery_wh:.1f} Wh (no battery sag modelled):")
+    print(f"  best range of the steps:     {best_range.airspeed_m_s * 3.6:.0f} km/h at {best_range.power_w:.0f} W -> "
+          f"{best_range.power_w / (3.6 * best_range.airspeed_m_s):.2f} Wh/km, {usable_wh / (best_range.power_w / (3.6 * best_range.airspeed_m_s)):.1f} km")
+    print(f"  best endurance of the steps: {best_endurance.airspeed_m_s * 3.6:.0f} km/h at {best_endurance.power_w:.0f} W -> "
+          f"{usable_wh / best_endurance.power_w * 60.0:.1f} min")
+
+
 def dash_test(bench: Bench, motor_count: int) -> None:
     bench.mode("MIXER PROFILE 2")
     if not bench.run(5.0, until=lambda b: b.mixer_profile == FORWARD_MIXER_PROFILE):
@@ -210,7 +319,7 @@ def dash_test(bench: Bench, motor_count: int) -> None:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fly an airframe/2 aircraft in INAV SITL on JSBSim (inav-jsbsim-bench).")
-    parser.add_argument("test", choices=("hover", "dash"))
+    parser.add_argument("test", choices=("hover", "cruise", "dash"))
     parser.add_argument("airframe", type=Path, help="airframe/2 file")
     parser.add_argument("--sitl", type=Path, required=True, help="INAV SITL.elf")
     parser.add_argument("--inav-config", type=Path, default=None, help="real INAV CLI diff to fly (default: the export's generated hover profile)")
@@ -235,7 +344,7 @@ def main() -> None:
     print(f"{resolved.airframe.name}: {sum(resolved.mass_kg) / 2.0 * 1000:.0f} g, predicted hover motor command {export.hover_motor_fraction:.3f} "
           f"(stick {export.hover_stick_us} us, throttle_idle {INAV_THROTTLE_IDLE_PCT} %), JSBSim model in {out_dir}")
 
-    if args.test == "hover":
+    if args.test in ("hover", "cruise"):
         vehicle = Vehicle(
             model=export.model_name, profile=str(profile_path), motors=export.motor_properties,
             airborne=True, alt_m=export.stance_height_m + STANCE_CLEARANCE_M, speed_kts=0.0,
@@ -250,6 +359,10 @@ def main() -> None:
     with Bench(vehicle, sitl=str(args.sitl), log=str(out_dir / f"sim_inav_{args.test}.csv")) as bench:
         if args.test == "hover":
             hover_test(bench, export, motor_count, args.hover_s)
+        elif args.test == "cruise":
+            airframe = resolved.airframe
+            battery = parts_data["battery"][next(v for v in airframe.volumes if v.name == airframe.propulsion.battery_volume).part.partition(":")[2]]
+            cruise_test(bench, export, motor_count, battery["s"] * LIPO_NOMINAL_CELL_V * battery["mah"] / 1000.0)
         else:
             dash_test(bench, motor_count)
 

@@ -23,8 +23,8 @@ Model choices (best estimates where no data exists):
 - Aerodynamics: AeroSandbox AeroBuildup on the whole aircraft over AoA -180..180 and sideslip -90..90 at the operating
   airspeed (body-axis tables), roll/pitch/yaw damping from AeroBuildup at AoA 0. The live lifting-line model covers only
   +-30 deg, so it is not used here yet.
-- Contact points: the aft-most points (tail end, panel tip trailing edges) it stands on, as STRUCTURE contacts; springs
-  from the weight. Start standing at stance_height_m: JSBSim's ground trim (do_simple_trim) crashes on a nose-up model.
+- Contact points: the tail end and every panel tip trailing edge, as STRUCTURE contacts; JSBSim decides which touch
+  (it may lean onto wingtips that end short of the tail). Springs sized for CONTACT_SUPPORTING_POINTS carrying the weight. Start standing at stance_height_m: JSBSim's ground trim (do_simple_trim) crashes on a nose-up model.
 """
 
 import math
@@ -52,7 +52,7 @@ PROP_J_TABLE_END = 1.2  # of the zero-thrust advance ratio
 APC_REFERENCE_PROP = "DJI_9450"  # JSBSim's bundled APC 9x4.5E table, for the Cp(J) shape
 AERO_ALPHA_DEG = np.arange(-180.0, 181.0, 10.0)
 AERO_BETA_DEG = np.arange(-90.0, 91.0, 10.0)
-CONTACT_STANCE_TOLERANCE_M = 0.005  # points this close to the aft-most one carry the aircraft
+CONTACT_SUPPORTING_POINTS = 3  # contacts assumed to carry the weight when it stands, for the spring rate
 CONTACT_STATIC_DEFLECTION_M = 0.002
 CONTACT_DAMPING_RATIO = 1.0
 CONTACT_FRICTION = (0.8, 0.5)  # static, dynamic (as JSBSim's F450)
@@ -74,6 +74,7 @@ class JSBSimExport:
     hover_motor_fraction: float  # predicted motor command in hover
     hover_stick_us: int  # nav_mc_hover_thr
     stance_height_m: float  # CG height when standing on the contact points, nose up (start here; JSBSim's ground trim crashes on it)
+    motor_fit: "MotorFit"  # the motor constants in the JSBSim model, for battery power: V = throttle-pos x full_voltage_v
 
 
 def inav_motor_order(resolved: ResolvedAirframe) -> tuple[int, ...]:
@@ -106,15 +107,12 @@ def jsbsim_inertia(inertia: Inertia) -> tuple[float, float, float, float, float,
 
 
 def contact_points(resolved: ResolvedAirframe) -> list[Vec]:
-    candidates = [(resolved.body.length_m, 0.0, 0.0)]
+    """The tail end and every panel tip trailing edge."""
+    points = [(resolved.body.length_m, 0.0, 0.0)]
     for surface_set in resolved.surfaces:
         for panel in surface_set.panels:
-            candidates.append((panel.tip_le[0] + panel.chord_tip_m, panel.tip_le[1], panel.tip_le[2]))
-    aft = max(point[0] for point in candidates)
-    stance = [point for point in candidates if point[0] >= aft - CONTACT_STANCE_TOLERANCE_M]
-    if len(stance) < 3:
-        raise ValueError(f"{resolved.airframe.name}: only {len(stance)} aft-most contact points within {CONTACT_STANCE_TOLERANCE_M} m; it cannot stand on its tail")
-    return stance
+            points.append((panel.tip_le[0] + panel.chord_tip_m, panel.tip_le[1], panel.tip_le[2]))
+    return points
 
 
 def thrust_curve(points: dict[str, np.ndarray]) -> tuple[np.ndarray, np.ndarray]:
@@ -302,8 +300,8 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
     cg = resolved.cg_m
     ixx, iyy, izz, ixy, ixz, iyz = jsbsim_inertia(resolved.inertia_kg_m2)
     contacts = contact_points(resolved)
-    spring = weight_n / (len(contacts) * CONTACT_STATIC_DEFLECTION_M)
-    damping = 2.0 * CONTACT_DAMPING_RATIO * math.sqrt(spring * sum(resolved.mass_kg) / 2.0 / len(contacts))
+    spring = weight_n / (CONTACT_SUPPORTING_POINTS * CONTACT_STATIC_DEFLECTION_M)
+    damping = 2.0 * CONTACT_DAMPING_RATIO * math.sqrt(spring * sum(resolved.mass_kg) / 2.0 / CONTACT_SUPPORTING_POINTS)
     contacts_xml = "".join(f"""
     <contact name="tail {index + 1}" type="{CONTACT_TYPE}">
       <location unit="M"> <x> {x:.5f} </x> <y> {y:.5f} </y> <z> {z:.5f} </z> </location>
@@ -396,26 +394,39 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
 
     order = inav_motor_order(resolved)
     mixers = inav_mixers(resolved, order)
-    mmix = [
-        f"mmix {output} 1.000 {roll:+.3f} {pitch:+.3f} {yaw:+.3f}    # {resolved.motors[index].name}, {resolved.motors[index].spin}"
-        for output, (index, (roll, pitch, yaw)) in enumerate(zip(order, mixers["hover"]))
-    ]
+    def mmix_lines(mix: str) -> list[str]:
+        return [
+            f"mmix {output} 1.000 {roll:+.3f} {pitch:+.3f} {yaw:+.3f}    # {resolved.motors[index].name}, {resolved.motors[index].spin}"
+            for output, (index, (roll, pitch, yaw)) in enumerate(zip(order, mixers[mix]))
+        ]
+
     cli_path = out_dir / "inav_aircraft.cli"
     cli_path.write_text("\n".join([
-        f"# quadrocketbuilder export of {airframe.name}: INAV multirotor (hover) profile of the tailsitter.",
-        "# Motor outputs in INAV quad X order where it applies; front = aircraft belly, right = +y.",
+        f"# quadrocketbuilder export of {airframe.name}: INAV mixer profiles of the tailsitter, structured as the real m62v1",
+        "# config that flew forward (Aug 2025): profile 1 hover (multirotor, tailsitter offset), profile 2 forward flight on",
+        "# the motors (multirotor platform, nose-first mix). Motor outputs in INAV quad X order where it applies.",
+        f"set throttle_idle = {INAV_THROTTLE_IDLE_PCT}",
+        f"set nav_mc_hover_thr = {hover_stick_us}    # predicted motor command {hover_fraction:.3f} for {weight_n / len(resolved.motors):.2f} N per motor",
+        "mixer_profile 1",
         "set platform_type = MULTIROTOR",
         "set tailsitter_orientation_offset = ON",
         "set motor_direction_inverted = OFF",
-        f"set throttle_idle = {INAV_THROTTLE_IDLE_PCT}",
+        "set mixer_control_profile_linking = ON",
         "mmix reset",
-        *mmix,
-        f"set nav_mc_hover_thr = {hover_stick_us}    # predicted motor command {hover_fraction:.3f} for {weight_n / len(resolved.motors):.2f} N per motor",
+        *mmix_lines("hover"),
+        "mixer_profile 2",
+        "set platform_type = MULTIROTOR",
+        "set tailsitter_orientation_offset = OFF",
+        "set motor_direction_inverted = OFF",
+        "set mixer_control_profile_linking = ON",
+        "mmix reset",
+        *mmix_lines("forward"),
+        "mixer_profile 1",
         "",
     ]))
     return JSBSimExport(
         model_name=model_name, model_dir=out_dir, inav_cli_path=cli_path,
         motor_properties=tuple(MOTOR_THROTTLE_PROPERTY.format(index=index) for index in order), inav_mixers=mixers,
         hover_motor_fraction=hover_fraction, hover_stick_us=hover_stick_us,
-        stance_height_m=max(point[0] for point in contacts) - cg[0],
+        stance_height_m=max(point[0] for point in contacts) - cg[0], motor_fit=fit,
     )

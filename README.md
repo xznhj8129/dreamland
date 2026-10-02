@@ -21,7 +21,9 @@ python analyze_airframe.py aircraft/m62v2.json                # same analysis, t
 python analyze_airframe.py aircraft/m62v2.json --aoa 5 --airspeed 20 --sweep
 python analyze_airframe.py aircraft/m62v2.json --export-step out.step --step-mode fused --export-stl out.stl
 python aero_check.py                                          # live lifting line vs asb.LiftingLine, per-surface info
-python sim_inav.py aircraft/m62v1.json --sitl <path>/inav/build_SITL/bin/SITL.elf   # hover in INAV SITL on JSBSim
+python sim_inav.py hover aircraft/m62v1.json --sitl <path>/inav/build_SITL/bin/SITL.elf     # hover in INAV SITL on JSBSim
+python sim_inav.py cruise aircraft/quadlancer62.json --sitl <SITL.elf>                     # takeoff, transition, cruise efficiency
+python sim_inav.py dash aircraft/m62v1.json --sitl <SITL.elf> --inav-config aircraft/inav/m62v1_2025-08-20.txt
 ```
 
 Aircraft files are opened as an argument or with File → Load. STEP/STL export is also in the GUI's CAD view.

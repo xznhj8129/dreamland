@@ -58,7 +58,8 @@
             "chord_tip_m": 0.09,
             "sweep_le_deg": 1.0,
             "incidence_deg": 2.0,
-            "airfoil": "naca2412"
+            "airfoil": "naca2412",
+            "mass_kg": 0.36
         },
         {
             "name": "9in-puller",
