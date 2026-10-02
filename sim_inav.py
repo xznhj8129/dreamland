@@ -76,12 +76,13 @@ DASH_ALT_M = 100.0
 TAKEOFF_ALT_M = 60.0
 TAKEOFF_CLIMB_STICK_ABOVE_HOVER = 0.15
 TAKEOFF_MAX_S = 30.0
-CRUISE_MOTOR_STEPS = (0.70, 0.60, 0.55, 0.52, 0.50, 0.48, 0.46, 0.44, 0.42)  # throttle targets, descending (mean motor runs lower: pitch control)
+CRUISE_MOTOR_STEPS = (0.70, 0.60, 0.55, 0.52, 0.50, 0.48, 0.46, 0.44, 0.42, 0.40, 0.38)  # throttle targets, descending (mean motor runs lower: pitch control)
 CRUISE_STEP_MIN_S = 8.0
 CRUISE_STEP_MAX_S = 25.0
 CRUISE_STEADY_S = 3  # settled when airspeed changed less than CRUISE_STEADY_M_S over this many seconds
 CRUISE_STEADY_M_S = 0.2
-CRUISE_ALT_TOLERANCE_M = 5.0  # a step that cannot hold altitude within this ends the sweep
+CRUISE_SINK_LIMIT_M_S = 0.5  # a step still sinking faster than this at its end cannot hold altitude: the sweep ends
+CRUISE_ALT_LOSS_LIMIT_M = 15.0  # or this far below the transition altitude (the script pilot sags ~1 m per slower step)
 USABLE_BATTERY_FRACTION = 0.8  # of nominal LiPo energy (3.7 V/cell)
 LIPO_NOMINAL_CELL_V = 3.7
 ATTITUDE_SETTLE_DEG = 3.0  # arm once INAV's roll/pitch agree with truth this closely after the profile switch
@@ -198,6 +199,7 @@ class CruisePoint:
     pitch_deg: float
     power_w: float
     altitude_error_m: float
+    climb_m_s: float
 
 
 def cruise_test(bench: Bench, export, motor_count: int, battery_wh: float) -> None:
@@ -255,12 +257,12 @@ def cruise_test(bench: Bench, export, motor_count: int, battery_wh: float) -> No
         point = CruisePoint(
             motor=sum(motor_fraction(us) for us in bench.motors[:motor_count]) / motor_count, airspeed_m_s=speeds[-1],
             aoa_deg=fdm["aero/alpha-deg"], pitch_deg=fdm["attitude/theta-deg"], power_w=power,
-            altitude_error_m=bench.truth()["agl_m"] - pilot.target_alt_m,
+            altitude_error_m=bench.truth()["agl_m"] - pilot.target_alt_m, climb_m_s=-bench.truth()["vd"],
         )
         print(f"{point.motor:6.3f} {point.airspeed_m_s:7.1f} m/s {point.aoa_deg:+5.1f} {point.pitch_deg:+5.1f} {point.power_w:9.0f}  "
               f"{point.power_w / export.motor_fit.full_voltage_v:7.1f} {point.power_w / (3.6 * point.airspeed_m_s):6.2f} {point.altitude_error_m:+7.1f} m")
-        if abs(point.altitude_error_m) > CRUISE_ALT_TOLERANCE_M:
-            print(f"  cannot hold altitude at motor {point.motor:.3f}: sweep ends")
+        if point.climb_m_s < -CRUISE_SINK_LIMIT_M_S or point.altitude_error_m < -CRUISE_ALT_LOSS_LIMIT_M:
+            print(f"  cannot hold altitude at motor {point.motor:.3f} (sinking {-point.climb_m_s:.1f} m/s): sweep ends")
             break
         points.append(point)
 
