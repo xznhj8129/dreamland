@@ -123,4 +123,4 @@ Re-enter `m62v2` and `quadlancer62` plane-first. Compare derived total mass and 
 5. Auto sectioning and coupler generation; printable section STEP/STL.
 6. GUI rebuilt around the definition (edit plane parameters, move/lock cuts).
 7. Aero refinements from `TODO.md` D.
-8. JSBSim export.
+8. JSBSim export. Milestone 1 (hover in INAV SITL) done 2026-10-01; forward flight and transition next (`TODO.md` F).

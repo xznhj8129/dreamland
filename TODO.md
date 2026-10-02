@@ -51,21 +51,21 @@
         - Sweep -30..30 deg. Above ~35 deg the wind runs backwards along swept vertical fins in the strip model (negative Re, NaN polars, whole solve NaN). Operating point outside the sweep: summary says why, no aero.
         - m62v2 tail fins carry ~0 lift at 5 deg (0.007 N; AeroBuildup said 0.33 N): downwash from the main wing and X-wing. Wind-aligned wake moves NP only 1.5 mm.
         - NeuralFoil section polars (n_crit 9, Re ~100k) make Cm(AoA) wavy, so NP depends on the fit window (m62v2 at 5 deg: -5.0 mm over +-4 deg, -9 mm over +-2 deg). The sweep table's local NP column is meaningless near stall (dCL/dAoA -> 0).
-        - aero_check.py still compares each surface set of the live model against that set alone in the lifting line; differences are now downwash between sets, not errors. Rework: check lifting_line_sweep against asb.LiftingLine; keep VLM columns for information.
+        - aero_check.py checks lifting_line_sweep against asb.LiftingLine (max difference 2.5e-14 on all three aircraft); per-surface live vs alone vs VLM printed for information. m62v1 tail fins sit in the X-wing downwash (0.06 N live vs 0.26 N alone at 5 deg).
         - Imported DAT airfoils cannot be assigned to surfaces (surfaces take AeroSandbox names only).
         - VSPAERO 3.43 (/usr/local/bin/vspaero) diverges (CL ~ -300 at 0 deg) on AeroSandbox export_OpenVSP_vspscript geometry.
 
 - E. GUI:
         - Part Editor (libs/library_editors.py): rename to an existing name overwrites on disk; category change keeps old fields; unsaved edits discarded on selection or view change; own copies of length-field list, palette, ordered_keys, format_field_value, field_label, parsing; NEW_PART_LIBRARY_DEFAULTS hardcoded.
 
-- F. JSBSim export, for INAV SITL via inav_development/inav-jsbsim-bench (MSP_SIMULATOR HITL; INAV does the mixing, the bench writes per-motor commands into JSBSim properties):
-        - Have: inertia tensor about the CG (component shapes), per-motor prop spin (propulsion.prop_spin), motor positions and thrust axis, reference area/span/chord.
-        - Model files after the bundled F450 (jsbsim/aircraft/F450: Metrics, Mass, Gear, Propulsion, Effectors, Aero); motor inputs as plain properties driving fcs/throttle-pos-norm[i], no internal FCS. Motor order = INAV mmix (quad X: 1 rear-right, 2 front-right, 3 rear-left, 4 front-left, in the MC hover frame).
-        - Bench Plant loads bundled JSBSim models only: needs set_aircraft_path / set_engine_path / set_systems_path. No tailsitter vehicle or profile yet (INAV: AIRPLANE mixer profile + MC profile with tailsitter_orientation_offset = ON).
-        - Body x = nose = thrust axis, so hover is theta 90 deg: bench rangefinder() returns -1 and truth() Euler angles hit gimbal lock there.
-        - Ground contact: it stands on its tail; 3 contact points at the tail (F450 notes 4-point ground trim trouble); bench ground start uses do_simple_trim = 2.
-        - Aero tables: lifting line only to +-30 deg; hover and transition need +-90..180 deg (AeroBuildup post-stall), beta, Cmq, Clp, Cnr.
-        - Prop: no forward-flight data. Static Ct from motordata.csv (T / (rho n^2 D^4)); Ct(J) only from simlib2's Tyto formula (linear, zero at J ~ p/D); no Cp(J) (electrical power only). Motor block needs Kv, coil resistance, no-load current: no Flashobby A2807 entry in dronebuildcalc motorlib (DYS X2807-1300 60 mOhm / 1.0 A, EMAX ECOII-2807 1300KV 58 mOhm / 1.3 A). Rotor inertia: rod estimate (geometry.rotor_inertia) from parts.json prop mass.
+- F. JSBSim export (libs/jsbsim.py, sim_inav.py), for INAV SITL via inav_development/inav-jsbsim-bench (MSP_SIMULATOR HITL; INAV mixes):
+        - Done 2026-10-01, milestone 1 (hover): m62v1 stands on its tail, arms, climbs and holds NAV POSHOLD in INAV SITL; hover motor command 0.226 vs 0.228 predicted from bench data; POSHOLD within 0.6 m.
+        - Motor: bench RPM does not fit a DC-motor model at rated KV (fit needs duty > 1), so electric engine + throttle table matching measured static thrust (JSBSim static thrust within 3 g of the bench rows; thrust ~ throttle^2 below 40 %). Full power = 0.70 x electrical (assumed; sets Cp only).
+        - Prop: Ct0 0.137 (all bench rows); Ct(J) linear to zero at J = p/D (Tyto, as simlib2); Cp(J) = APC 9x4.5E shape (JSBSim DJI_9450) scaled; no measured forward-flight data. Rotor inertia: prop only.
+        - Aero tables: AeroBuildup body-axis CX..Cn over AoA -180..180 x sideslip -90..90 at the operating airspeed, damping at AoA 0; not the lifting line (+-30 deg only). Blend the lifting line in for forward flight.
+        - JSBSim quirks: do_simple_trim (ground trim) segfaults on a nose-up model, so start standing at stance_height_m; BOGEY contacts explode with the body axis vertical, so STRUCTURE contacts.
+        - INAV HITL: MSP_SIMULATOR writes acc/gyro/mag past board/tailsitter alignment; the bench (Vehicle.tailsitter) rotates sensors into the hover frame. FC pitch estimate carries ~+1.6 deg bias in hover (likely INAV's one-time tailsitter quaternion rotation at boot); POSHOLD absorbs it.
+        - Next: forward flight and transition (INAV AIRPLANE mixer profile + MIXER TRANSITION; bench must switch the sensor frame with the active mixer profile), lifting-line aero blend, m62v2 and quadlancer62, comparison with real flights.
         - No control surfaces in the model; control surface design tools to add.
         - No battery sag in the bench (JSBSim maxvolts only).
 

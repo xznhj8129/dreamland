@@ -1,16 +1,18 @@
 """
 Usage:
 python aero_check.py
-python aero_check.py aircraft/m62v2.json aircraft/quadlancer62.json --aoa 0 2 5 --airspeed 20
+python aero_check.py aircraft/m62v1.json --aoa 0 5 10 --airspeed 20
 
-Cross-checks the fast configuration aero (libs/aero.py, AeroBuildup) per lifting-surface set against the
-AeroSandbox lifting line with body-rooted panels carried to the axis (the same wing treatment as the detailed
-model: finite-wing physics, viscous low-Re camber, stall, lift carried across the body). That is the reference.
+Checks the live aero's lifting line (libs/aero.py lifting_line_sweep, every AoA in one batch) against
+asb.LiftingLine solved per AoA on the same wings: they must agree to --tolerance (N, N m).
 
-VLM is shown for information: it ignores the body (exposed panels read low) and is inviscid (under-reads camber
-lift at these Reynolds numbers); "VLM thru" carries single horizontal pairs through the body.
+Then prints, per surface set and for information:
+- live: its lift in the live model (downwash from the other sets, lift carried across the body)
+- alone: the same set alone in the lifting line (no other sets, so no downwash from them)
+- VLM exposed: AeroSandbox VLM on the exposed panels (inviscid, no body: body-mounted panels read low)
+- VLM thru: single horizontal pairs carried through the body in VLM
 
-Exit code 1 if any surface differs from the lifting-line reference by more than --tolerance.
+Exit code 1 if the batched lifting line and asb.LiftingLine differ by more than --tolerance.
 """
 
 import argparse
@@ -22,11 +24,14 @@ from pathlib import Path
 import aerosandbox as asb
 import numpy as np
 
-from libs.aero import AERO_MODEL_SIZE, LIFTING_LINE_CORE_RADIUS_M, LIFTING_LINE_SPANWISE_RESOLUTION, analyze_aero, build_asb_airplane, carried_to_axis
+from libs.aero import (
+    AERO_MODEL_SIZE, LIFTING_LINE_CORE_RADIUS_M, LIFTING_LINE_SPANWISE_RESOLUTION, build_asb_airplane, build_hybrid_airplanes,
+    build_lifting_line_mesh, lifting_line_sweep,
+)
 from libs.airframe import PARTS_PATH, load_airframe
 from libs.geometry import resolve_airframe
 
-DEFAULT_AIRFRAMES = (Path("aircraft/m62v2.json"), Path("aircraft/quadlancer62.json"))
+DEFAULT_AIRFRAMES = (Path("aircraft/m62v1.json"), Path("aircraft/m62v2.json"), Path("aircraft/quadlancer62.json"))
 VLM_SPANWISE_RESOLUTION = 12
 VLM_CHORDWISE_RESOLUTION = 8
 
@@ -39,13 +44,6 @@ def vlm_lift_n(airplane: asb.Airplane, aoa_deg: float, airspeed_m_s: float) -> f
         chordwise_resolution=VLM_CHORDWISE_RESOLUTION,
     )
     return float(vlm.run()["L"])
-
-
-def lifting_line_lift_n(airplane: asb.Airplane, aoa_deg: float, airspeed_m_s: float) -> float:
-    return float(asb.LiftingLine(
-        airplane=airplane, op_point=asb.OperatingPoint(velocity=airspeed_m_s, alpha=aoa_deg), model_size=AERO_MODEL_SIZE,
-        spanwise_resolution=LIFTING_LINE_SPANWISE_RESOLUTION, vortex_core_radius=LIFTING_LINE_CORE_RADIUS_M,
-    ).run()["L"])
 
 
 def carried_through(wing: asb.Wing) -> asb.Wing:
@@ -64,55 +62,66 @@ def layout_label(surface_set) -> str:
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Cross-check AeroBuildup surface lift against VLM.")
+    parser = argparse.ArgumentParser(description="Check the batched lifting line against asb.LiftingLine; per-surface lift for information.")
     parser.add_argument("airframes", type=Path, nargs="*", default=list(DEFAULT_AIRFRAMES), help="airframe/2 files")
-    parser.add_argument("--aoa", type=float, nargs="+", default=[2.0, 5.0], help="AoA values in degrees.")
-    parser.add_argument("--airspeed", type=float, default=20.0, help="Airspeed in m/s.")
-    parser.add_argument("--tolerance", type=float, default=0.15, help="Allowed relative lift difference for carried-through pairs.")
+    parser.add_argument("--aoa", type=float, nargs="+", default=[0.0, 5.0, 10.0], help="AoA values in degrees")
+    parser.add_argument("--airspeed", type=float, default=20.0, help="Airspeed in m/s")
+    parser.add_argument("--tolerance", type=float, default=1e-9, help="Allowed difference in lift, drag (N) and pitch moment (N m)")
     args = parser.parse_args()
 
     with open(PARTS_PATH, "r") as file:
         parts_data = json.load(file)
+    atmosphere = asb.Atmosphere(altitude=0.0)
+    aoa_values = np.array(args.aoa, dtype=float)
     failures = []
-    header = f"{'airframe':<14} {'AoA':>4}  {'surface':<18} {'layout':<6} {'AeroBuildup':>11} {'LL ref':>8} {'VLM thru':>9} {'VLM exposed':>11}  status"
+    header = f"{'airframe':<14} {'AoA':>5}  {'surface':<18} {'layout':<6} {'live N':>8} {'alone N':>8} {'VLM thru':>9} {'VLM exposed':>11}"
     print(header)
     print("-" * len(header))
     for path in args.airframes:
         airframe = load_airframe(path, parts_data)
-        for aoa_deg in args.aoa:
-            operating_point = dataclasses.replace(airframe.operating_point, aoa_deg=aoa_deg, airspeed_m_s=args.airspeed, altitude_m=0.0)
-            resolved, _problems = resolve_airframe(dataclasses.replace(airframe, operating_point=operating_point), parts_data)
-            aero = analyze_aero(resolved)
-            for surface_set, force in zip(resolved.surfaces, aero.surfaces):
-                airplane = build_asb_airplane(dataclasses.replace(resolved, surfaces=(surface_set,), motors=()))
-                airplane.fuselages = []
-                exposed_n = vlm_lift_n(airplane, aoa_deg, args.airspeed)
-                body_rooted = surface_set.definition.root == "body"
-                reference_plane = copy.deepcopy(airplane)
-                reference_plane.wings = [carried_to_axis(wing) if body_rooted else wing for wing in airplane.wings]
-                reference_n = lifting_line_lift_n(reference_plane, aoa_deg, args.airspeed)
-                through_text = f"{'n/a':>9}"
-                if len(surface_set.panels) == 2 and surface_set.panels[0].xz_mirror == "primary" and body_rooted:
-                    through_plane = copy.deepcopy(airplane)
-                    through_plane.wings = [carried_through(wing) for wing in airplane.wings]
-                    through_text = f"{vlm_lift_n(through_plane, aoa_deg, args.airspeed):9.3f}"
-                if abs(reference_n) < 0.05 * abs(force.lift_n) + 0.02:
-                    status = "ok (near zero lift)" if abs(force.lift_n - reference_n) < 0.05 else "check (near zero lift)"
-                else:
-                    error = abs(force.lift_n - reference_n) / abs(reference_n)
-                    status = f"{'FAIL' if error > args.tolerance else 'ok'} ({error * 100.0:.0f} %)"
-                    if error > args.tolerance:
-                        failures.append((path.stem, aoa_deg, surface_set.name))
-                print(f"{path.stem:<14} {aoa_deg:4.1f}  {surface_set.name:<18} {layout_label(surface_set):<6} {force.lift_n:11.3f} {reference_n:8.3f} {through_text} {exposed_n:11.3f}  {status}")
+        operating_point = dataclasses.replace(airframe.operating_point, aoa_deg=float(aoa_values[0]), airspeed_m_s=args.airspeed, altitude_m=0.0)
+        resolved, _problems = resolve_airframe(dataclasses.replace(airframe, operating_point=operating_point), parts_data)
+        wing_plane, _body_plane, owners = build_hybrid_airplanes(resolved)
+        surface_count = len(resolved.surfaces)
+        live = lifting_line_sweep(build_lifting_line_mesh(wing_plane, owners), wing_plane.xyz_ref, surface_count, atmosphere, args.airspeed, aoa_values)
+        alone = []
+        for index in range(surface_count):
+            wings = [wing for wing, owner in zip(wing_plane.wings, owners) if owner == index]
+            alone_plane = asb.Airplane(wings=wings, xyz_ref=wing_plane.xyz_ref, s_ref=wing_plane.s_ref, c_ref=wing_plane.c_ref, b_ref=wing_plane.b_ref)
+            alone.append(lifting_line_sweep(build_lifting_line_mesh(alone_plane, (0,) * len(wings)), wing_plane.xyz_ref, 1, atmosphere, args.airspeed, aoa_values))
+        for column, aoa_deg in enumerate(aoa_values):
+            reference = asb.LiftingLine(
+                airplane=wing_plane, op_point=asb.OperatingPoint(atmosphere=atmosphere, velocity=args.airspeed, alpha=float(aoa_deg)),
+                model_size=AERO_MODEL_SIZE, spanwise_resolution=LIFTING_LINE_SPANWISE_RESOLUTION, vortex_core_radius=LIFTING_LINE_CORE_RADIUS_M,
+            ).run()
+            batched = (live.lift_n[:, column].sum(), live.drag_n[:, column].sum(), live.pitch_moment_nm[:, column].sum())
+            expected = (float(reference["L"]), float(reference["D"]), float(reference["M_b"][1]))
+            difference = max(abs(a - b) for a, b in zip(batched, expected))
+            status = "ok" if difference <= args.tolerance else "FAIL"
+            if status == "FAIL":
+                failures.append((path.stem, float(aoa_deg), difference))
             print(
-                f"{path.stem:<14} {aoa_deg:4.1f}  {'(aircraft)':<18} {'':<6} {aero.lift_n:11.3f} {'':>9} {'':>11}  "
-                f"x_np={aero.x_np_m:.4f} m  cg={resolved.cg_m[0]:.4f} m"
+                f"{path.stem:<14} {aoa_deg:5.1f}  {'(all wings)':<18} {'':<6} {batched[0]:8.3f}  "
+                f"asb.LiftingLine L {expected[0]:.3f} N  max diff {difference:.1e}  {status}"
             )
+            for index, surface_set in enumerate(resolved.surfaces):
+                exposed_plane = build_asb_airplane(dataclasses.replace(resolved, surfaces=(surface_set,), motors=()))
+                exposed_plane.fuselages = []
+                through_text = f"{'n/a':>9}"
+                if len(surface_set.panels) == 2 and surface_set.panels[0].xz_mirror == "primary" and surface_set.definition.root == "body":
+                    through_plane = copy.deepcopy(exposed_plane)
+                    through_plane.wings = [carried_through(wing) for wing in exposed_plane.wings]
+                    through_text = f"{vlm_lift_n(through_plane, float(aoa_deg), args.airspeed):9.3f}"
+                print(
+                    f"{path.stem:<14} {aoa_deg:5.1f}  {surface_set.name:<18} {layout_label(surface_set):<6} "
+                    f"{live.lift_n[index, column]:8.3f} {alone[index].lift_n[0, column]:8.3f} {through_text} "
+                    f"{vlm_lift_n(exposed_plane, float(aoa_deg), args.airspeed):11.3f}"
+                )
 
     if failures:
-        print(f"\n{len(failures)} surface(s) outside {args.tolerance * 100.0:.0f} % of the lifting-line reference: {failures}")
+        print(f"\n{len(failures)} case(s) where the batched lifting line differs from asb.LiftingLine by more than {args.tolerance:g}: {failures}")
         raise SystemExit(1)
-    print("\nAll surfaces within tolerance of the lifting-line reference.")
+    print(f"\nBatched lifting line equals asb.LiftingLine within {args.tolerance:g} for every airframe and AoA.")
 
 
 if __name__ == "__main__":

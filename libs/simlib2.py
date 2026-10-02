@@ -330,6 +330,15 @@ class TestedMotorData:
             "max_watts": p.max_watts,
         }
 
+    def measured_points(self, prop_name: str) -> dict[str, np.ndarray]:
+        """The measured rows for a prop (no synthetic 0 % anchor): throttle %, rpm, thrust g, current A, voltage V, watts W."""
+        p = self._get_prop(prop_name)
+        measured = p.throttle > 0
+        return {
+            "throttle_pct": p.throttle[measured], "rpm": p.rpm[measured], "thrust_g": p.thrust_g[measured],
+            "current_a": p.current[measured], "voltage_v": p.voltage[measured], "watts": p.watts[measured],
+        }
+
     def _get_prop(self, prop_name: str) -> _PropData:
         if prop_name not in self._props:
             raise ValueError(

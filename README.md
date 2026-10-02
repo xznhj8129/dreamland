@@ -8,7 +8,7 @@ It exists because OpenVSP is unusable for this: the interface is hostile and mos
 
 The original workflow was Lego-style: print tube sections, couplers, nosecones and endcaps in FreeCAD, then assemble aircraft from those parts. That is backwards. The intended way is to design the aircraft as a whole (tube, nose, tail, wings, motors, battery, payload) and then cut it into printable sections.
 
-The aircraft definition is now plane-first (schema `airframe/2`, `PLAN.md` section 1): the GUI, aero, drawing and CAD export read it. `aircraft/m62v2.json` and `aircraft/quadlancer62.json` are real aircraft, originally built the Lego way and re-entered plane-first. The old module-stack model is retired.
+The aircraft definition is now plane-first (schema `airframe/2`, `PLAN.md` section 1): the GUI, aero, drawing and CAD export read it. `aircraft/m62v2.json` and `aircraft/quadlancer62.json` are real aircraft, originally built the Lego way and re-entered plane-first. `aircraft/m62v1.json` is m62v2 without the horizontal main-wing section: a pure dart. The old module-stack model is retired.
 
 ## Running it
 
@@ -20,7 +20,8 @@ python guibuilder.py aircraft/quadlancer62.json
 python analyze_airframe.py aircraft/m62v2.json                # same analysis, text report
 python analyze_airframe.py aircraft/m62v2.json --aoa 5 --airspeed 20 --sweep
 python analyze_airframe.py aircraft/m62v2.json --export-step out.step --step-mode fused --export-stl out.stl
-python aero_check.py aircraft/m62v2.json aircraft/quadlancer62.json
+python aero_check.py                                          # live lifting line vs asb.LiftingLine, per-surface info
+python sim_inav.py aircraft/m62v1.json --sitl <path>/inav/build_SITL/bin/SITL.elf   # hover in INAV SITL on JSBSim
 ```
 
 Aircraft files are opened as an argument or with File → Load. STEP/STL export is also in the GUI's CAD view.
@@ -57,7 +58,8 @@ The Barrowman CP line is a rocket-style estimate shown as a cross-check; if it d
 1. **Resolve.** The aircraft definition becomes geometry (body stations, wing panels, motors and pods) and point masses: every printed section, coupler, wing set, motor, prop and volume at its real position. That gives total mass, CG (a CG range when a volume's mass is a range) and the inertia tensor. Printed parts are estimated from geometry (fuselage: shell wall x material density; wings and fins: solid airfoil volume x a bulk density calibrated on a weighed printed segment) and the estimate is shown next to any weighed value.
 2. **Propulsion.** Measured bench data (`libs/motordata.csv`) for the chosen motor/prop/cell count gives static thrust, current, power, thrust/weight, hover throttle and flight time.
 3. **Aerodynamics (live, ~1.5 s): lifting line + bodies.** AeroSandbox's lifting line for all wings and fins, with body-mounted panels carried through the body to the axis, plus AeroSandbox AeroBuildup for the fuselage, pods and motors. It includes downwash from front surfaces onto rear ones, lift carried across the body, airfoil camber and stall at the actual Reynolds number (NeuralFoil section polars). It is AeroSandbox's `LiftingLine` algorithm solved for the whole AoA sweep at once. The neutral point comes from a straight-line fit of pitch moment against lift over ±4° around the operating point.
-4. **Barrowman cross-check.** The OpenRocket method for nose plus fins, with each fin weighted by how much it faces the pitch plane, so vertical fins add no pitch stability.
+4. **JSBSim export (`libs/jsbsim.py`).** Mass, CG, inertia, tail contact points, motors with spin, a throttle curve and prop tables fitted to the bench data, and full-range AeroBuildup aero tables, plus the INAV mixer for the tailsitter's hover profile. `sim_inav.py` flies it in INAV SITL on `inav-jsbsim-bench`; m62v1 hovers at the predicted motor command.
+5. **Barrowman cross-check.** The OpenRocket method for nose plus fins, with each fin weighted by how much it faces the pitch plane, so vertical fins add no pitch stability.
 
 Other views:
 
