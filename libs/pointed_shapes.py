@@ -37,6 +37,34 @@ def ogive_radius(radius_value: float, length_value: float) -> float:
     return (radius_value * radius_value + length_value * length_value) / (2.0 * radius_value)
 
 
+def check_profile(shape_name: str, length_value: float, radius_value: float, shape_params: dict | None = None) -> None:
+    """Raise ValueError when the profile cannot be built at this length and base radius."""
+    params = shape_params or {}
+    shape_key = normalize_shape_name(shape_name)
+    if length_value < 0.0 or radius_value <= 0.0:
+        raise ValueError(f"{shape_key}: length {length_value} must be >= 0 and base radius {radius_value} > 0")
+    if length_value == 0.0:
+        return  # a flat end
+    if shape_key == "tangent_ogive" and length_value < radius_value:
+        raise ValueError(f"tangent_ogive: length {length_value} is shorter than the base radius {radius_value}, so it cannot close to a point; use elliptical or a blunted profile")
+    if shape_key in ("spherically_blunted_conic", "spherically_blunted_tangent_ogive") and not 0.0 <= params["nose_radius"] < radius_value:
+        raise ValueError(f"{shape_key}: nose_radius {params['nose_radius']} must be >= 0 and smaller than the base radius {radius_value}")
+    if shape_key == "bi_conic":
+        for key in ("break_fraction", "break_radius_fraction"):
+            if not 0.0 < params[key] < 1.0:
+                raise ValueError(f"bi_conic: {key} {params[key]} must be between 0 and 1 (exclusive)")
+    if shape_key == "parabolic" and not 0.0 <= params["k_prime"] <= 1.0:
+        raise ValueError(f"parabolic: k_prime {params['k_prime']} must be between 0 and 1")
+    if shape_key == "power_series" and not 0.0 < params["exponent"] <= 1.0:
+        raise ValueError(f"power_series: exponent {params['exponent']} must be > 0 and <= 1")
+    if shape_key == "haack_series" and params["c"] < 0.0:
+        raise ValueError(f"haack_series: c {params['c']} must be >= 0")
+    if shape_key == "secant_ogive":
+        minimum = radius_value / math.hypot(radius_value, length_value)
+        if params["rho_factor"] < minimum:
+            raise ValueError(f"secant_ogive: rho_factor {params['rho_factor']} must be >= {minimum:.4f} at length {length_value}, radius {radius_value}")
+
+
 def pointed_shape_param_values(pointed_shape: dict) -> dict:
     shape_key = normalize_shape_name(pointed_shape["shape"])
     return {key: pointed_shape[key] for key in POINTED_SHAPE_PARAM_KEYS[shape_key]}
@@ -84,6 +112,7 @@ def sample_pointed_profile(shape_name: str, length_value: float, radius_value: f
     shape_key = normalize_shape_name(shape_name)
     if sample_count < 2:
         raise RuntimeError("sample_count must be at least 2")
+    check_profile(shape_key, length_value, radius_value, shape_params)
     if shape_key in {"spherically_blunted_conic", "spherically_blunted_tangent_ogive"}:
         return sample_spherical_blunted_profile(shape_key, length_value, radius_value, sample_count, shape_params)
     stations = []

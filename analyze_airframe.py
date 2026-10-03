@@ -45,7 +45,7 @@ def main() -> None:
     resolved, problems = resolve_airframe(airframe, parts_data)
     aero = analyze_aero(resolved)
     print(f"Source: {args.airframe}")
-    print(build_report_text(resolved, aero, problems, args.sweep))
+    print(build_report_text(resolved, aero, problems, parts_data, args.sweep))
     if args.export_step is not None:
         written_mode = export_step(resolved, args.export_step, mode=args.step_mode, include_prop_discs=args.export_prop_discs)
         print(f"STEP written ({written_mode}): {args.export_step}")

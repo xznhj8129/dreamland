@@ -25,7 +25,8 @@ Primary files:
 - `libs/batterydata.csv`: battery cell data
 - `analyze_airframe.py`: non-GUI analysis and STEP/STL export entrypoint
 - `aero_check.py`: aero cross-check
-- `libs/jsbsim.py`: JSBSim aircraft export and INAV hover + forward mixer profiles
+- `libs/jsbsim.py`: JSBSim aircraft export (AeroBuildup aero tables, control surfaces) and INAV mixer profiles and servo mix
+- `libs/propulsion.py`: motor + prop model fitted to the bench data, throttle as ESC duty
 - `sim_inav.py`: flies the JSBSim export in INAV SITL on `inav_development/inav-jsbsim-bench`
 - `airfoil_analysis_example.py`: simple non-GUI example of the airfoil comparison
 - `aircraft/*.json`: airframe/2 aircraft definitions

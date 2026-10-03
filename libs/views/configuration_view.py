@@ -15,9 +15,15 @@ from tkinter import ttk
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
+from matplotlib.figure import Figure
 
-from libs.airframe import AXES, FIN_POSITIONS, JOINT_TYPES, LAYOUTS, MOUNT_TARGETS, PROP_SPIN_PATTERNS, SURFACE_ROOTS, THRUST_DIRECTIONS, VOLUME_SHAPES
+from libs.airframe import (
+    AXES, CONTROL_KINDS, CONTROL_ROLES, FIN_POSITIONS, JOINT_TYPES, LAYOUT_PANEL_COUNTS, LAYOUTS, MOUNT_TARGETS, SERVO_OUTPUTS,
+    SINGLE_PROP_SPINS, SURFACE_PROP_SPINS, SURFACE_ROOTS, THRUST_DIRECTIONS, VOLUME_SHAPES,
+)
+from libs.geometry import GRAMS_FORCE_PER_NEWTON
 from libs.graphics import draw_canvas_view
+from libs.propulsion import propulsion_summary, summary_lines
 from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS
 
 # AeroSandbox's matplotlib draw needs a pyplot figure. With pyplot on Agg those figures get no Tk window of their
@@ -30,7 +36,7 @@ MM_KEYS = {
     "x_offset_m", "x_m", "y_m", "z_m", "flat_length_m", "curve_length_m", "nose_radius", "size_m", "printer_bed_m", "cuts_m",
 }
 GRAM_KEYS = {"mass_kg", "coupler_mass_kg"}
-UNIT_SUFFIXES = ("_kg_m3", "_m_s", "_deg", "_kg", "_m")
+UNIT_SUFFIXES = ("_kg_m3", "_m_s", "_deg_s", "_deg", "_kg", "_m")
 CHOICES = {
     "layout": list(LAYOUTS),
     "fin_position": list(FIN_POSITIONS),
@@ -53,7 +59,10 @@ NEW_SURFACE = {
     "name": "wing", "x_root_le_m": 0.2, "layout": "H", "fin_position": "top", "dihedral_deg": 0.0, "root_offset": 0.0,
     "root": "body", "span_m": 0.12, "chord_root_m": 0.1, "chord_tip_m": 0.07, "sweep_le_deg": 10.0, "incidence_deg": 0.0, "airfoil": "naca2412",
 }
+CONTROL_KIND_FIELDS = {"split": {"chord_start": 0.75, "span_start": 0.0, "span_end": 1.0}, "all_moving": {"pivot": 0.25}}
+NEW_CONTROL = {"kind": "split", "roles": [], "deflection_min_deg": -25.0, "deflection_max_deg": 25.0, "rate_deg_s": 300.0}  # + kind fields, servos
 NEW_POD = {"diameter_m": 0.035, "flat_length_m": 0.02, "curve_length_m": 0.05, "profile": "elliptical"}
+TYPE_FLAGS = ("tailsitter", "vtol", "powered")  # each implies the ones after it
 DRAG_KEYS = {"volume": ("volumes", "x_m"), "surface": ("surfaces", "x_root_le_m")}  # cuts drag the sections.cuts_m entry itself
 MIN_SECTION_LENGTH_M = 0.005
 
@@ -64,7 +73,7 @@ def field_label(key: str) -> str:
         if base.endswith(suffix):
             base = base[: -len(suffix)]
             break
-    unit = "mm" if key in MM_KEYS else "g" if key in GRAM_KEYS else "deg" if key.endswith("_deg") else "m/s" if key.endswith("_m_s") else "kg/m^3" if key.endswith("_kg_m3") else "m" if key.endswith("_m") else ""
+    unit = "mm" if key in MM_KEYS else "g" if key in GRAM_KEYS else "deg/s" if key.endswith("_deg_s") else "deg" if key.endswith("_deg") else "m/s" if key.endswith("_m_s") else "kg/m^3" if key.endswith("_kg_m3") else "m" if key.endswith("_m") else ""
     return f"{base.replace('_', ' ')} ({unit})" if unit else base.replace("_", " ")
 
 
@@ -104,6 +113,8 @@ class ConfigurationMainView:
         self.view_drag_last_xy = None
         self.drag_target = None
         self.view_metrics = None
+        self.control_deflections: dict[int, float] = {}
+        self.stashed_propulsion: dict | None = None  # propulsion block removed by unticking powered, restored on ticking it  # control number -> deg, drawn in the views; no UI yet
         self.view_scroll_x = None
         self.view_scroll_y = None
         self.editor_frames: dict[str, ttk.Frame] = {}
@@ -240,7 +251,7 @@ class ConfigurationMainView:
 
         notebook = ttk.Notebook(right_frame)
         notebook.grid(row=0, column=0, rowspan=2, sticky="nsew")
-        for tab_name in ("Airframe", "Surfaces", "Propulsion", "Volumes"):
+        for tab_name in ("Airframe", "Fuselage", "Surfaces", "Propulsion", "Volumes"):
             tab = ttk.Frame(notebook, padding=4)
             tab.columnconfigure(0, weight=1)
             tab.rowconfigure(0, weight=1)
@@ -270,9 +281,9 @@ class ConfigurationMainView:
         else:
             app.roll_frame.grid()
         draw_args = (app.view_canvas, app.resolved, app.aero, app.view_mode_var.get(), app.roll_view_var.get(), app.ui_draw, app.ui_bg)
-        self.view_metrics = draw_canvas_view(*draw_args, self.view_zoom_scale, self.view_pan_x, self.view_pan_y)
+        self.view_metrics = draw_canvas_view(*draw_args, self.view_zoom_scale, self.view_pan_x, self.view_pan_y, self.control_deflections)
         if self.clamp_view_pan():
-            self.view_metrics = draw_canvas_view(*draw_args, self.view_zoom_scale, self.view_pan_x, self.view_pan_y)
+            self.view_metrics = draw_canvas_view(*draw_args, self.view_zoom_scale, self.view_pan_x, self.view_pan_y, self.control_deflections)
         self.update_view_scrollbars()
 
     def on_view_drag_start(self, event) -> None:
@@ -315,13 +326,13 @@ class ConfigurationMainView:
         self.view_drag_last_xy = None
         if self.drag_target is not None:
             self.drag_target = None
-            self.rebuild_editors()
             self.app.recompute()
+            self.rebuild_editors()
 
     def changed(self, rebuild: bool = False) -> None:
-        if rebuild:
-            self.rebuild_editors()
         self.app.recompute()
+        if rebuild:
+            self.rebuild_editors()  # after recompute, so editors can show resolved values (control numbers)
 
     def add_entry(self, frame, row: int, data, key, optional: bool = False, label: str | None = None, unit_key: str | None = None, blank_hint: str | None = None) -> None:
         """Entry for one value of a dict (by key) or list (by index); commits on Return/focus-out only when the text changed.
@@ -367,9 +378,10 @@ class ConfigurationMainView:
             self.add_entry(frame, row + index, data[key], index, label=f"{field_label(key)} {axis_label}", unit_key=key)
         return row + len(axis_labels)
 
-    def add_choice(self, frame, row: int, data: dict, key: str, options: list[str], on_change=None) -> None:
-        ttk.Label(frame, text=field_label(key)).grid(row=row, column=0, sticky="w")
-        variable = tk.StringVar(value=str(data.get(key, "")))
+    def add_choice(self, frame, row: int, data, key, options: list[str], on_change=None, label: str | None = None) -> None:
+        """Combobox for one value of a dict (by key) or list (by index, with a label)."""
+        ttk.Label(frame, text=label or field_label(key)).grid(row=row, column=0, sticky="w")
+        variable = tk.StringVar(value=str(data[key] if type(data) is list else data.get(key, "")))
         box = ttk.Combobox(frame, values=options, textvariable=variable, state="readonly")
         box.grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=1)
 
@@ -381,8 +393,8 @@ class ConfigurationMainView:
 
         box.bind("<<ComboboxSelected>>", select)
 
-    def add_fields(self, frame, data: dict, start_row: int = 0, skip: set[str] = frozenset()) -> int:
-        """Generic rows for every field of a definition dict, in stored order."""
+    def add_fields(self, frame, data: dict, start_row: int = 0, skip: set[str] = frozenset(), on_change: dict | None = None) -> int:
+        """Generic rows for every field of a definition dict, in stored order; on_change maps a choice key to a callback."""
         row = start_row
         for key, value in list(data.items()):
             if key in skip:
@@ -393,7 +405,7 @@ class ConfigurationMainView:
                 group.columnconfigure(1, weight=1)
                 self.add_fields(group, value)
             elif key in CHOICES and type(value) is str:
-                self.add_choice(frame, row, data, key, CHOICES[key])
+                self.add_choice(frame, row, data, key, CHOICES[key], on_change=(on_change or {}).get(key))
             elif type(value) is list and key == "printer_bed_m":
                 row = self.add_vector_entries(frame, row, data, key, ("x", "y", "z")) - 1
             elif type(value) is list and key == "size_m":
@@ -417,6 +429,7 @@ class ConfigurationMainView:
             for child in frame.winfo_children():
                 child.destroy()
         self.build_airframe_tab(self.editor_frames["Airframe"])
+        self.build_fuselage_tab(self.editor_frames["Fuselage"])
         self.build_surfaces_tab(self.editor_frames["Surfaces"])
         self.build_propulsion_tab(self.editor_frames["Propulsion"])
         self.build_volumes_tab(self.editor_frames["Volumes"])
@@ -428,6 +441,12 @@ class ConfigurationMainView:
         general.columnconfigure(1, weight=1)
         self.add_entry(general, 0, definition, "name")
         self.add_entry(general, 1, definition, "notes", optional=True)
+        ttk.Label(general, text="type").grid(row=2, column=0, sticky="w")
+        flags = ttk.Frame(general)
+        flags.grid(row=2, column=1, columnspan=2, sticky="w", padx=(8, 0))
+        for column, key in enumerate(TYPE_FLAGS):
+            variable = tk.BooleanVar(value=definition[key])
+            ttk.Checkbutton(flags, text=key, variable=variable, command=lambda k=key, v=variable: self.set_type_flag(k, v)).grid(row=0, column=column, padx=(0, 8))
         for row, (key, title) in enumerate((("operating_point", "Operating point (aero and stability)"), ("print", "Print")), start=1):
             group = ttk.LabelFrame(parent, text=title, padding=6)
             group.grid(row=row, column=0, sticky="ew", padx=4, pady=4)
@@ -439,9 +458,48 @@ class ConfigurationMainView:
                 self.add_entry(group, next_row, print_settings, "surface_bulk_density_kg_m3", optional=True)
             else:
                 self.add_fields(group, definition[key])
-        fuselage = definition["fuselage"]
+
+    def set_type_flag(self, key: str, variable: tk.BooleanVar) -> None:
+        """Keeps the flags consistent (tailsitter -> vtol -> powered); powered adds or removes the propulsion block,
+        keeping the removed one to restore."""
+        definition = self.app.definition
+        chosen = {flag: definition[flag] for flag in TYPE_FLAGS} | {key: variable.get()}
+        if chosen[key]:
+            for implied in TYPE_FLAGS[TYPE_FLAGS.index(key) + 1:]:
+                chosen[implied] = True
+        else:
+            for dependent in TYPE_FLAGS[:TYPE_FLAGS.index(key)]:
+                chosen[dependent] = False
+        if chosen["powered"] and "propulsion" not in definition:
+            propulsion = self.stashed_propulsion or self.new_propulsion()
+            if propulsion is None:
+                self.app.recompute_status_var.set("Powered needs a volume whose part is a battery (Volumes tab)")
+                self.rebuild_editors()
+                return
+            definition["propulsion"] = propulsion
+        elif not chosen["powered"] and "propulsion" in definition:
+            self.stashed_propulsion = definition.pop("propulsion")
+        definition.update(chosen)
+        self.changed(rebuild=True)
+
+    def new_propulsion(self) -> dict | None:
+        """First battery volume, the first bench motor and prop for its cell count, one nose tractor."""
+        definition = self.app.definition
+        battery = next((volume for volume in definition["volumes"] if str(volume.get("part", "")).startswith("battery:")), None)
+        if battery is None:
+            return None
+        cells = int(self.app.parts_data["battery"][battery["part"].partition(":")[2]]["s"])
+        combo = next(combo for combo in self.app.motor_options if combo["batt_s"] == cells)
+        return {
+            "motor": {"brand": combo["brand"], "model": combo["motor"], "kv": combo["kv"], "prop": combo["prop"]},
+            "battery_volume": battery["name"],
+            "mounts": [{"on": "nose", "direction": "tractor", "spin": SINGLE_PROP_SPINS[0], "thrust_axis_tilt_deg": 0.0}],
+        }
+
+    def build_fuselage_tab(self, parent) -> None:
+        fuselage = self.app.definition["fuselage"]
         group = ttk.LabelFrame(parent, text="Fuselage", padding=6)
-        group.grid(row=3, column=0, sticky="ew", padx=4, pady=4)
+        group.grid(row=0, column=0, sticky="ew", padx=4, pady=4)
         group.columnconfigure(1, weight=1)
         self.add_entry(group, 0, fuselage, "length_m")
         row = 1
@@ -457,7 +515,7 @@ class ConfigurationMainView:
             else:
                 self.add_fields(sub, fuselage[key])
             row += 1
-        self.build_sections_group(parent, 4)
+        self.build_sections_group(parent, 1)
 
     def build_sections_group(self, parent, grid_row: int) -> None:
         definition = self.app.definition
@@ -506,8 +564,75 @@ class ConfigurationMainView:
         for index, surface in enumerate(surfaces):
             frame = self.card(parent, index + 1, surface["name"], lambda i=index: self.delete_item("surfaces", i))
             skip = set() if surface["layout"] in ("1", "3") else {"fin_position"}
-            row = self.add_fields(frame, surface, start_row=1, skip=skip | {"mass_kg"})
+            row = self.add_fields(frame, surface, start_row=1, skip=skip | {"mass_kg", "control"}, on_change={"layout": lambda s=surface: self.fit_servos(s)})
             self.add_entry(frame, row, surface, "mass_kg", optional=True)
+            self.build_control(frame, row + 1, surface)
+
+    def build_control(self, frame, row: int, surface: dict) -> None:
+        enabled = tk.BooleanVar(value="control" in surface)
+        ttk.Checkbutton(frame, text="control surface", variable=enabled, command=lambda: self.toggle_control(surface, enabled)).grid(row=row, column=0, sticky="w")
+        if "control" not in surface:
+            return
+        control = surface["control"]
+        group = ttk.LabelFrame(frame, text="control surface", padding=4)
+        group.grid(row=row + 1, column=0, columnspan=3, sticky="ew", pady=2)
+        group.columnconfigure(1, weight=1)
+        self.add_choice(group, 0, control, "kind", list(CONTROL_KINDS), on_change=lambda: self.reset_control_kind(control))
+        inner = 1
+        for key in CONTROL_KIND_FIELDS[control["kind"]]:
+            self.add_entry(group, inner, control, key)
+            inner += 1
+        ttk.Label(group, text="roles").grid(row=inner, column=0, sticky="w")
+        roles = ttk.Frame(group)
+        roles.grid(row=inner, column=1, columnspan=2, sticky="w", padx=(8, 0))
+        for column, role in enumerate(CONTROL_ROLES):
+            variable = tk.BooleanVar(value=role in control["roles"])
+            ttk.Checkbutton(roles, text=role, variable=variable, command=lambda r=role, v=variable: self.toggle_role(control, r, v)).grid(row=0, column=column, padx=(0, 8))
+        inner += 1
+        for key in ("deflection_min_deg", "deflection_max_deg", "rate_deg_s"):
+            self.add_entry(group, inner, control, key)
+            inner += 1
+        resolved = self.app.resolved
+        numbers = {(placement.surface, placement.panel_index): placement.number for placement in resolved.controls} if resolved is not None else {}
+        for index in range(len(control["servos"])):
+            number = numbers.get((surface["name"], index))
+            label = f"panel {index + 1} servo" + (f" (C{number})" if number is not None else "")
+            self.add_choice(group, inner, control["servos"], index, list(SERVO_OUTPUTS), label=label)
+            inner += 1
+
+    def free_servos(self, count: int) -> list[str]:
+        """Lowest servo outputs no control surface uses yet, then S1 (outputs may be shared)."""
+        used = {servo for surface in self.app.definition["surfaces"] if "control" in surface for servo in surface["control"]["servos"]}
+        return ([servo for servo in SERVO_OUTPUTS if servo not in used] + [SERVO_OUTPUTS[0]] * count)[:count]
+
+    def toggle_control(self, surface: dict, variable: tk.BooleanVar) -> None:
+        if variable.get():
+            control = copy.deepcopy(NEW_CONTROL)
+            control.update(copy.deepcopy(CONTROL_KIND_FIELDS[control["kind"]]))
+            control["servos"] = self.free_servos(LAYOUT_PANEL_COUNTS[surface["layout"]])
+            surface["control"] = control
+        else:
+            surface.pop("control", None)
+        self.changed(rebuild=True)
+
+    def reset_control_kind(self, control: dict) -> None:
+        for fields in CONTROL_KIND_FIELDS.values():
+            for key in fields:
+                control.pop(key, None)
+        control.update(copy.deepcopy(CONTROL_KIND_FIELDS[control["kind"]]))
+
+    def fit_servos(self, surface: dict) -> None:
+        """Layout change: keep one servo per panel."""
+        if "control" not in surface:
+            return
+        servos = surface["control"]["servos"]
+        count = LAYOUT_PANEL_COUNTS[surface["layout"]]
+        surface["control"]["servos"] = servos[:count] + self.free_servos(count - len(servos)) if count > len(servos) else servos[:count]
+
+    def toggle_role(self, control: dict, role: str, variable: tk.BooleanVar) -> None:
+        chosen = (set(control["roles"]) - {role}) | ({role} if variable.get() else set())
+        control["roles"] = [item for item in CONTROL_ROLES if item in chosen]
+        self.changed()
 
     def add_surface(self) -> None:
         surface = copy.deepcopy(NEW_SURFACE)
@@ -522,6 +647,9 @@ class ConfigurationMainView:
 
     def build_propulsion_tab(self, parent) -> None:
         definition = self.app.definition
+        if "propulsion" not in definition:
+            ttk.Label(parent, text="Not powered (type on the Airframe tab).").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+            return
         propulsion = definition["propulsion"]
         motor = propulsion["motor"]
         group = ttk.LabelFrame(parent, text="Motor and prop (bench data)", padding=6)
@@ -541,7 +669,6 @@ class ConfigurationMainView:
         motor_box.grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=1)
         props = sorted({combo["prop"] for combo in combos if (combo["brand"], combo["motor"], combo["kv"]) == (motor["brand"], motor["model"], motor["kv"])})
         self.add_choice(group, 2, motor, "prop", props)
-        self.add_choice(group, 3, propulsion, "prop_spin", list(PROP_SPIN_PATTERNS))  # per-motor lists are edited in the file
 
         def select_motor(_event=None) -> None:
             chosen = next(combo for combo in combos if f"{combo['brand']} {combo['motor']} {combo['kv']}KV" == motor_var.get())
@@ -564,6 +691,9 @@ class ConfigurationMainView:
                 self.add_entry(frame, row + 2, mount, "x_offset_m")
                 row += 3
             self.add_choice(frame, row, mount, "direction", CHOICES["direction"])
+            self.add_choice(frame, row + 1, mount, "spin", list(SURFACE_PROP_SPINS if mount["on"] == "surface" else SINGLE_PROP_SPINS))
+            self.add_entry(frame, row + 2, mount, "thrust_axis_tilt_deg")
+            row += 2
             pod_var = tk.BooleanVar(value="pod" in mount)
             ttk.Checkbutton(frame, text="pod", variable=pod_var, command=lambda m=mount, v=pod_var: self.toggle_pod(m, v)).grid(row=row + 1, column=0, sticky="w")
             if "pod" in mount:
@@ -571,6 +701,38 @@ class ConfigurationMainView:
                 pod.grid(row=row + 2, column=0, columnspan=3, sticky="ew")
                 pod.columnconfigure(1, weight=1)
                 self.add_fields(pod, mount["pod"])
+        if self.app.resolved is not None:
+            self.build_motor_info(parent, len(propulsion["mounts"]) + 2)
+
+    def build_motor_info(self, parent, grid_row: int) -> None:
+        """Static propulsion of the last valid airframe: the fitted motor model against INAV motor output (duty)."""
+        app = self.app
+        summary = propulsion_summary(app.resolved, app.parts_data)
+        group = ttk.LabelFrame(parent, text="Motor info (fitted to bench data)", padding=6)
+        group.grid(row=grid_row, column=0, sticky="ew", padx=4, pady=4)
+        group.columnconfigure(0, weight=1)
+        figure = Figure(figsize=(4.6, 3.4), dpi=100, facecolor=app.ui_bg)
+        axis = figure.add_subplot()
+        curve, bench = summary.curve, summary.model.bench
+        for label, values, rows, color in (("Thrust per motor (N)", curve.thrust_n, bench["thrust_g"] / GRAMS_FORCE_PER_NEWTON, "#19ff19"),
+                                           ("RPM / 1000", curve.rpm / 1000.0, bench["rpm"] / 1000.0, "#33ccff"),
+                                           ("kW per motor", curve.power_w / 1000.0, bench["watts"] / 1000.0, "#ffcc33")):
+            axis.plot(curve.duty, values, color=color, linewidth=2.0, label=label)
+            axis.plot(summary.bench_duty, rows, color=color, linestyle="none", marker="o", markersize=3)
+        if summary.hover is not None:
+            axis.axvline(float(summary.hover.duty), color=app.ui_fg, linestyle="--", linewidth=1.0, label="hover")
+        axis.set_xlabel("INAV motor output (ESC duty); dots = bench rows", color=app.ui_fg)
+        axis.tick_params(colors=app.ui_fg)
+        axis.set_facecolor(app.ui_bg)
+        axis.grid(color=app.ui_border, alpha=0.4)
+        legend = axis.legend(loc="upper left", facecolor=app.ui_panel, edgecolor=app.ui_border, framealpha=1.0, fontsize=8)
+        for text in legend.get_texts():
+            text.set_color(app.ui_fg)
+        figure.tight_layout()
+        canvas = FigureCanvasTkAgg(figure, master=group)
+        canvas.draw()
+        canvas.get_tk_widget().grid(row=0, column=0, sticky="ew")
+        ttk.Label(group, text="\n".join(summary_lines(summary)), font=("TkFixedFont", 9), justify="left", wraplength=440).grid(row=1, column=0, sticky="w", pady=(6, 0))
 
     def normalize_mount(self, mount: dict) -> None:
         surfaces = self.app.definition["surfaces"]
@@ -578,10 +740,14 @@ class ConfigurationMainView:
             mount.setdefault("surface", surfaces[0]["name"] if surfaces else "")
             mount.setdefault("span_position_m", 0.0)
             mount.setdefault("x_offset_m", 0.0)
+            if mount["spin"] not in SURFACE_PROP_SPINS:
+                mount["spin"] = SURFACE_PROP_SPINS[0]
         else:
             for key in ("surface", "span_position_m", "x_offset_m"):
                 mount.pop(key, None)
             mount["direction"] = "tractor" if mount["on"] == "nose" else "pusher"
+            if mount["spin"] not in SINGLE_PROP_SPINS:
+                mount["spin"] = SINGLE_PROP_SPINS[0]
 
     def toggle_pod(self, mount: dict, variable: tk.BooleanVar) -> None:
         if variable.get():
@@ -591,7 +757,7 @@ class ConfigurationMainView:
         self.changed(rebuild=True)
 
     def add_mount(self) -> None:
-        mount = {"on": "nose", "direction": "tractor"}
+        mount = {"on": "nose", "direction": "tractor", "spin": SINGLE_PROP_SPINS[0], "thrust_axis_tilt_deg": 0.0}
         self.app.definition["propulsion"]["mounts"].append(mount)
         self.changed(rebuild=True)
 

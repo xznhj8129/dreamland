@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import aerosandbox as asb
 
-from libs.airframe import Airframe, AirframeError, Surface, Volume
+from libs.airframe import Airframe, AirframeError, Mount, Surface, Volume
 from libs.pointed_shapes import sample_pointed_profile
 
 END_PROFILE_SAMPLES = 14
@@ -36,6 +36,19 @@ Vec = tuple[float, float, float]
 # Inertia tensor components (Ixx, Iyy, Izz, Ixy, Ixz, Iyz), products as tensor entries (-sum m a b), in this frame.
 Inertia = tuple[float, float, float, float, float, float]
 NO_INERTIA: Inertia = (0.0, 0.0, 0.0, 0.0, 0.0, 0.0)
+
+
+def dot(a: Vec, b: Vec) -> float:
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def cross(a: Vec, b: Vec) -> Vec:
+    return (a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0])
+
+
+def unit(a: Vec) -> Vec:
+    length = math.sqrt(dot(a, a))
+    return (a[0] / length, a[1] / length, a[2] / length)
 
 
 @dataclass(frozen=True)
@@ -63,6 +76,7 @@ class Panel:
     attach_te: Vec  # true root trailing edge, on the body surface (follows tapering nose/tail cones)
     root_le: Vec  # equivalent aero root: at the mean body radius under the root chord (= attach_le on a straight tube)
     tip_le: Vec
+    tip_te: Vec
     span_dir: Vec
     normal: Vec
     chord_root_m: float
@@ -84,6 +98,17 @@ class SurfaceSet:
     exposed_span_m: float
     exposed_chord_root_m: float
     exposed_sweep_len_m: float
+
+
+@dataclass(frozen=True)
+class ControlPlacement:
+    number: int  # 1.. front to back, then clockwise from the top as seen from behind (the front view)
+    surface: str
+    panel_index: int
+    servo: str
+    outline: tuple[Vec, Vec, Vec, Vec]  # moving part: root hinge (LE when all-moving), root TE, outer TE, outer hinge
+    hinge: tuple[Vec, Vec]  # hinge line, or the pivot line of an all-moving panel
+    axis: Vec  # unit hinge direction: a right-hand rotation about it is a positive deflection (TE away from the normal)
 
 
 @dataclass(frozen=True)
@@ -124,6 +149,7 @@ class ResolvedAirframe:
     body: Body
     surfaces: tuple[SurfaceSet, ...]
     motors: tuple[MotorPlacement, ...]
+    controls: tuple[ControlPlacement, ...]
     mass_points: tuple[MassPoint, ...]
     mass_kg: tuple[float, float]
     cg_m: Vec  # with every ranged mass at the middle of its range
@@ -303,9 +329,11 @@ def build_surface(surface: Surface, body: Body) -> SurfaceSet:
             root_le = (surface.x_root_le_m, mean_radius * math.cos(angle), mean_radius * math.sin(angle))
         attach_te = tuple(point - chord_root * math.sin(incidence) * n for point, n in zip(te_point, normal))
         tip_le = (attach_le[0] + sweep_len, attach_le[1] + surface.span_m * dir_y, attach_le[2] + surface.span_m * dir_z)
+        tip_te = tuple(le + surface.chord_tip_m * ((math.cos(incidence) if axis == 0 else 0.0) - math.sin(incidence) * n)
+                       for axis, (le, n) in enumerate(zip(tip_le, normal)))
         panels.append(Panel(
             surface=surface.name, index=spec["index"], xz_mirror=spec["xz_mirror"],
-            attach_le=attach_le, attach_te=attach_te, root_le=root_le, tip_le=tip_le,
+            attach_le=attach_le, attach_te=attach_te, root_le=root_le, tip_le=tip_le, tip_te=tip_te,
             span_dir=(0.0, dir_y, dir_z), normal=normal,
             chord_root_m=chord_root, chord_tip_m=surface.chord_tip_m,
             span_m=math.dist(root_le[1:], tip_le[1:]),
@@ -323,6 +351,54 @@ def build_surface(surface: Surface, body: Body) -> SurfaceSet:
         exposed_chord_root_m=chord_root + (surface.chord_tip_m - chord_root) * hidden,
         exposed_sweep_len_m=sweep_len * (1.0 - hidden),
     )
+
+
+def panel_point(panel: Panel, span_fraction: float, chord_fraction: float) -> Vec:
+    """Point on the panel's true outline: span fraction from the root edge, chord fraction from the leading edge."""
+    le = tuple(a + (b - a) * span_fraction for a, b in zip(panel.attach_le, panel.tip_le))
+    te = tuple(a + (b - a) * span_fraction for a, b in zip(panel.attach_te, panel.tip_te))
+    return tuple(a + (b - a) * chord_fraction for a, b in zip(le, te))
+
+
+def build_controls(surfaces: tuple[SurfaceSet, ...]) -> tuple[ControlPlacement, ...]:
+    found = []
+    for order, surface_set in enumerate(surfaces):
+        control = surface_set.definition.control
+        if control is None:
+            continue
+        if control.kind == "split":
+            span_start, span_end, outline_chord, line_chord = control.span_start, control.span_end, control.chord_start, control.chord_start
+        else:
+            span_start, span_end, outline_chord, line_chord = 0.0, 1.0, 0.0, control.pivot
+        for panel in surface_set.panels:
+            clockwise_deg = math.degrees(math.atan2(panel.span_dir[1], panel.span_dir[2])) % 360.0  # 0 top, 90 right
+            outline = (panel_point(panel, span_start, outline_chord), panel_point(panel, span_start, 1.0),
+                       panel_point(panel, span_end, 1.0), panel_point(panel, span_end, outline_chord))
+            hinge = (panel_point(panel, span_start, line_chord), panel_point(panel, span_end, line_chord))
+            axis = unit(tuple(b - a for a, b in zip(*hinge)))
+            aft = tuple(b - a for a, b in zip(hinge[0], outline[1]))  # hinge to root TE
+            if dot(cross(axis, aft), panel.normal) > 0.0:
+                axis = tuple(-value for value in axis)
+            found.append(((surface_set.definition.x_root_le_m, round(clockwise_deg, 6), order), surface_set.name, panel.index, control.servos[panel.index], outline, hinge, axis))
+    found.sort(key=lambda item: item[0])
+    return tuple(
+        ControlPlacement(number=number, surface=name, panel_index=index, servo=servo, outline=outline, hinge=hinge, axis=axis)
+        for number, (_key, name, index, servo, outline, hinge, axis) in enumerate(found, start=1)
+    )
+
+
+def deflected_outline(control: ControlPlacement, deflection_deg: float) -> tuple[Vec, ...]:
+    """The control's moving part rotated about its hinge (or pivot) line; positive = TE away from the panel normal."""
+    angle = math.radians(deflection_deg)
+    cos_a, sin_a = math.cos(angle), math.sin(angle)
+    origin = control.hinge[0]
+    rotated = []
+    for point in control.outline:
+        r = tuple(a - b for a, b in zip(point, origin))
+        k_cross_r = cross(control.axis, r)
+        k_dot_r = dot(control.axis, r)
+        rotated.append(tuple(o + v * cos_a + c * sin_a + k * k_dot_r * (1.0 - cos_a) for o, v, c, k in zip(origin, r, k_cross_r, control.axis)))
+    return tuple(rotated)
 
 
 def panel_strips(panel: Panel):
@@ -442,24 +518,28 @@ def volume_inertia(volume: Volume, body: Body, wall_m: float) -> Inertia:
     return NO_INERTIA
 
 
-def motor_spins(prop_spin: str | tuple[str, ...], positions: list[Vec]) -> tuple[str, ...]:
-    """Spin per motor, seen from where the thrust points. props_out / props_in use INAV's tailsitter hover frame:
-    multirotor front = aircraft belly (-z), right = +y; props out = front-right and rear-left cw."""
-    if not isinstance(prop_spin, str):
-        if len(prop_spin) != len(positions):
-            raise AirframeError(f"propulsion.prop_spin lists {len(prop_spin)} spins for {len(positions)} motors")
-        return prop_spin
-    quadrants = [(y > 0.0, z < 0.0) for _x, y, z in positions]  # (right, front)
-    if len(positions) != 4 or any(abs(y) < 1e-9 or abs(z) < 1e-9 for _x, y, z in positions) or len(set(quadrants)) != 4:
-        raise AirframeError(f"propulsion.prop_spin {prop_spin!r} needs 4 motors, one per quadrant off the y and z axes; list 'cw'/'ccw' per motor instead")
-    props_out = prop_spin == "props_out"
-    return tuple("cw" if (right == front) == props_out else "ccw" for right, front in quadrants)
+def motor_spins(mount: Mount, positions: list[Vec]) -> tuple[str, ...]:
+    """Spin per motor of one mount, seen from where the thrust points. A surface mount's motors alternate cw/ccw going
+    round the body axis clockwise from the front in INAV's tailsitter hover frame (multirotor front = aircraft belly (-z),
+    right = +y), starting cw for props out: an X quad gets front-right and rear-left cw, as INAV props out."""
+    if mount.on != "surface":
+        return (mount.spin,)
+    if len(positions) % 2:
+        raise AirframeError(f"mount on {mount.surface}: {len(positions)} motors cannot spin in pairs; props {mount.spin} needs an even count")
+    order = sorted(range(len(positions)), key=lambda index: math.atan2(positions[index][1], -positions[index][2]) % (2.0 * math.pi))
+    first, second = ("cw", "ccw") if mount.spin == "out" else ("ccw", "cw")
+    spins = [""] * len(positions)
+    for rank, index in enumerate(order):
+        spins[index] = first if rank % 2 == 0 else second
+    return tuple(spins)
 
 
 def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[MotorPlacement, ...]:
     propulsion = airframe.propulsion
+    if propulsion is None:
+        return ()
     bell_len = propulsion.bell_length_m
-    placements = []  # (name, position, prop_side, pod_stations)
+    placements = []  # (name, position, prop_side, pod_stations, spin, thrust_dir)
     for mount_index, mount in enumerate(propulsion.mounts):
         if mount.on == "surface":
             surface_set = next(item for item in surfaces if item.name == mount.surface)
@@ -473,7 +553,10 @@ def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[
         else:
             positions = [("tail", (airframe.fuselage.length_m + bell_len / 2.0, 0.0, 0.0))]
         prop_side = -1.0 if mount.direction == "tractor" else 1.0  # tractor prop ahead of the motor (towards the nose)
-        for name, position in positions:
+        tilt = math.radians(mount.thrust_axis_tilt_deg)
+        thrust_dir = (-math.cos(tilt), 0.0, math.sin(tilt))
+        spins = motor_spins(mount, [position for _name, position in positions])
+        for (name, position), spin in zip(positions, spins):
             pod_stations = ()
             if mount.pod is not None:
                 pod_radius = mount.pod.diameter_m / 2.0
@@ -483,16 +566,15 @@ def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[
                 curve = sample_pointed_profile(mount.pod.profile, mount.pod.curve_length_m, pod_radius, POD_PROFILE_SAMPLES)
                 stations += [(flat_end - prop_side * (mount.pod.curve_length_m - x), r) for x, r in curve[:-1]]
                 pod_stations = tuple(sorted(stations))
-            placements.append((f"motor {mount_index + 1} {name}", position, prop_side, pod_stations))
-    spins = motor_spins(propulsion.prop_spin, [position for _name, position, _side, _pod in placements])
+            placements.append((f"motor {mount_index + 1} {name}", position, prop_side, pod_stations, spin, thrust_dir))
     return tuple(
         MotorPlacement(
-            name=name, position=position, thrust_dir=(-1.0, 0.0, 0.0),
-            prop_center=(position[0] + prop_side * (bell_len / 2.0 + PROP_SHAFT_LEN_M), position[1], position[2]),
+            name=name, position=position, thrust_dir=thrust_dir,
+            prop_center=tuple(p - prop_side * (bell_len / 2.0 + PROP_SHAFT_LEN_M) * t for p, t in zip(position, thrust_dir)),
             prop_radius_m=propulsion.prop_diameter_m / 2.0, bell_diameter_m=propulsion.bell_diameter_m,
             bell_length_m=bell_len, pod_stations=pod_stations, spin=spin,
         )
-        for (name, position, prop_side, pod_stations), spin in zip(placements, spins)
+        for name, position, prop_side, pod_stations, spin, thrust_dir in placements
     )
 
 
@@ -579,7 +661,7 @@ def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirf
         cg_xs.append(center_of_mass(points, masses)[0])
 
     resolved = ResolvedAirframe(
-        airframe=airframe, body=body, surfaces=surfaces, motors=motors, mass_points=points,
+        airframe=airframe, body=body, surfaces=surfaces, motors=motors, controls=build_controls(surfaces), mass_points=points,
         mass_kg=(sum(point.mass_kg[0] for point in points), sum(point.mass_kg[1] for point in points)),
         cg_m=center_of_mass(points, nominal), cg_x_range_m=(min(cg_xs), max(cg_xs)),
         inertia_kg_m2=combine_inertia([(mass, point.position, point.inertia_per_kg) for mass, point in zip(nominal, points)])[2],

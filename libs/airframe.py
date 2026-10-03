@@ -20,7 +20,7 @@ from pathlib import Path
 
 import aerosandbox as asb
 
-from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS, normalize_shape_name
+from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS, check_profile, normalize_shape_name
 from libs.simlib2 import TestedMotorData
 
 SCHEMA = "airframe/2"
@@ -30,18 +30,22 @@ MOTORDATA_PATH = Path(__file__).resolve().parent / "motordata.csv"
 PARTS_DIMENSION_UNIT_M = 0.001  # parts.json battery dimensions are in mm
 INCH_M = 0.0254
 
-LAYOUTS = ("H", "X", "+", "1", "3")
+LAYOUT_PANEL_COUNTS = {"H": 2, "X": 4, "+": 4, "1": 1, "3": 3}
+LAYOUTS = tuple(LAYOUT_PANEL_COUNTS)
 FIN_POSITIONS = ("top", "bottom")
 SURFACE_ROOTS = ("body", "axis")  # span measured from the body surface at the root LE, or from the fuselage axis (fins joined at the centre)
 VOLUME_SHAPES = ("box", "cylinder", "bore", "point")
 AXES = ("x", "y", "z")
 MOUNT_TARGETS = ("nose", "tail", "surface")
 THRUST_DIRECTIONS = ("tractor", "pusher")
-# Prop spin, seen from where the thrust points (from above in hover). The patterns name the multirotor convention for
-# 4 motors in an X, in INAV's tailsitter hover frame; other layouts list one spin per motor.
-PROP_SPIN_PATTERNS = ("props_out", "props_in")
-PROP_SPINS = ("cw", "ccw")
+# Prop spin, seen from where the thrust points (from above in hover). A surface mount carries 2+ motors that spin in
+# pairs, props out or in; a nose or tail mount carries one motor, cw or ccw.
+SURFACE_PROP_SPINS = ("out", "in")
+SINGLE_PROP_SPINS = ("cw", "ccw")
 JOINT_TYPES = ("radial_screws",)
+CONTROL_KINDS = ("split", "all_moving")
+CONTROL_ROLES = ("pitch", "yaw", "roll", "flaps")  # for reference only
+SERVO_OUTPUTS = tuple(f"S{number}" for number in range(1, 13))
 
 
 class AirframeError(ValueError):
@@ -116,6 +120,20 @@ class Fuselage:
 
 
 @dataclass(frozen=True)
+class ControlSurface:
+    kind: str  # CONTROL_KINDS
+    chord_start: float | None  # split: hinge line, fraction of the local chord from the leading edge
+    span_start: float | None  # split: fractions of the panel span from the root
+    span_end: float | None
+    pivot: float | None  # all_moving: pivot line, fraction of the local chord from the leading edge
+    roles: tuple[str, ...]
+    deflection_min_deg: float  # positive = trailing edge away from the panel normal (down on a wing)
+    deflection_max_deg: float
+    rate_deg_s: float  # placeholder, not used yet
+    servos: tuple[str, ...]  # one SERVO_OUTPUTS entry per panel, in panel order; outputs may be shared
+
+
+@dataclass(frozen=True)
 class Surface:
     name: str
     x_root_le_m: float
@@ -131,6 +149,7 @@ class Surface:
     incidence_deg: float
     airfoil: str
     mass_kg: float | None  # whole set; None = computed from geometry
+    control: ControlSurface | None  # every panel of the set carries one; None = fixed surface
 
 
 @dataclass(frozen=True)
@@ -156,6 +175,8 @@ class Mount:
     span_position_m: float | None  # along each panel from its root
     x_offset_m: float | None  # from the surface root leading edge
     direction: str
+    spin: str  # SURFACE_PROP_SPINS on a surface, SINGLE_PROP_SPINS on the nose or tail
+    thrust_axis_tilt_deg: float  # thrust line tilted up (+z) from the body axis, e.g. to pass through the CG
     pod: Pod | None
 
 
@@ -169,7 +190,6 @@ class Propulsion:
     bell_length_m: float  # stator height from bench data
     prop_diameter_m: float
     prop_mass_kg: float  # per prop, from parts.json prop sizes
-    prop_spin: str | tuple[str, ...]  # a PROP_SPIN_PATTERNS name, or one of PROP_SPINS per motor in resolved motor order
 
 
 @dataclass(frozen=True)
@@ -198,11 +218,14 @@ class Airframe:
     name: str
     notes: str
     preset: str | None
+    powered: bool
+    vtol: bool  # takes off and lands vertically on its motors
+    tailsitter: bool  # VTOL standing on its tail: hovers nose up as a multirotor, flies forward on the same motors
     operating_point: OperatingPoint
     print: PrintSettings
     fuselage: Fuselage
     surfaces: tuple[Surface, ...]
-    propulsion: Propulsion
+    propulsion: Propulsion | None  # None when not powered
     volumes: tuple[Volume, ...]
     sections: Sections
 
@@ -242,6 +265,12 @@ class _Fields:
         value = self.required(key)
         if value not in options:
             raise AirframeError(f"{self.at(key)}: {value!r} is not one of {options}")
+        return value
+
+    def flag(self, key: str) -> bool:
+        value = self.required(key)
+        if type(value) is not bool:
+            raise AirframeError(f"{self.at(key)}: expected true or false, got {value!r}")
         return value
 
     def text(self, key: str) -> str:
@@ -287,6 +316,11 @@ def _fuselage(data: dict, path: str) -> Fuselage:
     tail = _end_profile(fields.required("tail"), fields.at("tail"))
     if nose.length_m + tail.length_m > length_m:
         raise AirframeError(f"{path}: nose + tail length {nose.length_m + tail.length_m} exceeds fuselage length {length_m}")
+    for end_name, end in (("nose", nose), ("tail", tail)):
+        try:
+            check_profile(end.profile, end.length_m, section.width_m / 2.0, end.params)
+        except ValueError as error:
+            raise AirframeError(f"{path}.{end_name}: {error}") from error
 
     joint_fields = _Fields(fields.required("joints"), fields.at("joints"))
     joints = Joints(
@@ -341,13 +375,54 @@ def _fuselage(data: dict, path: str) -> Fuselage:
     )
 
 
+def _fraction(fields: _Fields, key: str) -> float:
+    value = fields.number(key, minimum=0.0)
+    if value > 1.0:
+        raise AirframeError(f"{fields.at(key)}: {value} must be <= 1")
+    return value
+
+
+def _control(data: dict, path: str, panel_count: int) -> ControlSurface:
+    fields = _Fields(data, path)
+    kind = fields.choice("kind", CONTROL_KINDS)
+    chord_start = span_start = span_end = pivot = None
+    if kind == "split":
+        chord_start = _fraction(fields, "chord_start")
+        span_start = _fraction(fields, "span_start")
+        span_end = _fraction(fields, "span_end")
+        if not 0.0 < chord_start < 1.0:
+            raise AirframeError(f"{fields.at('chord_start')}: {chord_start} must be between 0 and 1 (exclusive)")
+        if span_end <= span_start:
+            raise AirframeError(f"{fields.at('span_end')}: {span_end} must be greater than span_start {span_start}")
+    else:
+        pivot = _fraction(fields, "pivot")
+    roles = fields.required("roles")
+    if type(roles) is not list or any(role not in CONTROL_ROLES for role in roles) or len(set(roles)) != len(roles):
+        raise AirframeError(f"{fields.at('roles')}: expected a list of distinct roles from {CONTROL_ROLES}, got {roles!r}")
+    deflection_min_deg = fields.number("deflection_min_deg")
+    deflection_max_deg = fields.number("deflection_max_deg")
+    if not deflection_min_deg <= 0.0 <= deflection_max_deg or deflection_max_deg == deflection_min_deg:
+        raise AirframeError(f"{fields.at('deflection_max_deg')}: limits {deflection_min_deg} .. {deflection_max_deg} must span neutral (min <= 0 <= max, min < max)")
+    rate_deg_s = fields.positive("rate_deg_s")
+    servos = fields.required("servos")
+    if type(servos) is not list or len(servos) != panel_count or any(servo not in SERVO_OUTPUTS for servo in servos):
+        raise AirframeError(f"{fields.at('servos')}: expected {panel_count} servo outputs (one per panel) from {SERVO_OUTPUTS[0]}..{SERVO_OUTPUTS[-1]}, got {servos!r}")
+    fields.done()
+    return ControlSurface(
+        kind=kind, chord_start=chord_start, span_start=span_start, span_end=span_end, pivot=pivot, roles=tuple(roles),
+        deflection_min_deg=deflection_min_deg, deflection_max_deg=deflection_max_deg, rate_deg_s=rate_deg_s, servos=tuple(servos),
+    )
+
+
 def _surface(data: dict, path: str, fuselage_length_m: float) -> Surface:
     fields = _Fields(data, path)
     mass = fields.optional("mass_kg", None)
+    layout = fields.choice("layout", LAYOUTS)
+    control = fields.optional("control", None)
     surface = Surface(
         name=fields.text("name"),
         x_root_le_m=fields.number("x_root_le_m", minimum=0.0),
-        layout=fields.choice("layout", LAYOUTS),
+        layout=layout,
         fin_position=fields.choice("fin_position", FIN_POSITIONS),
         dihedral_deg=fields.number("dihedral_deg"),
         root_offset=fields.number("root_offset"),
@@ -359,6 +434,7 @@ def _surface(data: dict, path: str, fuselage_length_m: float) -> Surface:
         incidence_deg=fields.number("incidence_deg"),
         airfoil=fields.text("airfoil"),
         mass_kg=None if mass is None else fields.number("mass_kg", minimum=0.0, exclusive=True, value=mass),
+        control=None if control is None else _control(control, f"{path}.control", LAYOUT_PANEL_COUNTS[layout]),
     )
     fields.done()
     if not -1.0 <= surface.root_offset <= 1.0:
@@ -490,8 +566,10 @@ def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], volumes: t
                 raise AirframeError(f"{mount_fields.at('span_position_m')}: {span_position_m} is past the panel span {surface_names[surface_name].span_m}")
             x_offset_m = mount_fields.number("x_offset_m")
         direction = mount_fields.choice("direction", THRUST_DIRECTIONS)
+        thrust_axis_tilt_deg = mount_fields.number("thrust_axis_tilt_deg")
         if (on, direction) in (("nose", "pusher"), ("tail", "tractor")):
             raise AirframeError(f"{mount_fields.at('direction')}: a {on} motor must be a {'tractor' if on == 'nose' else 'pusher'}")
+        spin = mount_fields.choice("spin", SURFACE_PROP_SPINS if on == "surface" else SINGLE_PROP_SPINS)
         pod_data = mount_fields.optional("pod", None)
         pod = None
         if pod_data is not None:
@@ -505,24 +583,22 @@ def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], volumes: t
             pod_fields.done()
             if POINTED_SHAPE_PARAM_KEYS.get(pod.profile) != []:
                 raise AirframeError(f"{mount_fields.at('pod')}.profile: {pod.profile!r} must be a parameter-free profile {[key for key, value in POINTED_SHAPE_PARAM_KEYS.items() if not value]}")
+            try:
+                check_profile(pod.profile, pod.curve_length_m, pod.diameter_m / 2.0)
+            except ValueError as error:
+                raise AirframeError(f"{mount_fields.at('pod')}: {error}") from error
         mount_fields.done()
-        mounts.append(Mount(on=on, surface=surface_name, span_position_m=span_position_m, x_offset_m=x_offset_m, direction=direction, pod=pod))
+        mounts.append(Mount(on=on, surface=surface_name, span_position_m=span_position_m, x_offset_m=x_offset_m, direction=direction, spin=spin,
+                            thrust_axis_tilt_deg=thrust_axis_tilt_deg, pod=pod))
     if not mounts:
         raise AirframeError(f"{fields.at('mounts')}: at least one mount is required")
-    prop_spin = fields.required("prop_spin")
-    if isinstance(prop_spin, list):
-        if not prop_spin or any(spin not in PROP_SPINS for spin in prop_spin):
-            raise AirframeError(f"{fields.at('prop_spin')}: a list must hold one of {PROP_SPINS} per motor, got {prop_spin!r}")
-        prop_spin = tuple(prop_spin)
-    elif prop_spin not in PROP_SPIN_PATTERNS:
-        raise AirframeError(f"{fields.at('prop_spin')}: {prop_spin!r} is not one of {PROP_SPIN_PATTERNS} or a list of {PROP_SPINS} per motor")
     fields.done()
     motor_mass_kg, bell_diameter_m, bell_length_m = bench_motor_specs(motor)
     prop_diameter_in = tested.prop_info(motor.prop)["diameter_in"]
     return Propulsion(
         motor=motor, battery_volume=battery_volume, mounts=tuple(mounts), motor_mass_kg=motor_mass_kg,
         bell_diameter_m=bell_diameter_m, bell_length_m=bell_length_m, prop_diameter_m=prop_diameter_in * INCH_M,
-        prop_mass_kg=prop_mass_kg(prop_diameter_in, parts_data), prop_spin=prop_spin,
+        prop_mass_kg=prop_mass_kg(prop_diameter_in, parts_data),
     )
 
 
@@ -534,6 +610,11 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     name = fields.text("name")
     notes = fields.optional("notes", "")
     preset = fields.optional("preset", None)
+    powered, vtol, tailsitter = fields.flag("powered"), fields.flag("vtol"), fields.flag("tailsitter")
+    if tailsitter and not vtol:
+        raise AirframeError(f"{fields.at('tailsitter')}: a tailsitter is a VTOL; set vtol true")
+    if vtol and not powered:
+        raise AirframeError(f"{fields.at('vtol')}: a VTOL needs motors; set powered true")
 
     op_fields = _Fields(fields.required("operating_point"), fields.at("operating_point"))
     operating_point = OperatingPoint(
@@ -584,7 +665,10 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
         if volume.x_m > fuselage.length_m:
             raise AirframeError(f"{fields.at('volumes')} {volume.name!r}: x_m {volume.x_m} is past the fuselage length {fuselage.length_m}")
 
-    propulsion = _propulsion(fields.required("propulsion"), fields.at("propulsion"), surfaces, volumes, parts_data)
+    propulsion_data = fields.optional("propulsion", None)
+    if powered != (propulsion_data is not None):
+        raise AirframeError(f"{fields.at('propulsion')}: required when powered is true, absent when false (powered is {str(powered).lower()})")
+    propulsion = None if propulsion_data is None else _propulsion(propulsion_data, fields.at("propulsion"), surfaces, volumes, parts_data)
 
     sections_fields = _Fields(fields.required("sections"), fields.at("sections"))
     cuts = tuple(
@@ -604,7 +688,7 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
 
     fields.done()
     return Airframe(
-        name=name, notes=notes, preset=preset, operating_point=operating_point, print=print_settings,
+        name=name, notes=notes, preset=preset, powered=powered, vtol=vtol, tailsitter=tailsitter, operating_point=operating_point, print=print_settings,
         fuselage=fuselage, surfaces=surfaces, propulsion=propulsion, volumes=volumes,
         sections=Sections(cuts_m=cuts, mass_kg=section_masses),
     )
@@ -616,22 +700,20 @@ def load_airframe(path: Path, parts_data: dict) -> Airframe:
     return parse_airframe(data, parts_data, path=path.name)
 
 
-def panel_count(layout: str) -> int:
-    return {"1": 1, "H": 2, "3": 3, "+": 4, "X": 4}[layout]
-
-
 def main() -> None:
     with open(PARTS_PATH, "r") as file:
         parts_data = json.load(file)
     for argument in sys.argv[1:]:
         airframe = load_airframe(Path(argument), parts_data)
         motor_count = 0
-        for mount in airframe.propulsion.mounts:
-            surface = next((item for item in airframe.surfaces if item.name == mount.surface), None)
-            motor_count += panel_count(surface.layout) if surface is not None else 1
+        motor_mass = 0.0
+        if airframe.propulsion is not None:
+            for mount in airframe.propulsion.mounts:
+                surface = next((item for item in airframe.surfaces if item.name == mount.surface), None)
+                motor_count += LAYOUT_PANEL_COUNTS[surface.layout] if surface is not None else 1
+            motor_mass = motor_count * (airframe.propulsion.motor_mass_kg + airframe.propulsion.prop_mass_kg)
         volume_mass = [sum(volume.mass_kg[i] for volume in airframe.volumes) for i in (0, 1)]
         surface_mass = sum(surface.mass_kg for surface in airframe.surfaces if surface.mass_kg is not None)
-        motor_mass = motor_count * (airframe.propulsion.motor_mass_kg + airframe.propulsion.prop_mass_kg)
         section_mass = sum(mass for mass in airframe.sections.mass_kg if mass is not None)
         coupler_mass = len(airframe.sections.cuts_m) * (airframe.fuselage.joints.coupler_mass_kg or 0.0)
         declared = [volume_mass[i] + surface_mass + motor_mass + section_mass + coupler_mass for i in (0, 1)]

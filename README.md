@@ -24,6 +24,7 @@ python aero_check.py                                          # live lifting lin
 python sim_inav.py hover aircraft/m62v1.json --sitl <path>/inav/build_SITL/bin/SITL.elf     # hover in INAV SITL on JSBSim
 python sim_inav.py cruise aircraft/quadlancer62.json --sitl <SITL.elf>                     # takeoff, transition, cruise efficiency
 python sim_inav.py dash aircraft/m62v1.json --sitl <SITL.elf> --inav-config aircraft/inav/m62v1_2025-08-20.txt
+python sim_inav.py plane aircraft/simpleplane.json --sitl <SITL.elf>                       # fixed-wing: level flight, stick steps
 ```
 
 Aircraft files are opened as an argument or with File → Load. STEP/STL export is also in the GUI's CAD view.
@@ -58,9 +59,9 @@ The Barrowman CP line is a rocket-style estimate shown as a cross-check; if it d
 ## How it calculates
 
 1. **Resolve.** The aircraft definition becomes geometry (body stations, wing panels, motors and pods) and point masses: every printed section, coupler, wing set, motor, prop and volume at its real position. That gives total mass, CG (a CG range when a volume's mass is a range) and the inertia tensor. Printed parts are estimated from geometry (fuselage: shell wall x material density; wings and fins: solid airfoil volume x a bulk density calibrated on a weighed printed segment) and the estimate is shown next to any weighed value.
-2. **Propulsion.** Measured bench data (`libs/motordata.csv`) for the chosen motor/prop/cell count gives static thrust, current, power, thrust/weight, hover throttle and flight time.
+2. **Propulsion.** A DC motor + prop model fitted to published bench data (`libs/motordata.csv`) for the chosen motor/prop/cell count gives static thrust, current, power, thrust/weight, hover point (VTOL) and flight time. Throttle is INAV's motor output, i.e. ESC duty: the real m62v1 hover log only fits that, not the bench data's own "throttle %".
 3. **Aerodynamics (live, ~1.5 s): lifting line + bodies.** AeroSandbox's lifting line for all wings and fins, with body-mounted panels carried through the body to the axis, plus AeroSandbox AeroBuildup for the fuselage, pods and motors. It includes downwash from front surfaces onto rear ones, lift carried across the body, airfoil camber and stall at the actual Reynolds number (NeuralFoil section polars). It is AeroSandbox's `LiftingLine` algorithm solved for the whole AoA sweep at once. The neutral point comes from a straight-line fit of pitch moment against lift over ±4° around the operating point.
-4. **JSBSim export (`libs/jsbsim.py`).** Mass, CG, inertia, tail contact points, motors with spin, a throttle curve and prop tables fitted to the bench data, and full-range AeroBuildup aero tables, plus the INAV mixer for the tailsitter's hover profile. `sim_inav.py` flies it in INAV SITL on `inav-jsbsim-bench`; m62v1 hovers at the predicted motor command.
+4. **JSBSim export (`libs/jsbsim.py`).** Mass, CG, inertia, contact points, motors with spin and thrust tilt, the same fitted motor and prop tables, full-range AeroBuildup aero tables (closer to the real m62v1 flight than the live model; see `TODO.md` F), control surfaces driven by INAV servo outputs, plus INAV mixer profiles by aircraft type (tailsitter: hover and forward flight; fixed-wing or glider: AIRPLANE) with a servo mix whose signs come from each surface's computed moments. `sim_inav.py` flies it in INAV SITL on `inav-jsbsim-bench`; m62v1 hovers at the predicted motor command.
 5. **Barrowman cross-check.** The OpenRocket method for nose plus fins, with each fin weighted by how much it faces the pitch plane, so vertical fins add no pitch stability.
 
 Other views:
@@ -75,7 +76,8 @@ The numbers are good for comparing layouts and catching bad ideas, not for certi
 
 - AeroBuildup alone (the previous live model) has no downwash between surfaces and no lift carried across the body: on m62v2 it said +28 mm margin where the lifting line says −5 mm.
 - The section polars at these Reynolds numbers (~100k) are wavy, so the margin moves by a few millimetres with the operating point and the fit window (m62v2 at 5° / 20 m/s: −5 mm over ±4°, −9 mm over ±2°). Treat a margin within about ±10 mm as "near neutral", and evaluate at cruise speed; below ~70k (small chords at 10 m/s) it gets worse.
-- Not modelled yet: propwash and thrust effects, control surfaces.
+- Control surfaces use AeroSandbox's flap model: a section AoA shift of deflection × (1 − hinge²·⁷⁵), no hinge-gap or flap pitching-moment effects.
+- Not modelled yet: propwash and thrust effects.
 
 ## Where this is going
 

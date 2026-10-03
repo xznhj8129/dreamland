@@ -4,7 +4,9 @@ python aero_check.py
 python aero_check.py aircraft/m62v1.json --aoa 0 5 10 --airspeed 20
 
 Checks the live aero's lifting line (libs/aero.py lifting_line_sweep, every AoA in one batch) against
-asb.LiftingLine solved per AoA on the same wings: they must agree to --tolerance (N, N m).
+asb.LiftingLine solved per AoA on the same wings: they must agree to --tolerance (N, N m). Airframes with control
+surfaces are also checked with every control deflected CHECK_DEFLECTION_DEG, symmetrically and anti-symmetrically
+across XZ-mirror pairs.
 
 Then prints, per surface set and for information:
 - live: its lift in the live model (downwash from the other sets, lift carried across the body)
@@ -31,7 +33,8 @@ from libs.aero import (
 from libs.airframe import PARTS_PATH, load_airframe
 from libs.geometry import resolve_airframe
 
-DEFAULT_AIRFRAMES = (Path("aircraft/m62v1.json"), Path("aircraft/m62v2.json"), Path("aircraft/quadlancer62.json"))
+DEFAULT_AIRFRAMES = (Path("aircraft/m62v1.json"), Path("aircraft/m62v2.json"), Path("aircraft/quadlancer62.json"), Path("aircraft/simpleplane.json"))
+CHECK_DEFLECTION_DEG = 10.0
 VLM_SPANWISE_RESOLUTION = 12
 VLM_CHORDWISE_RESOLUTION = 8
 
@@ -55,6 +58,17 @@ def carried_through(wing: asb.Wing) -> asb.Wing:
     inner = copy.deepcopy(root)
     inner.xyz_le = np.array([root.xyz_le[0], 0.0, root.xyz_le[2] - k * dir_z])
     return asb.Wing(name=wing.name, symmetric=True, xsecs=[inner, *wing.xsecs])
+
+
+def lifting_line_difference(wing_plane: asb.Airplane, batched, column: int, aoa_deg: float, atmosphere, airspeed_m_s: float) -> tuple[float, float]:
+    """(batched total lift, largest difference in lift, drag and pitch moment) against asb.LiftingLine."""
+    reference = asb.LiftingLine(
+        airplane=wing_plane, op_point=asb.OperatingPoint(atmosphere=atmosphere, velocity=airspeed_m_s, alpha=aoa_deg),
+        model_size=AERO_MODEL_SIZE, spanwise_resolution=LIFTING_LINE_SPANWISE_RESOLUTION, vortex_core_radius=LIFTING_LINE_CORE_RADIUS_M,
+    ).run()
+    totals = (batched.lift_n[:, column].sum(), batched.drag_n[:, column].sum(), batched.pitch_moment_nm[:, column].sum())
+    expected = (float(reference["L"]), float(reference["D"]), float(reference["M_b"][1]))
+    return totals[0], max(abs(a - b) for a, b in zip(totals, expected))
 
 
 def layout_label(surface_set) -> str:
@@ -81,29 +95,38 @@ def main() -> None:
         airframe = load_airframe(path, parts_data)
         operating_point = dataclasses.replace(airframe.operating_point, aoa_deg=float(aoa_values[0]), airspeed_m_s=args.airspeed, altitude_m=0.0)
         resolved, _problems = resolve_airframe(dataclasses.replace(airframe, operating_point=operating_point), parts_data)
-        wing_plane, _body_plane, owners = build_hybrid_airplanes(resolved)
+        hybrid = build_hybrid_airplanes(resolved)
+        wing_plane = hybrid.wings
         surface_count = len(resolved.surfaces)
-        live = lifting_line_sweep(build_lifting_line_mesh(wing_plane, owners), wing_plane.xyz_ref, surface_count, atmosphere, args.airspeed, aoa_values)
+        mesh = build_lifting_line_mesh(wing_plane, hybrid.owners, hybrid.controls)
+        live = lifting_line_sweep(mesh, wing_plane.xyz_ref, surface_count, atmosphere, args.airspeed, aoa_values)
         alone = []
         for index in range(surface_count):
-            wings = [wing for wing, owner in zip(wing_plane.wings, owners) if owner == index]
-            alone_plane = asb.Airplane(wings=wings, xyz_ref=wing_plane.xyz_ref, s_ref=wing_plane.s_ref, c_ref=wing_plane.c_ref, b_ref=wing_plane.b_ref)
-            alone.append(lifting_line_sweep(build_lifting_line_mesh(alone_plane, (0,) * len(wings)), wing_plane.xyz_ref, 1, atmosphere, args.airspeed, aoa_values))
+            members = [(wing, controls) for wing, owner, controls in zip(wing_plane.wings, hybrid.owners, hybrid.controls) if owner == index]
+            alone_plane = asb.Airplane(wings=[wing for wing, _ in members], xyz_ref=wing_plane.xyz_ref, s_ref=wing_plane.s_ref, c_ref=wing_plane.c_ref, b_ref=wing_plane.b_ref)
+            alone_mesh = build_lifting_line_mesh(alone_plane, (0,) * len(members), tuple(controls for _, controls in members))
+            alone.append(lifting_line_sweep(alone_mesh, wing_plane.xyz_ref, 1, atmosphere, args.airspeed, aoa_values))
+        deflected_cases = []
+        for symmetric in ((True, False) if resolved.controls else ()):
+            deflected_plane = copy.deepcopy(wing_plane)
+            for wing in deflected_plane.wings:
+                for xsec in wing.xsecs:
+                    for surface in xsec.control_surfaces:
+                        surface.deflection, surface.symmetric = CHECK_DEFLECTION_DEG, symmetric
+            deflections = {}
+            for own, mirror in hybrid.controls:
+                deflections[own] = CHECK_DEFLECTION_DEG
+                deflections[mirror] = CHECK_DEFLECTION_DEG if symmetric else -CHECK_DEFLECTION_DEG
+            deflections.pop(0, None)
+            label = f"(controls {'+' if symmetric else '+/-'}{CHECK_DEFLECTION_DEG:g})"
+            deflected_cases.append((label, deflected_plane, lifting_line_sweep(mesh, wing_plane.xyz_ref, surface_count, atmosphere, args.airspeed, aoa_values, deflections)))
         for column, aoa_deg in enumerate(aoa_values):
-            reference = asb.LiftingLine(
-                airplane=wing_plane, op_point=asb.OperatingPoint(atmosphere=atmosphere, velocity=args.airspeed, alpha=float(aoa_deg)),
-                model_size=AERO_MODEL_SIZE, spanwise_resolution=LIFTING_LINE_SPANWISE_RESOLUTION, vortex_core_radius=LIFTING_LINE_CORE_RADIUS_M,
-            ).run()
-            batched = (live.lift_n[:, column].sum(), live.drag_n[:, column].sum(), live.pitch_moment_nm[:, column].sum())
-            expected = (float(reference["L"]), float(reference["D"]), float(reference["M_b"][1]))
-            difference = max(abs(a - b) for a, b in zip(batched, expected))
-            status = "ok" if difference <= args.tolerance else "FAIL"
-            if status == "FAIL":
-                failures.append((path.stem, float(aoa_deg), difference))
-            print(
-                f"{path.stem:<14} {aoa_deg:5.1f}  {'(all wings)':<18} {'':<6} {batched[0]:8.3f}  "
-                f"asb.LiftingLine L {expected[0]:.3f} N  max diff {difference:.1e}  {status}"
-            )
+            for label, plane, batched in (("(all wings)", wing_plane, live), *deflected_cases):
+                total, difference = lifting_line_difference(plane, batched, column, float(aoa_deg), atmosphere, args.airspeed)
+                status = "ok" if difference <= args.tolerance else "FAIL"
+                if status == "FAIL":
+                    failures.append((path.stem, label, float(aoa_deg), difference))
+                print(f"{path.stem:<14} {aoa_deg:5.1f}  {label:<18} {'':<6} {total:8.3f}  max diff to asb.LiftingLine {difference:.1e}  {status}")
             for index, surface_set in enumerate(resolved.surfaces):
                 exposed_plane = build_asb_airplane(dataclasses.replace(resolved, surfaces=(surface_set,), motors=()))
                 exposed_plane.fuselages = []

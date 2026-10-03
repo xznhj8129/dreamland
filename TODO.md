@@ -10,10 +10,10 @@
         mass (g)
         Everything else is relevant more to propulsion, not display
 
-
+- Add direction arrow triangles to prop circle to show direction of spin (from front)
 
 - Parameters.Assembly box: 
-        - remove "thrust_axis_tilt_deg", i think this is FC configuration, not relevant here
+        - "thrust_axis_tilt_deg": per motor mount, thrust tilted up to align it with the CG when motors are not inline (done: mounts[].thrust_axis_tilt_deg)
         - battery, motors and props are handled in the Propulsion tab, so no need for them
 
 
@@ -32,7 +32,6 @@
 - B. Geometry (found on the module model; verify on the plane-first model):
         - Incidence on unpaired vertical fins opposite in CAD vs ASB (V: bottom fin chord y -0.086 CAD, +0.087 ASB); drawing applies c*sin(aoa)*cos(roll) to all panels. Emit explicit chord/normal unit vectors per panel.
         - End-cap motor at mid-module: bell pokes through cone, prop disc cuts cone (V: motor_cap).
-        - pointed_shapes: tangent ogive L<R leaves open tip; blunted nose_radius >= R math error; bi_conic break_fraction 0 div-by-zero; pod shape params never passed (parabolic pod KeyError 'k_prime').
 
 - C. Physics (mass, propulsion):
         - Hover point below lowest measured throttle: simlib2.py inserts fake (0,0,0) and interpolates linearly (V: m62v2 needs 285 g/motor, lowest data 793 g at 40%; reports 14.4%, 4643 rpm, 89 W, 8.2 min; T~rpm^2 from 40% point gives 7743 rpm, 53 W, 13.7 min). is_extrapolated never set. Flag or extrapolate with stated law.
@@ -41,7 +40,6 @@
         - Multiple battery bays: mass per bay, Wh for one pack only (V).
         - pack_voltage_v is loaded voltage at lowest data point; LiPo Wh inline 3.7 V/cell; hover/full-throttle time use 100% Wh, no avionics load.
         - No check of total motor current vs battery current (m62v2: 160 A vs 154 A); propulsion warnings always empty.
-        - parse_motor_name mangles '-' and spaces: "DarwinFPV 1504-3-3800", "iFlight XING 2RAW 2812-1150" never resolve (V). Case handling inconsistent between find_motor_group and TestedMotorData.
         - Motor mass from iloc[0] of matched rows (Brotherhobby F2008-1000 has 2 weights). Bell geometry uses stator dims.
         - Gravity 9.81 (simlib2.py, propulsion summary) vs 9.80665.
 
@@ -60,22 +58,32 @@
 
 - F. JSBSim export (libs/jsbsim.py, sim_inav.py), for INAV SITL via inav_development/inav-jsbsim-bench (MSP_SIMULATOR HITL; INAV mixes):
         - Done 2026-10-01, milestone 1 (hover): m62v1 stands on its tail, arms, climbs and holds NAV POSHOLD in INAV SITL; hover motor command 0.226 vs 0.228 predicted from bench data; POSHOLD within 0.6 m.
-        - Motor: bench RPM does not fit a DC-motor model at rated KV (fit needs duty > 1), so electric engine + throttle table matching measured static thrust (JSBSim static thrust within 3 g of the bench rows; thrust ~ throttle^2 below 40 %). Full power = 0.70 x electrical (assumed; sets Cp only).
         - Prop: Ct0 0.137 (all bench rows); Ct(J) linear to zero at J = p/D (Tyto, as simlib2); Cp(J) = APC 9x4.5E shape (JSBSim DJI_9450) scaled; no measured forward-flight data. Rotor inertia: prop only.
-        - Aero tables: AeroBuildup body-axis CX..Cn over AoA -180..180 x sideslip -90..90 at the operating airspeed, damping at AoA 0; not the lifting line (+-30 deg only). Blend the lifting line in for forward flight.
+        - Aero tables: AeroBuildup body-axis CX..Cn over AoA -180..180 x sideslip -90..90 at the operating airspeed, damping at AoA 0. 2026-10-02 against the real m62v1 flight (log .06, steady forward samples, sim cruise sweep at 22.2 V): speed at the real battery power, AeroBuildup tables bias +0.7 km/h RMS 6.8; live-model tables (lifting line + bodies) bias +4.0 RMS 10.7 and off the power curve's front side below motor 0.62. Both too fast above 650 W (real plateau 112-115 km/h; sim 121-127). AeroBuildup has no downwash between surfaces, so the sim's pitch stability differs from the builder's (simpleplane Cm -0.34 against -0.13 at AoA 0).
         - JSBSim quirks: do_simple_trim (ground trim) segfaults on a nose-up model, so start standing at stance_height_m; BOGEY contacts explode with the body axis vertical, so STRUCTURE contacts.
         - INAV HITL: MSP_SIMULATOR writes acc/gyro/mag past board/tailsitter alignment; the bench (Vehicle.tailsitter) rotates sensors into the hover frame. FC pitch estimate carries ~+1.6 deg bias in hover (likely INAV's one-time tailsitter quaternion rotation at boot); POSHOLD absorbs it.
-        - Next: forward flight and transition (INAV AIRPLANE mixer profile + MIXER TRANSITION; bench must switch the sensor frame with the active mixer profile), lifting-line aero blend, m62v2 and quadlancer62, comparison with real flights.
         - 2026-10-02: m62v1 dash on its real Aug-2025 profile 2 (aircraft-defining lines only, rest INAV 10 defaults): level, stable at full throttle. Motor model now a fitted brushless DC motor (bench thrust within 5 g, RPM ~1.5 %). Real flight log 22/08/2025: 30-36 m/s at 57-77 % motor, pack 21-23 V (not full throttle).
         - 2026-10-02: quadlancer62 takeoff + transition + cruise sweep (generated two-profile config): best range ~60 km/h 2.4 Wh/km, best endurance ~55 km/h 138 W, stall just under 55 km/h (model estimates; no battery sag).
         - quadlancer62 hover with INAV 10 default PIDs oscillates (~1 Hz pitch/yaw, tilt to 30 deg); ANGLE climb steady. Needs a hover tune (bigger inertia, 9in props).
+        - Transition in the cruise test: climb stopped first, throttle blended hover -> cruise with the nose coming down, gentler pitch-over: quadlancer62 altitude -0.9 / +2.8 m (was +19 m balloon).
         - Bench: NAV ALTHOLD climbs steadily (0.5-1 m/s) at mid stick (MID_STICK and STICK); NAV POSHOLD holds on m62v1. Unexplained.
-        - Real wings have servos (quadlancer wing 90 g with servo, 86 g without; m62v1 V1.3 cross canards): no control surfaces in the model yet; control surface design tools to add.
+        - Real wings have servos (quadlancer wing 90 g with servo, 86 g without; m62v1 V1.3 cross canards). Control surfaces in the model (2026-10-02): lifting-line increments (AeroSandbox flap model: AoA shift deflection x (1 - hinge^2.75)), servo FCS with rate limit, smix from roles with signs from computed moments. Servo masses not modelled.
+        - simpleplane (fixed-wing test plane): CG far forward (static margin 88 % c_ref) and heavy for its wing (CL 0.98 for level flight at 20 m/s); dives in the plane test. The plane is to be changed.
+        - Fixed-wing INAV tuning (trim, PIDs) to do.
         - No battery sag in the bench (JSBSim maxvolts only).
+
+- G. Aero validation and optimization (decided 2026-10-02):
+        - Validation, real world: fly m62v1 in sim at the logged motor command and pack voltage (Projects/M62X4/logs, 2025-08-22 .06: 30-36 m/s GPS at 57-77 % motor, 21-23 V) and compare speed. Pack voltage: sim_inav.py --pack-voltage (export maxvolts).
+        - VSPAERO (installed, /usr/local/bin/vspaero): panel/vortex method with viscous corrections, minutes per aircraft, body and wings as one surface; third independent estimate. Fix the divergence on AeroSandbox's export_OpenVSP_vspscript geometry first (see D).
+        - Performance evaluator (headless, no INAV): aero tables + motor/prop model -> level trim over speed: stall speed, best-range/endurance speed, Wh/km, hover throttle, static margin, mass. Seconds per design.
+        - Optimizer on the evaluator: wing span/chords/sweep/dihedral/incidence, wing position, X/H, battery position, motor/prop from test data; constraints: printer bed, static-margin band, stall speed, hover throttle, wing mass from the print calibration. Best few flown in SITL (sim_inav.py cruise). Optimizers exploit model errors: keep ranges sane, read results as directions.
+        - CFD, GPU: FluidX3D (lattice Boltzmann, OpenCL, RTX 3060 12 GB; non-commercial license) on the CAD export STL: AoA sweeps in minutes; uniform grid, so lift/Cm/stall usable, drag indicative only.
+          On ice 2026-10-02: cloned to Software/other_software/FluidX3D (unmodified, built; benchmark 2527 MLUPs/s on the 3060). cfd/fluidx3d_setup.cpp written, not compiled or run (free stream at AoA on all faces, aircraft fixed, force + moment about CG to CSV; case file via QRB_CASE). Not done: runner cfd_fluidx3d.py (install setup as src/quadrocket_setup.cpp, enable FORCE_FIELD/EQUILIBRIUM_BOUNDARIES/SUBGRID, BENCHMARK off, export fused STL (binary, mm, geometry frame), average last flow-through, compare with LL/AeroBuildup). Docs: forces up to 2x high in turbulent flow (no wall model). License: no commercial or military use; publish altered source if results are published.
+        - CFD, CPU: OpenFOAM (Docker image opencfd/openfoam-default; Mint's packaged version is 2020), simpleFoam k-omega SST, half model (XZ symmetry), 0.5-1M cells: ~10-25 min per AoA on the Ryzen 5 3400G (4 cores), overnight sweeps; fully turbulent RANS misreads laminar bubbles at Re ~100k (transition model is slower). Cloud 32-64 cores (~1-3 $/h) for occasional big runs.
+        - CFD is a spot-check referee for the fast models, not part of the optimizer loop.
 
 - Housekeeping:
         - No requirements file. Deps (aerosandbox, neuralfoil, cadquery) only present in conda env "drone".
-        - AGENTS.md lists cad_example.py and library_editors_example.py, which do not exist, and the legacy files below as primary.
         - docs/ui predates the plane-first GUI (Builder V3 window, Controls tab, assembly cards).
 
 - Bring over from cadbuildsystem (predecessor):

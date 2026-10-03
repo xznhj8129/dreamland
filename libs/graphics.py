@@ -11,7 +11,7 @@ Volumes carry the canvas tags ("drag", "volume:<index>"), wing sets ("drag", "su
 import math
 import tkinter as tk
 
-from libs.geometry import PROP_SHAFT_LEN_M, ResolvedAirframe, body_half_extents, superellipse_radius
+from libs.geometry import PROP_SHAFT_LEN_M, ResolvedAirframe, body_half_extents, deflected_outline, superellipse_radius
 
 PROP_SHAFT_DIAM_M = 0.005
 MOTOR_BASE_DIAM_FACTOR = 0.5
@@ -21,6 +21,8 @@ POINT_MASS_MARK_PX = 5
 VOLUME_COLOR = "#ffcc33"
 CUT_COLOR = "#33ccff"
 CUT_OVERHANG_PX = 14
+CONTROL_COLOR = "#cc66ff"
+CONTROL_LABEL_OFFSET_PX = 10
 MARKER_RADIUS_PX = 5
 MARKER_COLORS = {"cg": "blue", "np": "red", "lift": "green"}
 MARKER_LABELS = {"cg": "CG", "np": "Neutral point", "lift": "Lift @ AoA"}
@@ -42,15 +44,9 @@ def section_projected_half(half_width: float, half_height: float, shape: float, 
     return extent
 
 
-def chord_vector(panel, chord: float) -> tuple[float, float, float]:
-    incidence = math.radians(panel.incidence_deg)
-    return tuple(chord * (math.cos(incidence) * (1.0 if axis == 0 else 0.0) - math.sin(incidence) * panel.normal[axis]) for axis in range(3))
-
-
 def panel_outline(panel) -> list[tuple[float, float, float]]:
     """True outline: root edge along the body surface, then tip trailing edge and tip leading edge."""
-    tip_te = tuple(a + b for a, b in zip(panel.tip_le, chord_vector(panel, panel.chord_tip_m)))
-    return [panel.attach_le, panel.attach_te, tip_te, panel.tip_le]
+    return [panel.attach_le, panel.attach_te, panel.tip_te, panel.tip_le]
 
 
 def volume_half_extents(resolved: ResolvedAirframe, volume) -> tuple[float, float, float]:
@@ -144,7 +140,8 @@ def measure_front_view(resolved: ResolvedAirframe, width: float, height: float) 
     }
 
 
-def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, roll_deg: float, ui_draw: str, zoom_scale: float, pan_x: float, pan_y: float) -> dict:
+def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, roll_deg: float, ui_draw: str, zoom_scale: float, pan_x: float, pan_y: float,
+                           deflections: dict[int, float]) -> dict:
     canvas.delete("all")
     width = max(canvas.winfo_width(), 10)
     height = max(canvas.winfo_height(), 10)
@@ -165,6 +162,16 @@ def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, 
             for x, y, z in panel_outline(panel):
                 points.extend((x_to_screen(x), transverse_to_screen(longitudinal_transverse(y, z, roll_rad))))
             canvas.create_polygon(points, outline=ui_draw, fill="", width=2, tags=("drag", f"surface:{surface_index}"))
+    surface_indices = {surface_set.name: index for index, surface_set in enumerate(resolved.surfaces)}
+    for control in resolved.controls:
+        tags = ("drag", f"surface:{surface_indices[control.surface]}")
+        outline = deflected_outline(control, deflections.get(control.number, 0.0))
+        screen = [(x_to_screen(x), transverse_to_screen(longitudinal_transverse(y, z, roll_rad))) for x, y, z in outline]
+        canvas.create_polygon([value for point in screen for value in point], outline=CONTROL_COLOR, fill=CONTROL_COLOR, stipple="gray25", width=1, tags=tags)
+        hinge = [value for x, y, z in control.hinge for value in (x_to_screen(x), transverse_to_screen(longitudinal_transverse(y, z, roll_rad)))]
+        canvas.create_line(hinge, fill=CONTROL_COLOR, width=2, dash=(4, 2), tags=tags)
+        canvas.create_text(sum(x for x, _t in screen) / 4.0, sum(t for _x, t in screen) / 4.0, text=f"C{control.number} {control.servo}",
+                           fill=CONTROL_COLOR, font=("TkDefaultFont", 8, "bold"), tags=tags)
 
     body = resolved.body
     top_points = []
@@ -201,9 +208,9 @@ def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, 
         canvas.create_line(x_to_screen(cut), center_y - half, x_to_screen(cut), center_y + half, fill=CUT_COLOR, width=3, dash=(6, 3), tags=("drag", f"cut:{index}"))
     for index, (x0, x1) in enumerate(zip(bounds, bounds[1:])):
         mass_g = section_points[index].mass_kg[0] * 1000.0
-        label = f"S{index + 1} {mass_g:.0f} g{'*' if section_points[index].computed else ''}"
+        label = f"S{index + 1} {mass_g:.0f} g{'*' if section_points[index].computed else ''}\n{(x1 - x0) * 1000.0:.0f} mm"
         canvas.create_text(x_to_screen((x0 + x1) / 2.0), transverse_to_screen(0.0) + section_projected_half(*body_half_extents(body, (x0 + x1) / 2.0), body.shape, roll_rad) * scale + 4,
-                           anchor="n", text=label, fill=CUT_COLOR, font=("TkDefaultFont", 8))
+                           anchor="n", text=label, fill=CUT_COLOR, font=("TkDefaultFont", 8), justify="center")
 
     for motor in resolved.motors:
         x_screen = x_to_screen(motor.position[0])
@@ -230,6 +237,11 @@ def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, 
         canvas.create_rectangle(min(base_inner, base_outer), t_screen - base_half, max(base_inner, base_outer), t_screen + base_half, outline=ui_draw, width=2)
         prop_radius = motor.prop_radius_m * scale
         canvas.create_line(shaft_outer, t_screen - prop_radius, shaft_outer, t_screen + prop_radius, fill="red", width=2)
+        if abs(motor.thrust_dir[2]) > 1e-9:  # tilted thrust line, across the body length, to check it against the CG
+            reach = [(motor.prop_center[0] - x) / -motor.thrust_dir[0] for x in (0.0, body.length_m)]
+            ends = [tuple(c + t * d for c, d in zip(motor.prop_center, motor.thrust_dir)) for t in reach]
+            canvas.create_line([value for x, y, z in ends for value in (x_to_screen(x), transverse_to_screen(longitudinal_transverse(y, z, roll_rad)))],
+                               fill="red", width=1, dash=(6, 4))
 
     for key, x_value in marker_positions(resolved, aero).items():
         if math.isfinite(x_value):
@@ -248,7 +260,8 @@ def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, 
     return metrics
 
 
-def draw_front_view(canvas: tk.Canvas, resolved: ResolvedAirframe, ui_draw: str, ui_bg: str, zoom_scale: float, pan_x: float, pan_y: float) -> dict:
+def draw_front_view(canvas: tk.Canvas, resolved: ResolvedAirframe, ui_draw: str, ui_bg: str, zoom_scale: float, pan_x: float, pan_y: float,
+                    deflections: dict[int, float]) -> dict:
     canvas.delete("all")
     width = max(canvas.winfo_width(), 10)
     height = max(canvas.winfo_height(), 10)
@@ -283,6 +296,15 @@ def draw_front_view(canvas: tk.Canvas, resolved: ResolvedAirframe, ui_draw: str,
         for radius, color, fill in ((pod_radius, ui_draw, ui_bg), (motor.bell_diameter_m / 2.0, ui_draw, ui_bg), (PROP_SHAFT_DIAM_M / 2.0, ui_draw, ui_bg), (motor.prop_radius_m, "red", "")):
             if radius > 0.0:
                 canvas.create_oval(x_screen - radius * scale, y_screen - radius * scale, x_screen + radius * scale, y_screen + radius * scale, outline=color, fill=fill, width=2)
+    for control in resolved.controls:
+        outline = deflected_outline(control, deflections.get(control.number, 0.0))
+        canvas.create_polygon([value for _x, y, z in outline for value in (center_x + y * scale, center_y - z * scale)],
+                              outline=CONTROL_COLOR, fill=CONTROL_COLOR, stipple="gray25", width=1)
+        (_x0, y0, z0), (_x1, y1, z1) = control.hinge
+        canvas.create_line(center_x + y0 * scale, center_y - z0 * scale, center_x + y1 * scale, center_y - z1 * scale, fill=CONTROL_COLOR, width=5)
+        length = math.hypot(y1 - y0, z1 - z0)
+        canvas.create_text(center_x + y1 * scale + CONTROL_LABEL_OFFSET_PX * (y1 - y0) / length, center_y - z1 * scale - CONTROL_LABEL_OFFSET_PX * (z1 - z0) / length,
+                           text=f"C{control.number}", fill=CONTROL_COLOR, font=("TkDefaultFont", 8, "bold"))
     draw_marker_guide(canvas)
     metrics["scale"] = scale
     metrics["zoom_scale"] = zoom_scale
@@ -304,8 +326,11 @@ def draw_canvas_view(
     zoom_scale: float = 1.0,
     pan_x: float = 0.0,
     pan_y: float = 0.0,
+    deflections: dict[int, float] | None = None,
 ) -> dict:
-    """aero is the aero result for this geometry, or None when not (yet) computed."""
+    """aero is the aero result for this geometry, or None when not (yet) computed. deflections: control number -> deg,
+    positive = TE away from the panel normal; controls not listed are drawn neutral."""
+    deflections = deflections or {}
     if view_mode == "Longitudinal":
-        return draw_longitudinal_view(canvas, resolved, aero, roll_deg, ui_draw, zoom_scale, pan_x, pan_y)
-    return draw_front_view(canvas, resolved, ui_draw, ui_bg, zoom_scale, pan_x, pan_y)
+        return draw_longitudinal_view(canvas, resolved, aero, roll_deg, ui_draw, zoom_scale, pan_x, pan_y, deflections)
+    return draw_front_view(canvas, resolved, ui_draw, ui_bg, zoom_scale, pan_x, pan_y, deflections)

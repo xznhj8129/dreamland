@@ -8,7 +8,9 @@ Aerodynamics of a resolved airframe (libs/geometry.py). Geometry is read from th
   polars, stall), body-rooted panels carried through the body to the axis (lift carried across the body), plus
   AeroBuildup for the bodies alone (fuselage, pods, motors). Neutral point from a dCm/dCL fit, Barrowman
   rocket-style cross-check. The lifting line is asb.LiftingLine's algorithm solved for every AoA at once
-  (lifting_line_sweep); aero_check.py verifies it against asb.LiftingLine.
+  (lifting_line_sweep); aero_check.py verifies it against asb.LiftingLine. Control surfaces are asb.ControlSurface
+  on the moving segment of each panel (AeroSandbox's model: an effective AoA change of deflection x (1 - hinge^2.75)
+  in the section polar, plus a drag factor); lifting_line_sweep takes the deflections per control number.
 - VLM sweep (run_vlm_sweep): wings only, inviscid; see its report header.
 """
 
@@ -21,7 +23,8 @@ import aerosandbox.numpy as asb_np
 import numpy as np
 from aerosandbox.aerodynamics.aero_3D.singularities.uniform_strength_horseshoe_singularities import calculate_induced_velocity_horseshoe
 
-from libs.geometry import STANDARD_GRAVITY_M_S2, ResolvedAirframe
+from libs.airframe import ControlSurface
+from libs.geometry import STANDARD_GRAVITY_M_S2, Panel, ResolvedAirframe
 
 AERO_MODEL_SIZE = "large"
 # Beyond about +-35 deg the wind runs backwards along swept vertical fins in asb.LiftingLine's strip model
@@ -38,6 +41,10 @@ VLM_SETTING_KEYS = (
 )
 NOSE_CNA = 2.0
 NOSE_CP_FRACTION = 0.466  # of nose length (tangent ogive)
+
+
+class OperatingPointError(Exception):
+    """The operating point lies outside what the aero model covers."""
 
 
 @dataclass(frozen=True)
@@ -119,6 +126,30 @@ def barrowman_finset(
     return cna, x_root_le + x_cp_local, mid_chord_line
 
 
+def panel_sections(panel: Panel, control: ControlSurface | None, tip_first: bool) -> list[asb.WingXSec]:
+    """Sections of one panel, split at a split control's span ends. Each moving segment carries an undeflected
+    asb.ControlSurface on its first section in the final order (ASB applies a section's control surfaces to the segment
+    after it); an all-moving panel is a hinge at the leading edge (effectiveness 1: the deflection adds to the AoA)."""
+    fractions, hinge = [0.0, 1.0], None
+    if control is not None and control.kind == "split":
+        fractions, hinge = sorted({0.0, control.span_start, control.span_end, 1.0}), control.chord_start
+    elif control is not None:
+        hinge = 0.0
+    moving = [hinge is not None and (control.kind != "split" or control.span_start <= a and b <= control.span_end) for a, b in zip(fractions, fractions[1:])]
+    sections = [
+        asb.WingXSec(xyz_le=[r + (t - r) * f for r, t in zip(panel.root_le, panel.tip_le)], chord=panel.chord_root_m + (panel.chord_tip_m - panel.chord_root_m) * f,
+                     twist=panel.incidence_deg, airfoil=asb.Airfoil(panel.airfoil))
+        for f in fractions
+    ]
+    if tip_first:
+        sections.reverse()
+        moving.reverse()
+    for section, moves in zip(sections, moving):
+        if moves:
+            section.control_surfaces = [asb.ControlSurface(name=f"{panel.surface} {panel.index + 1}", symmetric=True, deflection=0.0, hinge_point=hinge)]
+    return sections
+
+
 def build_asb_airplane(resolved: ResolvedAirframe) -> asb.Airplane:
     body = resolved.body
     fuselages = [asb.Fuselage(name="Fuselage", xsecs=[
@@ -130,14 +161,9 @@ def build_asb_airplane(resolved: ResolvedAirframe) -> asb.Airplane:
         for panel in surface_set.panels:
             if panel.xz_mirror == "copy":
                 continue
-            sections = [
-                asb.WingXSec(xyz_le=list(panel.root_le), chord=panel.chord_root_m, twist=panel.incidence_deg, airfoil=asb.Airfoil(panel.airfoil)),
-                asb.WingXSec(xyz_le=list(panel.tip_le), chord=panel.chord_tip_m, twist=panel.incidence_deg, airfoil=asb.Airfoil(panel.airfoil)),
-            ]
             # ASB's section normal for root->tip order is (0, -span_z, span_y); flip order to match the panel normal.
             asb_normal = (0.0, -panel.span_dir[2], panel.span_dir[1])
-            if sum(a * b for a, b in zip(asb_normal, panel.normal)) < 0.0:
-                sections.reverse()
+            sections = panel_sections(panel, surface_set.definition.control, tip_first=sum(a * b for a, b in zip(asb_normal, panel.normal)) < 0.0)
             wings.append(asb.Wing(name=f"{panel.surface}_{panel.index + 1}", symmetric=panel.xz_mirror == "primary", xsecs=sections))
     propulsors = []
     for motor in resolved.motors:
@@ -185,27 +211,49 @@ def barrowman(resolved: ResolvedAirframe) -> tuple[float, tuple[BarrowmanRow, ..
 
 def carried_to_axis(wing: asb.Wing) -> asb.Wing:
     """Copy of a body-rooted wing with an extra inner section where its span line comes closest to the fuselage axis,
-    so the lifting line carries its lift across the body."""
-    root, tip = wing.xsecs[0], wing.xsecs[-1]
+    so the lifting line carries its lift across the body. Sections may run tip first (build_asb_airplane flips them to
+    match the panel normal, e.g. a downward fin); the inner section goes on the root end either way."""
+    sections = list(wing.xsecs)
+    tip_first = np.linalg.norm(sections[0].xyz_le[1:]) > np.linalg.norm(sections[-1].xyz_le[1:])
+    root, tip = (sections[-1], sections[0]) if tip_first else (sections[0], sections[-1])
     span = np.array(tip.xyz_le[1:], dtype=float) - np.array(root.xyz_le[1:], dtype=float)
     span /= np.linalg.norm(span)
     root_yz = np.array(root.xyz_le[1:], dtype=float)
     inner = asb.WingXSec(xyz_le=[root.xyz_le[0], *(root_yz - float(root_yz @ span) * span)], chord=root.chord, twist=root.twist, airfoil=root.airfoil)
-    return asb.Wing(name=wing.name, symmetric=wing.symmetric, xsecs=[inner, *wing.xsecs])
+    return asb.Wing(name=wing.name, symmetric=wing.symmetric, xsecs=[*sections, inner] if tip_first else [inner, *sections])
 
 
-def build_hybrid_airplanes(resolved: ResolvedAirframe) -> tuple[asb.Airplane, asb.Airplane, tuple[int, ...]]:
-    """(wings for the lifting line, bodies for AeroBuildup, resolved.surfaces index of each wing), sharing references
-    and the CG moment reference."""
+@dataclass(frozen=True)
+class HybridAirplanes:
+    """The lifting line's wings and AeroBuildup's bodies, sharing references and the CG moment reference."""
+    wings: asb.Airplane
+    bodies: asb.Airplane
+    owners: tuple[int, ...]  # resolved.surfaces index of each wing
+    controls: tuple[tuple[int, int], ...]  # per wing: control number of its panel and of its XZ-mirror copy (0 = none)
+
+
+def build_hybrid_airplanes(resolved: ResolvedAirframe) -> HybridAirplanes:
     airplane = build_asb_airplane(resolved)
-    # airplane.wings holds one wing per panel that is not an XZ-mirror copy, in resolved.surfaces order.
-    owners = tuple(index for index, surface_set in enumerate(resolved.surfaces) for panel in surface_set.panels if panel.xz_mirror != "copy")
+    numbers = {(control.surface, control.panel_index): control.number for control in resolved.controls}
+    # airplane.wings holds one wing per panel that is not an XZ-mirror copy, in resolved.surfaces order; a copy mirrors
+    # its primary's span direction across XZ.
+    owners, controls = [], []
+    for index, surface_set in enumerate(resolved.surfaces):
+        for panel in surface_set.panels:
+            if panel.xz_mirror == "copy":
+                continue
+            copy_index = None
+            if panel.xz_mirror == "primary":
+                copy_index = next(other.index for other in surface_set.panels if other.xz_mirror == "copy"
+                                  and abs(other.span_dir[1] + panel.span_dir[1]) < 1e-9 and abs(other.span_dir[2] - panel.span_dir[2]) < 1e-9)
+            owners.append(index)
+            controls.append((numbers.get((surface_set.name, panel.index), 0), numbers.get((surface_set.name, copy_index), 0)))
     wings = [carried_to_axis(wing) if resolved.surfaces[owner].definition.root == "body" else wing for wing, owner in zip(airplane.wings, owners)]
     references = dict(xyz_ref=airplane.xyz_ref, s_ref=airplane.s_ref, c_ref=airplane.c_ref, b_ref=airplane.b_ref)
-    return (
-        asb.Airplane(name=f"{airplane.name} wings", wings=wings, fuselages=[], **references),
-        asb.Airplane(name=f"{airplane.name} bodies", wings=[], fuselages=airplane.fuselages, **references),
-        owners,
+    return HybridAirplanes(
+        wings=asb.Airplane(name=f"{airplane.name} wings", wings=wings, fuselages=[], **references),
+        bodies=asb.Airplane(name=f"{airplane.name} bodies", wings=[], fuselages=airplane.fuselages, **references),
+        owners=tuple(owners), controls=tuple(controls),
     )
 
 
@@ -220,6 +268,8 @@ class LiftingLineMesh:
     centers: np.ndarray  # bound-leg midpoints
     bound_legs: np.ndarray
     airfoil_groups: tuple[tuple[asb.Airfoil, np.ndarray], ...]  # (airfoil, indices of the panels using it)
+    controls: np.ndarray  # control number of each panel's moving segment, 0 = fixed
+    hinges: dict[int, float]  # hinge chord fraction per control number (0 = all-moving)
     induced: np.ndarray  # (3, panels, panels): velocity at panel i's centre per unit circulation of horseshoe j
 
 
@@ -229,22 +279,32 @@ class SurfaceLoads:
     lift_n: np.ndarray
     drag_n: np.ndarray
     pitch_moment_nm: np.ndarray  # about the moment reference (the CG), nose-up positive
+    force_body_n: np.ndarray  # (3, AoA): all wings, body axes (x forward, y right, z down)
+    moment_body_nm: np.ndarray  # (3, AoA): all wings, about the moment reference, body axes
 
 
-def build_lifting_line_mesh(wing_plane: asb.Airplane, owners: tuple[int, ...]) -> LiftingLineMesh:
-    """The same panels, strip airfoils and induced-velocity kernel as asb.LiftingLine.wing_aerodynamics."""
-    corners, airfoils, panel_owners = [], [], []
-    for wing, owner in zip(wing_plane.wings, owners):
+def build_lifting_line_mesh(wing_plane: asb.Airplane, owners: tuple[int, ...], wing_controls: tuple[tuple[int, int], ...]) -> LiftingLineMesh:
+    """The same panels, strip airfoils, control surfaces and induced-velocity kernel as asb.LiftingLine.wing_aerodynamics.
+    wing_controls: per wing, the control number of its own panel and of its mirrored side (HybridAirplanes.controls)."""
+    corners, airfoils, panel_owners, panel_controls, hinges = [], [], [], [], {}
+    for wing, owner, (own_control, mirror_control) in zip(wing_plane.wings, owners, wing_controls):
         wing = wing.subdivide_sections(ratio=LIFTING_LINE_SPANWISE_RESOLUTION, spacing_function=asb_np.cosspace)
         points, faces = wing.mesh_thin_surface(method="quad", chordwise_resolution=1, add_camber=False)
         strip_airfoils = [a.airfoil.blend_with_another_airfoil(airfoil=b.airfoil, blend_fraction=0.5) for a, b in zip(wing.xsecs[:-1], wing.xsecs[1:])]
+        strip_moving = [bool(a.control_surfaces) for a in wing.xsecs[:-1]]
+        for a in wing.xsecs[:-1]:
+            for surface in a.control_surfaces:
+                hinges[own_control] = hinges[mirror_control] = surface.hinge_point
+        strip_controls = [own_control if moves else 0 for moves in strip_moving]
         if wing.symmetric:
             strip_airfoils *= 2  # mesh_thin_surface lists the right side, then the mirrored left side
+            strip_controls += [mirror_control if moves else 0 for moves in strip_moving]
         if len(strip_airfoils) != len(faces):
             raise ValueError(f"lifting line mesh of {wing.name}: {len(faces)} panels but {len(strip_airfoils)} strip airfoils")
         corners.append(points[faces])
         airfoils += strip_airfoils
         panel_owners += [owner] * len(faces)
+        panel_controls += strip_controls
     front_left, back_left, back_right, front_right = (np.concatenate([wing_corners[:, i] for wing_corners in corners]) for i in range(4))
     cross = np.cross(front_right - back_left, front_left - back_right)
     cross_norm = np.linalg.norm(cross, axis=1)
@@ -268,17 +328,21 @@ def build_lifting_line_mesh(wing_plane: asb.Airplane, owners: tuple[int, ...]) -
         forward=np.cross(normals, bound_legs / np.linalg.norm(bound_legs, axis=1)[:, None]),
         centers=centers, bound_legs=bound_legs,
         airfoil_groups=tuple((airfoil, np.array(indices)) for airfoil, indices in groups.values()),
+        controls=np.array(panel_controls), hinges={number: hinge for number, hinge in hinges.items() if number},
         induced=induced,
     )
 
 
 def lifting_line_sweep(
     mesh: LiftingLineMesh, xyz_ref, surface_count: int, atmosphere: asb.Atmosphere, airspeed_m_s: float, aoa_values: np.ndarray,
+    deflections: dict[int, float] | None = None,
 ) -> SurfaceLoads:
     """asb.LiftingLine.run for every AoA at once. Its influence matrix does not depend on AoA (trailing legs along +x),
-    so it is built once, and each section polar pass is one NeuralFoil call per airfoil over all panels and AoAs.
-    Like asb.LiftingLine: section lift linearised with a 2 pi slope at the geometric AoA, one solve for the
-    circulation, then section drag and moment at the induced AoA."""
+    so it is built once, and each section polar pass is one NeuralFoil call per airfoil and deflected control over all
+    panels and AoAs. Like asb.LiftingLine: section lift linearised with a 2 pi slope at the geometric AoA, one solve for
+    the circulation, then section drag and moment at the induced AoA. deflections: degrees per control number
+    (positive = TE away from the panel normal); controls not listed are neutral."""
+    deflections = deflections or {}
     op_points = [asb.OperatingPoint(atmosphere=atmosphere, velocity=airspeed_m_s, alpha=float(aoa)) for aoa in aoa_values]
     freestream = np.array([op_point.compute_freestream_velocity_geometry_axes() for op_point in op_points])  # (aoa, 3), where the wind goes
     freestream_dir = freestream / np.linalg.norm(freestream, axis=1, keepdims=True)
@@ -289,12 +353,17 @@ def lifting_line_sweep(
 
     def section_polars(alpha: np.ndarray) -> dict[str, np.ndarray]:
         polars = {key: np.empty_like(alpha) for key in ("CL", "CD", "CM")}
-        for airfoil, indices in mesh.airfoil_groups:
-            aero = airfoil.get_aero_from_neuralfoil(
-                alpha=alpha[indices].ravel(), Re=reynolds[indices].ravel(), mach=mach[indices].ravel(), model_size=AERO_MODEL_SIZE,
-            )
-            for key, values in polars.items():
-                values[indices] = np.reshape(aero[key], alpha[indices].shape)
+        for airfoil, group in mesh.airfoil_groups:
+            for number in np.unique(mesh.controls[group]):
+                indices = group[mesh.controls[group] == number]
+                deflection = deflections.get(int(number), 0.0) if number else 0.0
+                surfaces = [asb.ControlSurface(deflection=deflection, hinge_point=mesh.hinges[int(number)])] if deflection else None
+                aero = airfoil.get_aero_from_neuralfoil(
+                    alpha=alpha[indices].ravel(), Re=reynolds[indices].ravel(), mach=mach[indices].ravel(), model_size=AERO_MODEL_SIZE,
+                    control_surfaces=surfaces,
+                )
+                for key, values in polars.items():
+                    values[indices] = np.reshape(aero[key], alpha[indices].shape)
         return polars
 
     alpha_influence = np.einsum("knm,nk->nm", mesh.induced, mesh.normals) / airspeed_m_s  # rad of AoA per unit circulation
@@ -310,7 +379,7 @@ def lifting_line_sweep(
     arms = mesh.centers - np.asarray(xyz_ref, dtype=float)
     bound_legs_yz = mesh.bound_legs * np.array([0.0, 1.0, 1.0])
     membership = (mesh.owners[None, :] == np.arange(surface_count)[:, None]).astype(float)  # (surfaces, panels)
-    loads = SurfaceLoads(*(np.empty((surface_count, len(op_points))) for _ in range(3)))
+    loads = SurfaceLoads(*(np.empty((surface_count, len(op_points))) for _ in range(3)), *(np.empty((3, len(op_points))) for _ in range(2)))
     for column, op_point in enumerate(op_points):
         velocities = np.einsum("knm,m->nk", mesh.induced, circulation[:, column]) + freestream[column]
         speeds = np.linalg.norm(velocities, axis=1)
@@ -324,26 +393,29 @@ def lifting_line_sweep(
         loads.lift_n[:, column] = -force_wind[2]
         loads.drag_n[:, column] = -force_wind[0]
         loads.pitch_moment_nm[:, column] = moment_body[1]
+        loads.force_body_n[:, column] = np.sum(op_point.convert_axes(*(membership @ forces).T, from_axes="geometry", to_axes="body"), axis=1)
+        loads.moment_body_nm[:, column] = np.sum(moment_body, axis=1)
     return loads
 
 
 def analyze_aero(resolved: ResolvedAirframe) -> AeroResult:
     operating_point = resolved.airframe.operating_point
     if not AOA_SWEEP_DEG.start <= operating_point.aoa_deg <= AOA_SWEEP_DEG.stop - 1:
-        raise ValueError(f"aero covers AoA {AOA_SWEEP_DEG.start} to {AOA_SWEEP_DEG.stop - 1} deg; operating point AoA is {operating_point.aoa_deg} deg")
+        raise OperatingPointError(f"aero covers AoA {AOA_SWEEP_DEG.start} to {AOA_SWEEP_DEG.stop - 1} deg; operating point AoA is {operating_point.aoa_deg} deg")
     cg_x = resolved.cg_m[0]
     reference = resolved.reference
     atmosphere = asb.Atmosphere(altitude=operating_point.altitude_m)
-    wing_plane, body_plane, owners = build_hybrid_airplanes(resolved)
+    hybrid = build_hybrid_airplanes(resolved)
 
     # The sweep plus the operating point appended at eval_index, in one pass of each model.
     sweep_aoa = np.array(AOA_SWEEP_DEG, dtype=float)
     eval_index = len(sweep_aoa)
     aoa_values = np.append(sweep_aoa, operating_point.aoa_deg)
     op_point = asb.OperatingPoint(atmosphere=atmosphere, velocity=operating_point.airspeed_m_s, alpha=aoa_values)
-    body = asb.AeroBuildup(airplane=body_plane, op_point=op_point, model_size=AERO_MODEL_SIZE).run()
+    body = asb.AeroBuildup(airplane=hybrid.bodies, op_point=op_point, model_size=AERO_MODEL_SIZE).run()
     wings = lifting_line_sweep(
-        build_lifting_line_mesh(wing_plane, owners), wing_plane.xyz_ref, len(resolved.surfaces), atmosphere, operating_point.airspeed_m_s, aoa_values,
+        build_lifting_line_mesh(hybrid.wings, hybrid.owners, hybrid.controls), hybrid.wings.xyz_ref, len(resolved.surfaces), atmosphere,
+        operating_point.airspeed_m_s, aoa_values,
     )
     dynamic_pressure = float(asb.OperatingPoint(atmosphere=atmosphere, velocity=operating_point.airspeed_m_s).dynamic_pressure())
     force_scale = dynamic_pressure * reference.area_m2

@@ -27,6 +27,9 @@ Implemented in `libs/airframe.py` (`python -m libs.airframe aircraft/m62v2.json`
 
 ```
 schema              "airframe/2"
+powered, vtol, tailsitter   true/false; tailsitter needs vtol, vtol needs powered. They drive the JSBSim/INAV export:
+                    tailsitter = hover + forward mixer profiles; not vtol = AIRPLANE profile, motors on throttle only;
+                    other VTOL types and unpowered airframes are not exported. Hover numbers only for vtol.
 name, notes
 preset              optional label (M62, M75); values are always written out in full
 operating_point     aoa_deg, airspeed_m_s, altitude_m
@@ -46,15 +49,24 @@ surfaces[]          name, x_root_le_m (must be on the body; chords may overhang 
                     panels meet in the centre, e.g. delta tail fins), span_m (per panel, along the panel),
                     chord_root_m, chord_tip_m, sweep_le_deg, incidence_deg, airfoil (AeroSandbox name),
                     mass_kg (whole set; optional, absent = computed)
-propulsion
+                    control (optional, absent = fixed; applies to every panel of the set):
+                      kind split: chord_start (hinge, chord fraction from LE, 0..1 exclusive),
+                        span_start, span_end (panel span fractions from the root, end > start)
+                      kind all_moving: pivot (chord fraction from LE)
+                      roles [pitch yaw roll flaps] (reference only), deflection_min_deg, deflection_max_deg
+                      (positive = TE away from the panel normal, down on a wing), rate_deg_s (placeholder),
+                      servos (S1..S12, one per panel in panel order, may be shared)
+                    control surfaces are numbered C1.. front to back, then clockwise from the top seen from behind
+propulsion          required when powered, absent when not
   motor             brand, model, kv, prop (must have bench data in libs/motordata.csv for the battery's cell count;
                     motor mass from the same data, one consistent weight required)
   battery_volume    name of the volume whose part is battery:<name>
-  prop_spin         props_out | props_in (4 motors in an X: INAV tailsitter hover frame, multirotor front = aircraft
-                    belly, props out = front-right and rear-left cw), or a list of cw / ccw per motor; spin is seen
-                    from where the thrust points
   mounts[]          on (nose | tail | surface); for surface: surface, span_position_m (from panel root),
                     x_offset_m (from root LE); direction (tractor | pusher);
+                    spin, seen from where the thrust points: surface out | in (2+ motors alternating cw/ccw round the
+                    axis; out = INAV props out, X: front-right and rear-left cw, multirotor front = aircraft belly),
+                    nose/tail cw | ccw;
+                    thrust_axis_tilt_deg: thrust line tilted up (+z) from the body axis, e.g. to pass through the CG;
                     pod optional: diameter_m, flat_length_m, curve_length_m, profile (parameter-free)
 volumes[]           name, x_m (centre), y_m and z_m (default 0), shape:
                       box: size_m [x, y, z], or from the part's dimensions

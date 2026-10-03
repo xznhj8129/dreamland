@@ -1,7 +1,7 @@
 """
 Usage:
 from libs.report import build_report_text
-text = build_report_text(resolved, aero, problems, sweep=True)
+text = build_report_text(resolved, aero, problems, parts_data, sweep=True)
 
 Plain-text reports of a resolved airframe and its aero results, shared by analyze_airframe.py and the GUI.
 """
@@ -10,9 +10,10 @@ import math
 
 from libs.aero import AeroResult, stability_verdict
 from libs.geometry import GRAMS_FORCE_PER_NEWTON, STANDARD_GRAVITY_M_S2, ResolvedAirframe
+from libs.propulsion import propulsion_summary, summary_lines
 
 
-def build_report_text(resolved: ResolvedAirframe, aero: AeroResult, problems: list[str], sweep: bool) -> str:
+def build_report_text(resolved: ResolvedAirframe, aero: AeroResult, problems: list[str], parts_data: dict, sweep: bool) -> str:
     airframe = resolved.airframe
     lines = []
     reference = resolved.reference
@@ -20,6 +21,8 @@ def build_report_text(resolved: ResolvedAirframe, aero: AeroResult, problems: li
     weight_n = (mass_low + mass_high) / 2.0 * STANDARD_GRAVITY_M_S2
 
     lines.append(f"Airframe: {airframe.name}")
+    kind = "tailsitter VTOL" if airframe.tailsitter else "VTOL" if airframe.vtol else "fixed-wing" if airframe.powered else "glider (unpowered)"
+    lines.append(f"Type: {kind}")
     lines.append("")
     lines.append("Mass")
     lines.append(f"  Total            : {mass_low * 1000:.1f} g" if mass_low == mass_high else f"  Total            : {mass_low * 1000:.1f} - {mass_high * 1000:.1f} g")
@@ -45,9 +48,13 @@ def build_report_text(resolved: ResolvedAirframe, aero: AeroResult, problems: li
     lines.append(f"  Reference        : {reference.basis}  S {reference.area_m2:.4f} m^2  c {reference.chord_m:.4f} m  b {reference.span_m:.3f} m")
     for surface_set in resolved.surfaces:
         lines.append(f"  {surface_set.name:<16} : {surface_set.definition.layout} x{len(surface_set.panels)}, area {surface_set.planform_area_m2:.4f} m^2, MAC {surface_set.mac_m:.4f} m")
-    lines.append(f"  Motors           : {len(resolved.motors)} x {airframe.propulsion.motor.brand} {airframe.propulsion.motor.model} {airframe.propulsion.motor.kv}KV, {airframe.propulsion.motor.prop}")
-    spin_text = airframe.propulsion.prop_spin if isinstance(airframe.propulsion.prop_spin, str) else "listed"
-    lines.append(f"  Prop spin        : {spin_text}, seen from where the thrust points: " + ", ".join(f"{motor.name} {motor.spin}" for motor in resolved.motors))
+    if airframe.propulsion is not None:
+        motor = airframe.propulsion.motor
+        lines.append(f"  Motors           : {len(resolved.motors)} x {motor.brand} {motor.model} {motor.kv}KV, {motor.prop}")
+        lines.append("  Prop spin        : seen from where the thrust points: " + ", ".join(f"{placement.name} {placement.spin}" for placement in resolved.motors))
+        lines.append("")
+        lines.append("Propulsion (static, fitted to bench data; throttle = INAV motor output)")
+        lines.extend(f"  {line}" for line in summary_lines(propulsion_summary(resolved, parts_data)))
     if problems:
         lines.append("")
         lines.append("Layout problems")

@@ -1,5 +1,8 @@
 {
     "schema": "airframe/2",
+    "powered": true,
+    "vtol": true,
+    "tailsitter": true,
     "name": "62mm Quad 7in v1",
     "notes": "Pure dart: m62v2 without the horizontal main-wing section (section 3, 230-380 mm, and its main-wing removed; everything aft moved 150 mm forward). Section masses as in m62v2.",
     "preset": "M62",
@@ -88,7 +91,6 @@
             "prop": "GF7042"
         },
         "battery_volume": "battery",
-        "prop_spin": "props_out",
         "mounts": [
             {
                 "on": "surface",
@@ -96,6 +98,8 @@
                 "span_position_m": 0.1,
                 "x_offset_m": 0.12,
                 "direction": "pusher",
+                "spin": "out",
+                "thrust_axis_tilt_deg": 0.0,
                 "pod": {
                     "diameter_m": 0.035,
                     "flat_length_m": 0.02,

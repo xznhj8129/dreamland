@@ -19,7 +19,7 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, messagebox, ttk
 
-from libs.aero import analyze_aero, build_asb_airplane
+from libs.aero import OperatingPointError, analyze_aero, build_asb_airplane
 from libs.airframe import PARTS_PATH, SCHEMA, AirframeError, parse_airframe
 from libs.geometry import resolve_airframe
 from libs.report import build_report_text
@@ -105,8 +105,8 @@ class BuilderApp:
         self.root.bind("<F5>", self.on_manual_recompute)
         self.root.protocol("WM_DELETE_WINDOW", self.shutdown)
         self.poll_after_id = self.root.after(AERO_QUEUE_POLL_MS, self.poll_aero_queue)
-        self.configuration_main_view.rebuild_editors()
         self.recompute()
+        self.configuration_main_view.rebuild_editors()
 
     def set_title(self) -> None:
         self.root.title(f"quadrocketbuilder - {self.airframe_path.name}")
@@ -135,7 +135,7 @@ class BuilderApp:
     def run_aero(self, generation: int, resolved) -> None:
         try:
             self.aero_queue.put((generation, analyze_aero(resolved), None, None))
-        except ValueError as error:  # operating point outside the aero range: show the reason
+        except OperatingPointError as error:  # show the reason, not a traceback
             self.aero_queue.put((generation, None, str(error), None))
         except Exception:  # thread boundary: hand the traceback to the Tk thread for the error dialog
             self.aero_queue.put((generation, None, None, traceback.format_exc()))
@@ -153,7 +153,7 @@ class BuilderApp:
                 self.show_error_dialog(error_text)
             else:
                 self.aero = aero
-                self.write_summary(build_report_text(self.resolved, aero, self.problems, sweep=True))
+                self.write_summary(build_report_text(self.resolved, aero, self.problems, self.parts_data, sweep=True))
                 self.recompute_status_var.set("Up to date")
                 self.configuration_main_view.draw_active_view()
         self.poll_after_id = self.root.after(AERO_QUEUE_POLL_MS, self.poll_aero_queue)
@@ -184,8 +184,8 @@ class BuilderApp:
 
     def reload_library_data(self) -> None:
         self.parts_data = load_parts_data()
-        self.configuration_main_view.rebuild_editors()
         self.recompute()
+        self.configuration_main_view.rebuild_editors()
 
     def handle_callback_exception(self, exc_type, exc_value, exc_traceback) -> None:
         traceback_text = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
@@ -393,8 +393,8 @@ class BuilderApp:
         self.definition = data
         self.airframe_path = Path(path)
         self.set_title()
-        self.configuration_main_view.rebuild_editors()
         self.recompute()
+        self.configuration_main_view.rebuild_editors()
 
 
 def main() -> None:
