@@ -132,15 +132,18 @@ OrthographicView [fill, switchable, pannable, zoomable]
         - draw ends as curved caps meeting the tube
         - draw lifting surfaces as projected trapezoids through roll angle
         - draw lifting-surface chord angle using aoa_ang, positive = front up
-        - draw internal objects with known size as dashed outlines
-        - draw top-left colored point guide: blue CG, red Neutral point, green Lift @ AoA
+        - draw volumes as dashed outlines, named above
+        - draw parts as solid outlines (a cross without library size), named below
+        - draw wires battery -> ESC -> each motor as yellow dotted lines along the axes
+        - draw top-left colored point guide: blue CG, red Neutral point, green Lift @ AoA, volumes, parts, wires, cuts
         - draw pods, motors, shafts, props, CG, CP, CL
 
     mode Front
         - draw body as circular cross-section
         - draw lifting surfaces as radial lines
-        - draw internal objects with known size as dashed outlines
-        - draw top-left colored point guide: blue CG, red Neutral point, green Lift @ AoA
+        - draw volumes as dashed outlines, parts as solid outlines (a cross without library size)
+        - draw wires as yellow dotted lines
+        - draw top-left colored point guide: blue CG, red Neutral point, green Lift @ AoA, volumes, parts, wires, cuts
         - draw motor / pod / prop cross-sections
 ```
 
@@ -237,13 +240,47 @@ PropulsionTab [arrange:column]
 ```text
 SelectionPanel [editable]
 
-    - Battery [ui:dropdown, readonly, bind:config.battery]
-    - Motor [ui:dropdown, readonly, bind:config.motors]
-    - Propeller [ui:dropdown, readonly, bind:config.props]
+    - Battery [ui:dropdown, readonly]
+    - Manufacturer [ui:dropdown, readonly]
+    - Motor [ui:dropdown, readonly]
+    - Prop [ui:dropdown, readonly]
+    - ESC [ui:dropdown, readonly]
 
-Propeller options
-    - are filtered from tested motor data
-    - are narrowed by selected battery series count when available
+Options
+    - battery, ESC: placed parts of that kind (Parts tab)
+    - manufacturers and motors from motorlib, only motors with a stator size
+    - changing manufacturer selects its first motor
+    - props: all motorlib props
+```
+
+## Volumes tab
+
+```text
+VolumesTab [arrange:column]
+
+    - Add volume [ui:button]
+    * one card per volume: name, shape, x, y, z (mm), shape sizes, mass (g, blank = space only),
+      list of the parts in it, Delete
+
+Rules
+    - renaming a volume renames it in its parts
+    - Delete is refused while parts sit in the volume (status bar says which)
+    - dragging a volume in the side view moves its parts
+```
+
+## Parts tab
+
+```text
+PartsTab [arrange:column]
+
+    - Add part [ui:button]        new part: first library entry with a mass, in the first volume
+    * one card per part: name, part (library), volume, x, y, z offset (mm, blank = 0),
+      mass (g; blank = library, required when the library has none; 0 = counted elsewhere), Delete
+
+Rules
+    - renaming a part renames it in the propulsion battery / ESC
+    - Delete is refused for the propulsion battery or ESC (status bar says so)
+    - a part outside its volume, or overlapping another part, is listed under layout problems
 ```
 
 ### MotorInfoPanel
@@ -255,9 +292,18 @@ MotorInfoPanel [fill]
     - bottom half = fixed-width text report
 
 Plot contents
-    - thrust vs throttle
-    - RPM / 1000 vs throttle
-    - kW vs throttle
+    - thrust vs INAV motor output
+    - RPM / 1000 vs INAV motor output
+    - kW vs INAV motor output
+    - hover line (VTOL)
+
+Text report
+    - motors, prop, battery
+    - resistance per motor, by part
+    - full throttle, thrust/weight, hover
+    - parts not modelled, motorlib warnings
+
+Refreshes after every edit
 ```
 
 ## Assembly tab

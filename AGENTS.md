@@ -20,13 +20,12 @@ Primary files:
 - `libs/views/cad_view.py`: CAD main-view with STEP/STL export controls
 - `libs/views/part_editor_view.py`: part-editor main-view mount
 - `libs/pointed_shapes.py`: pointed-profile geometry helpers
-- `libs/simlib2.py`: propulsion test-data helpers
-- `libs/motordata.csv`: measured motor test data
-- `libs/batterydata.csv`: battery cell data
+- `libs/motorlib/`: motorlib (rcplanes.online calculator data and formulas: motors, props, cells, ESCs, wires), copied from dronebuildcalc
+- `libs/batterydata.csv`: battery cell data (not read by any code)
 - `analyze_airframe.py`: non-GUI analysis and STEP/STL export entrypoint
 - `aero_check.py`: aero cross-check
 - `libs/jsbsim.py`: JSBSim aircraft export (AeroBuildup aero tables, control surfaces) and INAV mixer profiles and servo mix
-- `libs/propulsion.py`: motor + prop model fitted to the bench data, throttle as ESC duty
+- `libs/propulsion.py`: motor + prop model on motorlib, wiring resistance from the design, throttle as ESC duty
 - `sim_inav.py`: flies the JSBSim export in INAV SITL on `inav_development/inav-jsbsim-bench`
 - `airfoil_analysis_example.py`: simple non-GUI example of the airfoil comparison
 - `aircraft/*.json`: airframe/2 aircraft definitions
@@ -60,7 +59,7 @@ Primary files:
 - The displayed VLM view should come from the actual AeroSandbox draw path, not a custom renderer.
 - That transient VLM cache is display-only and must not be saved to disk.
 - Orthographic drawing is Tk-canvas-native, not CAD geometry.
-- Motor geometry uses measured simlib2 CSV dimensions plus explicit shaft/base drawing constants.
+- Motor geometry uses motorlib stator dimensions plus explicit shaft/base drawing constants.
 
 ## Remember
 

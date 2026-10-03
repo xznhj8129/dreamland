@@ -50,10 +50,10 @@ def build_report_text(resolved: ResolvedAirframe, aero: AeroResult, problems: li
         lines.append(f"  {surface_set.name:<16} : {surface_set.definition.layout} x{len(surface_set.panels)}, area {surface_set.planform_area_m2:.4f} m^2, MAC {surface_set.mac_m:.4f} m")
     if airframe.propulsion is not None:
         motor = airframe.propulsion.motor
-        lines.append(f"  Motors           : {len(resolved.motors)} x {motor.brand} {motor.model} {motor.kv}KV, {motor.prop}")
+        lines.append(f"  Motors           : {len(resolved.motors)} x {motor.manufacturer} {motor.name}, {airframe.propulsion.prop} (motorlib)")
         lines.append("  Prop spin        : seen from where the thrust points: " + ", ".join(f"{placement.name} {placement.spin}" for placement in resolved.motors))
         lines.append("")
-        lines.append("Propulsion (static, fitted to bench data; throttle = INAV motor output)")
+        lines.append("Propulsion (static, motorlib; throttle = INAV motor output)")
         lines.extend(f"  {line}" for line in summary_lines(propulsion_summary(resolved, parts_data)))
     if problems:
         lines.append("")

@@ -34,14 +34,11 @@
         - End-cap motor at mid-module: bell pokes through cone, prop disc cuts cone (V: motor_cap).
 
 - C. Physics (mass, propulsion):
-        - Hover point below lowest measured throttle: simlib2.py inserts fake (0,0,0) and interpolates linearly (V: m62v2 needs 285 g/motor, lowest data 793 g at 40%; reports 14.4%, 4643 rpm, 89 W, 8.2 min; T~rpm^2 from 40% point gives 7743 rpm, 53 W, 13.7 min). is_extrapolated never set. Flag or extrapolate with stated law.
-        - motordata.csv non-monotonic: Uangel A2807 GF7042X2 6S thrust 1948 g at 90%, 1836 g at 100%; max thrust taken from 100% row; thrust->throttle inversion ambiguous.
-        - 4 LiPo batteries mass 0.0 in parts.json (GNB 5300/4000, Tattu 6000/4500), accepted silently (V: m62v2 with GNB-5300 total 0.839 kg, hover 26.9 min).
+        - 4 LiPo batteries mass 0.0 in parts.json (GNB 5300/4000, Tattu 6000/4500): a part using one needs mass_kg.
         - Multiple battery bays: mass per bay, Wh for one pack only (V).
-        - pack_voltage_v is loaded voltage at lowest data point; LiPo Wh inline 3.7 V/cell; hover/full-throttle time use 100% Wh, no avionics load.
-        - No check of total motor current vs battery current (m62v2: 160 A vs 154 A); propulsion warnings always empty.
-        - Motor mass from iloc[0] of matched rows (Brotherhobby F2008-1000 has 2 weights). Bell geometry uses stator dims.
-        - Gravity 9.81 (simlib2.py, propulsion summary) vs 9.80665.
+        - Pack voltage nominal (3.7 V/cell LiPo, 3.6 Li-ion) less its internal resistance; hover/full-throttle time use 100% Wh, no avionics load.
+        - No check of total motor current vs the pack's C rating; motorlib only warns on motor max current.
+        - Motor mass is motorlib's EstimatedWeight_g (DYS X2807-1300 53.7 g; its listed Wgt 1.72 oz = 48.8 g). Bell geometry uses stator dims.
 
 - D. Aero (live: lifting-line wings + AeroBuildup bodies, libs/aero.py analyze_aero, ~1.5 s):
         - Lifting line = asb.LiftingLine's algorithm solved for all AoA at once (lifting_line_sweep). Matches asb.LiftingLine to 1e-14 N and the old on-demand detailed model (~50 s) to 1e-9 on m62v2 and quadlancer62. Replaced AeroBuildup wings (no downwash, no carry-over, camber over-credited): m62v2 at 5 deg / 20 m/s was +27.6 mm, now -5.0 mm.
@@ -58,8 +55,9 @@
 
 - F. JSBSim export (libs/jsbsim.py, sim_inav.py), for INAV SITL via inav_development/inav-jsbsim-bench (MSP_SIMULATOR HITL; INAV mixes):
         - Done 2026-10-01, milestone 1 (hover): m62v1 stands on its tail, arms, climbs and holds NAV POSHOLD in INAV SITL; hover motor command 0.226 vs 0.228 predicted from bench data; POSHOLD within 0.6 m.
-        - Prop: Ct0 0.137 (all bench rows); Ct(J) linear to zero at J = p/D (Tyto, as simlib2); Cp(J) = APC 9x4.5E shape (JSBSim DJI_9450) scaled; no measured forward-flight data. Rotor inertia: prop only.
-        - Aero tables: AeroBuildup body-axis CX..Cn over AoA -180..180 x sideslip -90..90 at the operating airspeed, damping at AoA 0. 2026-10-02 against the real m62v1 flight (log .06, steady forward samples, sim cruise sweep at 22.2 V): speed at the real battery power, AeroBuildup tables bias +0.7 km/h RMS 6.8; live-model tables (lifting line + bodies) bias +4.0 RMS 10.7 and off the power curve's front side below motor 0.62. Both too fast above 650 W (real plateau 112-115 km/h; sim 121-127). AeroBuildup has no downwash between surfaces, so the sim's pitch stability differs from the builder's (simpleplane Cm -0.34 against -0.13 at AoA 0).
+        - Prop: static Ct0, Cp0 from motorlib's full-throttle point; Ct(J), Cp(J) = APC 9x4.5E shape (JSBSim DJI_9450), J scaled by p/D over the APC's 0.5 (zero thrust at 1.46 p/D; was linear to zero at p/D, 2026-10-02). Rotor inertia: prop only. At zero command JSBSim's motor shorts the windings: prop brakes, no windmilling (armed INAV never sends zero).
+        - Aero tables: AeroBuildup body-axis CX..Cn over airspeed 5-50 m/s x AoA -180..180 x sideslip -90..90 (dense near 0); damping over airspeed x AoA. AeroBuildup has no downwash between surfaces, so the sim's pitch stability differs from the builder's (simpleplane Cm -0.34 against -0.13 at AoA 0).
+        - m62v1 vs real flight (log .06, steady forward samples, cruise sweep at 22.2 V), 2026-10-02, with the bench-fit motor model (retired 2026-10-03 for motorlib; not rerun): with the old prop, speed at the real battery power bias +0.7 km/h RMS 6.8, but that prop made -3..+1 N thrust at the logged speed and motor (25-35 % of the real power). With the APC-shaped prop: speed at the real motor +42 km/h (RMS 43), at the real power +68 km/h. Prop alone at the logged points: 80-85 % of the real battery power, 10-18 N thrust; the log's power (Cp 0.54-0.62 of static at J ~0.72) is more than either prop shape. AeroBuildup drag at 31 m/s is a few N. Open: real drag, prop in forward flight, current sensor (pack sag fit 58 mOhm, plausible).
         - JSBSim quirks: do_simple_trim (ground trim) segfaults on a nose-up model, so start standing at stance_height_m; BOGEY contacts explode with the body axis vertical, so STRUCTURE contacts.
         - INAV HITL: MSP_SIMULATOR writes acc/gyro/mag past board/tailsitter alignment; the bench (Vehicle.tailsitter) rotates sensors into the hover frame. FC pitch estimate carries ~+1.6 deg bias in hover (likely INAV's one-time tailsitter quaternion rotation at boot); POSHOLD absorbs it.
         - 2026-10-02: m62v1 dash on its real Aug-2025 profile 2 (aircraft-defining lines only, rest INAV 10 defaults): level, stable at full throttle. Motor model now a fitted brushless DC motor (bench thrust within 5 g, RPM ~1.5 %). Real flight log 22/08/2025: 30-36 m/s at 57-77 % motor, pack 21-23 V (not full throttle).
@@ -67,8 +65,8 @@
         - quadlancer62 hover with INAV 10 default PIDs oscillates (~1 Hz pitch/yaw, tilt to 30 deg); ANGLE climb steady. Needs a hover tune (bigger inertia, 9in props).
         - Transition in the cruise test: climb stopped first, throttle blended hover -> cruise with the nose coming down, gentler pitch-over: quadlancer62 altitude -0.9 / +2.8 m (was +19 m balloon).
         - Bench: NAV ALTHOLD climbs steadily (0.5-1 m/s) at mid stick (MID_STICK and STICK); NAV POSHOLD holds on m62v1. Unexplained.
-        - Real wings have servos (quadlancer wing 90 g with servo, 86 g without; m62v1 V1.3 cross canards). Control surfaces in the model (2026-10-02): lifting-line increments (AeroSandbox flap model: AoA shift deflection x (1 - hinge^2.75)), servo FCS with rate limit, smix from roles with signs from computed moments. Servo masses not modelled.
-        - simpleplane (fixed-wing test plane): CG far forward (static margin 88 % c_ref) and heavy for its wing (CL 0.98 for level flight at 20 m/s); dives in the plane test. The plane is to be changed.
+        - Real wings have servos (quadlancer wing 90 g with servo, 86 g without; m62v1 V1.3 cross canards). Control surfaces in the model (2026-10-02): AeroBuildup increments (as the base tables, over the same AoA and airspeed grids; flap model AoA shift deflection x (1 - hinge^2.75), deflection x the wing's finite-wing factor, each side of a mirrored pair alone), servo FCS with rate limit, smix from roles with signs from computed moments. Not carried: AeroBuildup's induced-drag cross term between controls. Servo masses not modelled.
+        - simpleplane level test from 30 m/s, 2026-10-02: level 30 -> 18 m/s (50 W / 0.47 Wh/km at 30, 22 W / 0.34 Wh/km at 18, AoA 7.1); departs on the 16 m/s step (tail and aileron increments stall past AoA ~10).
         - Fixed-wing INAV tuning (trim, PIDs) to do.
         - No battery sag in the bench (JSBSim maxvolts only).
 

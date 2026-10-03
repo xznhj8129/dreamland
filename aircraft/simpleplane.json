@@ -51,7 +51,7 @@
     "surfaces": [
         {
             "name": "main-wing",
-            "x_root_le_m": 0.3028,
+            "x_root_le_m": 0.3184,
             "layout": "H",
             "fin_position": "top",
             "dihedral_deg": 0.0,
@@ -73,7 +73,7 @@
                 "deflection_max_deg": 45.0,
                 "rate_deg_s": 300.0,
                 "chord_start": 0.7,
-                "span_start": 0.2,
+                "span_start": 0.5,
                 "span_end": 1.0,
                 "servos": [
                     "S4",
@@ -103,7 +103,7 @@
                 "deflection_min_deg": -45.0,
                 "deflection_max_deg": 45.0,
                 "rate_deg_s": 300.0,
-                "chord_start": 0.55,
+                "chord_start": 0.5,
                 "span_start": 0.0,
                 "span_end": 1.0,
                 "servos": [
@@ -141,16 +141,31 @@
                     "S3"
                 ]
             }
+        },
+        {
+            "name": "underfin",
+            "x_root_le_m": 0.52,
+            "layout": "1",
+            "fin_position": "bottom",
+            "dihedral_deg": 0.0,
+            "root_offset": 0.0,
+            "root": "body",
+            "span_m": 0.05,
+            "chord_root_m": 0.08,
+            "chord_tip_m": 0.05,
+            "sweep_le_deg": 30.0,
+            "incidence_deg": 0.0,
+            "airfoil": "naca0008"
         }
     ],
     "propulsion": {
         "motor": {
-            "brand": "Flashobby",
-            "model": "A2812",
-            "kv": 900,
-            "prop": "HQ9050"
+            "manufacturer": "DYS",
+            "name": "X2812-900"
         },
-        "battery_volume": "battery",
+        "prop": "GWS HD 9x5",
+        "battery": "battery",
+        "esc": "ESC",
         "mounts": [
             {
                 "on": "tail",
@@ -164,8 +179,12 @@
         {
             "name": "battery",
             "shape": "box",
-            "part": "battery:lipo-6S-2200",
-            "x_m": 0.2476
+            "x_m": 0.2517,
+            "size_m": [
+                0.11,
+                0.0355,
+                0.049
+            ]
         },
         {
             "name": "ballast",
@@ -173,13 +192,32 @@
             "x_m": 0.1119,
             "mass_kg": 0.02,
             "length_m": 0.05
+        },
+        {
+            "name": "ESC",
+            "shape": "bore",
+            "x_m": 0.5217,
+            "length_m": 0.05
+        }
+    ],
+    "parts": [
+        {
+            "name": "battery",
+            "part": "battery:lipo-6S-2200",
+            "volume": "battery"
+        },
+        {
+            "name": "ESC",
+            "part": "esc:esc-4in1-60a",
+            "volume": "ESC",
+            "mass_kg": 0.0
         }
     ],
     "sections": {
         "cuts_m": [
             0.0657,
             0.1559,
-            0.2959,
+            0.3103,
             0.4296,
             0.6137
         ],

@@ -19,7 +19,7 @@ from dataclasses import dataclass
 
 import aerosandbox as asb
 
-from libs.airframe import Airframe, AirframeError, Mount, Surface, Volume
+from libs.airframe import AXES, Airframe, AirframeError, Mount, PlacedPart, Surface, Volume
 from libs.pointed_shapes import sample_pointed_profile
 
 END_PROFILE_SAMPLES = 14
@@ -127,7 +127,7 @@ class MotorPlacement:
 @dataclass(frozen=True)
 class MassPoint:
     name: str
-    kind: str  # structure, surface, volume, motor, prop
+    kind: str  # structure, surface, volume, part, motor, prop
     position: Vec
     mass_kg: tuple[float, float]  # (min, max)
     computed: bool  # True when derived from geometry rather than given
@@ -144,6 +144,14 @@ class Reference:
 
 
 @dataclass(frozen=True)
+class WireRoutes:
+    """High-current wiring as drawn and as modelled: along the axes (x, then y, then z), from the battery part to the
+    ESC part and from the ESC part to each motor (motor order)."""
+    battery: tuple[Vec, ...]
+    motors: tuple[tuple[Vec, ...], ...]
+
+
+@dataclass(frozen=True)
 class ResolvedAirframe:
     airframe: Airframe
     body: Body
@@ -156,6 +164,7 @@ class ResolvedAirframe:
     cg_x_range_m: tuple[float, float]  # forward-most and aft-most over all ranged-mass combinations
     inertia_kg_m2: Inertia  # about cg_m, ranged masses at the middle of their range
     reference: Reference
+    wires: WireRoutes | None  # None when not powered
 
 
 def trapezoid_mac(chord_root: float, chord_tip: float) -> float:
@@ -536,6 +545,22 @@ def motor_spins(mount: Mount, positions: list[Vec]) -> tuple[str, ...]:
     return tuple(spins)
 
 
+def right_angle_route(start: Vec, end: Vec) -> tuple[Vec, ...]:
+    return (start, (end[0], start[1], start[2]), (end[0], end[1], start[2]), end)
+
+
+def route_length_m(route: tuple[Vec, ...]) -> float:
+    return sum(math.dist(a, b) for a, b in zip(route, route[1:]))
+
+
+def build_wires(airframe: Airframe, motors: tuple[MotorPlacement, ...]) -> WireRoutes | None:
+    if airframe.propulsion is None:
+        return None
+    parts = {part.name: part for part in airframe.parts}
+    battery, esc = parts[airframe.propulsion.battery].position_m, parts[airframe.propulsion.esc].position_m
+    return WireRoutes(battery=right_angle_route(battery, esc), motors=tuple(right_angle_route(esc, motor.position) for motor in motors))
+
+
 def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[MotorPlacement, ...]:
     propulsion = airframe.propulsion
     if propulsion is None:
@@ -598,6 +623,17 @@ def build_reference(surfaces: tuple[SurfaceSet, ...], body: Body) -> Reference:
     return Reference(f"surface:{wing.name}", wing.planform_area_m2, wing.mac_m, max(tips_y) - min(tips_y))
 
 
+def wall_excess(body: Body, wall_m: float, x: float, centre_yz: tuple[float, float], half_yz: tuple[float, float]) -> float | None:
+    """How far the corners of a y-z rectangle at station x reach into the wall (m; <= 0 inside); None where the body
+    has no interior."""
+    half_w, half_h = body_half_extents(body, x)
+    inner_w, inner_h = half_w - wall_m, half_h - wall_m
+    if inner_w <= 0.0 or inner_h <= 0.0:
+        return None
+    corners = [(centre_yz[0] + sy * half_yz[0], centre_yz[1] + sz * half_yz[1]) for sy in (-1, 1) for sz in (-1, 1)]
+    return max(math.hypot(*c) - superellipse_radius(inner_w, inner_h, body.shape, math.atan2(c[1], c[0])) for c in corners)
+
+
 def volume_checks(airframe: Airframe, body: Body) -> list[str]:
     wall = airframe.fuselage.section.wall_radial_m
     boxes = []
@@ -614,13 +650,10 @@ def volume_checks(airframe: Airframe, body: Body) -> list[str]:
             half = (volume.length_m / 2.0, 0.0, 0.0)
         x0, x1 = volume.x_m - half[0], volume.x_m + half[0]
         for x in (x0, volume.x_m, x1):
-            half_w, half_h = body_half_extents(body, x)
-            inner_w, inner_h = half_w - wall, half_h - wall
-            if inner_w <= 0.0 or inner_h <= 0.0:
+            excess = wall_excess(body, wall, x, (volume.y_m, volume.z_m), (half[1], half[2]))
+            if excess is None:
                 problems.append(f"volume {volume.name!r} reaches x {x:.3f} m, outside the fuselage interior")
                 break
-            corners = [(volume.y_m + sy * half[1], volume.z_m + sz * half[2]) for sy in (-1, 1) for sz in (-1, 1)]
-            excess = max(math.hypot(*c) - superellipse_radius(inner_w, inner_h, body.shape, math.atan2(c[1], c[0])) for c in corners)
             if excess > 1e-9:
                 problems.append(f"volume {volume.name!r} corners reach {excess * 1000.0:.1f} mm into the wall at x {x:.3f} m")
                 break
@@ -633,8 +666,44 @@ def volume_checks(airframe: Airframe, body: Body) -> list[str]:
     return problems
 
 
+def part_overhang_m(part: PlacedPart, volume: Volume, body: Body, wall_m: float) -> float:
+    """How far a part's box (a point without library dimensions) reaches outside its volume (m; <= 0 fits)."""
+    half = (0.0, 0.0, 0.0) if part.size_m is None else tuple(size / 2.0 for size in part.size_m)
+    offset = part.offset_m
+    if volume.shape == "point":
+        return max(abs(o) + h for o, h in zip(offset, half))
+    if volume.shape == "box":
+        return max(abs(o) + h - size / 2.0 for o, h, size in zip(offset, half, volume.size_m))
+    along = AXES.index(volume.axis) if volume.shape == "cylinder" else 0
+    length_overhang = abs(offset[along]) + half[along] - volume.length_m / 2.0
+    across = [index for index in range(3) if index != along]
+    if volume.shape == "cylinder":
+        radial = math.hypot(abs(offset[across[0]]) + half[across[0]], abs(offset[across[1]]) + half[across[1]])
+        return max(length_overhang, radial - volume.diameter_m / 2.0)
+    position = part.position_m
+    excesses = [wall_excess(body, wall_m, x, (position[1], position[2]), (half[1], half[2])) for x in (position[0] - half[0], position[0], position[0] + half[0])]
+    return math.inf if None in excesses else max(length_overhang, *excesses)
+
+
+def part_checks(airframe: Airframe, body: Body) -> list[str]:
+    volumes = {volume.name: volume for volume in airframe.volumes}
+    problems = []
+    for part in airframe.parts:
+        overhang = part_overhang_m(part, volumes[part.volume], body, airframe.fuselage.section.wall_radial_m)
+        if overhang > 1e-9:
+            reach = "outside the fuselage interior" if math.isinf(overhang) else f"{overhang * 1000.0:.1f} mm outside it"
+            problems.append(f"part {part.name!r} does not fit volume {part.volume!r}: reaches {reach}")
+    boxes = [(part.name, [c - size / 2.0 for c, size in zip(part.position_m, part.size_m)], [c + size / 2.0 for c, size in zip(part.position_m, part.size_m)])
+             for part in airframe.parts if part.size_m is not None]
+    for (name_a, lo_a, hi_a), (name_b, lo_b, hi_b) in itertools.combinations(boxes, 2):
+        if all(lo_a[axis] < hi_b[axis] - 1e-9 and lo_b[axis] < hi_a[axis] - 1e-9 for axis in range(3)):
+            problems.append(f"parts {name_a!r} and {name_b!r} overlap")
+    return problems
+
+
 def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirframe, list[str]]:
-    """Returns the resolved model and a list of layout problems (volumes outside the body or overlapping)."""
+    """Returns the resolved model and a list of layout problems (volumes outside the body or overlapping, parts not
+    fitting their volume)."""
     density = parts_data["material"][airframe.print.material]["density_kg_m3"]
     body = build_body(airframe)
     surfaces = tuple(build_surface(surface, body) for surface in airframe.surfaces)
@@ -645,7 +714,11 @@ def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirf
     wall = airframe.fuselage.section.wall_radial_m
     points += [
         MassPoint(f"volume {volume.name}", "volume", (volume.x_m, volume.y_m, volume.z_m), volume.mass_kg, False, None, volume_inertia(volume, body, wall))
-        for volume in airframe.volumes
+        for volume in airframe.volumes if volume.mass_kg is not None
+    ]
+    points += [
+        MassPoint(f"part {part.name}", "part", part.position_m, part.mass_kg, False, None, NO_INERTIA if part.size_m is None else box_inertia(part.size_m))
+        for part in airframe.parts
     ]
     for motor in motors:
         bell = cylinder_inertia(motor.bell_diameter_m / 2.0, motor.bell_length_m, "x")
@@ -655,7 +728,7 @@ def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirf
 
     ranged = [index for index, point in enumerate(points) if point.mass_kg[0] != point.mass_kg[1]]
     if len(ranged) > MAX_RANGED_MASSES:
-        raise AirframeError(f"{len(ranged)} volumes have a mass range; at most {MAX_RANGED_MASSES} are supported")
+        raise AirframeError(f"{len(ranged)} volumes or parts have a mass range; at most {MAX_RANGED_MASSES} are supported")
     nominal = [(point.mass_kg[0] + point.mass_kg[1]) / 2.0 for point in points]
     cg_xs = []
     for choice in itertools.product((0, 1), repeat=len(ranged)):
@@ -667,6 +740,6 @@ def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirf
         mass_kg=(sum(point.mass_kg[0] for point in points), sum(point.mass_kg[1] for point in points)),
         cg_m=center_of_mass(points, nominal), cg_x_range_m=(min(cg_xs), max(cg_xs)),
         inertia_kg_m2=combine_inertia([(mass, point.position, point.inertia_per_kg) for mass, point in zip(nominal, points)])[2],
-        reference=build_reference(surfaces, body),
+        reference=build_reference(surfaces, body), wires=build_wires(airframe, motors),
     )
-    return resolved, volume_checks(airframe, body)
+    return resolved, volume_checks(airframe, body) + part_checks(airframe, body)

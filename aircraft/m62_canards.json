@@ -118,12 +118,12 @@
     ],
     "propulsion": {
         "motor": {
-            "brand": "Flashobby",
-            "model": "A2807",
-            "kv": 1300,
-            "prop": "GF7042"
+            "manufacturer": "DYS",
+            "name": "X2807-1300"
         },
-        "battery_volume": "battery",
+        "prop": "APC E 7x5",
+        "battery": "battery",
+        "esc": "ESC",
         "mounts": [
             {
                 "on": "surface",
@@ -146,8 +146,31 @@
         {
             "name": "battery",
             "shape": "box",
+            "x_m": 0.2208,
+            "size_m": [
+                0.11,
+                0.0355,
+                0.049
+            ]
+        },
+        {
+            "name": "ESC",
+            "shape": "bore",
+            "x_m": 0.3881,
+            "length_m": 0.05
+        }
+    ],
+    "parts": [
+        {
+            "name": "battery",
             "part": "battery:lipo-6S-2200",
-            "x_m": 0.2208
+            "volume": "battery"
+        },
+        {
+            "name": "ESC",
+            "part": "esc:esc-4in1-60a",
+            "volume": "ESC",
+            "mass_kg": 0.0
         }
     ],
     "sections": {

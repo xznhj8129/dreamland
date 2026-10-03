@@ -177,7 +177,9 @@
 
     "connectors": {
         "XT60_panel": {},
-        "USB_C_panel": {}
+        "USB_C_panel": {},
+        "XT60": {"contact_resistance_ohm": 0.0005},
+        "MR60": {"contact_resistance_ohm": 0.0006}
     },
 
     "wire_paths": {
@@ -192,6 +194,7 @@
             },
             "plug_start": "XT60",
             "plug_mid": "XT60",
+            "plug_breaker": "XT60",
             "plug_end": "soldered",
             "shielded": false,
             "high_current": true

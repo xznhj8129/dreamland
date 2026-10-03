@@ -58,9 +58,10 @@ surfaces[]          name, x_root_le_m (must be on the body; chords may overhang 
                       servos (S1..S12, one per panel in panel order, may be shared)
                     control surfaces are numbered C1.. front to back, then clockwise from the top seen from behind
 propulsion          required when powered, absent when not
-  motor             brand, model, kv, prop (must have bench data in libs/motordata.csv for the battery's cell count;
-                    motor mass from the same data, one consistent weight required)
-  battery_volume    name of the volume whose part is battery:<name>
+  motor             manufacturer, name (motorlib, libs/motorlib/data/motordatav2.csv; needs a stator size; mass from it)
+  prop              motorlib propeller name (libs/motorlib/data/propellers.csv)
+  battery, esc      names of placed parts (battery:<name>, esc:<name>); wires run battery -> ESC -> each motor along
+                    the axes, gauges and plugs from data/specs.json wire_paths; their resistance enters the motor model
   mounts[]          on (nose | tail | surface); for surface: surface, span_position_m (from panel root),
                     x_offset_m (from root LE); direction (tractor | pusher);
                     spin, seen from where the thrust points: surface out | in (2+ motors alternating cw/ccw round the
@@ -68,12 +69,17 @@ propulsion          required when powered, absent when not
                     nose/tail cw | ccw;
                     thrust_axis_tilt_deg: thrust line tilted up (+z) from the body axis, e.g. to pass through the CG;
                     pod optional: diameter_m, flat_length_m, curve_length_m, profile (parameter-free)
-volumes[]           name, x_m (centre), y_m and z_m (default 0), shape:
-                      box: size_m [x, y, z], or from the part's dimensions
+volumes[]           internal space: name, x_m (centre), y_m and z_m (default 0), shape:
+                      box: size_m [x, y, z]
                       cylinder: diameter_m, length_m, axis x|y|z
                       bore: length_m (fills the internal section)
-                      point: mass only
-                    mass_kg: number or [min, max], or taken from part (must be > 0)
+                      point
+                    mass_kg optional: its own mass, number or [min, max] (> 0), e.g. ballast; absent = space only
+parts[]             library components: name, part (<category>:<name> from data/parts.json, category battery | esc),
+                    volume (the one it sits in), x_offset_m, y_offset_m, z_offset_m (from the volume centre,
+                    default 0), mass_kg optional (number >= 0 or [min, max]; absent = library mass, required when the
+                    library has none; 0 = counted elsewhere, e.g. a weighed section); box = library dimensions
+                    (x = l, y = w, z = h), a point without them; must fit its volume, must not overlap other parts
 sections
   cuts_m[]          cut stations (ascending, inside the fuselage); section i spans cut i-1 .. cut i
   mass_kg[]         optional, one per section: weighed printed mass (includes whatever is mounted in it), null = computed shell
@@ -86,7 +92,7 @@ Converted examples: `aircraft/m62v2.json` and `aircraft/quadlancer62.json` repro
 ## 2. Libraries (data/)
 
 - `parts.json`: batteries (mass required, > 0), ESCs, FCs, cameras, payloads, props (mass), materials.
-- Motors: `libs/motordata.csv` (bench data), later `dronebuildcalc` motorlib for untested motors.
+- Motors and props: motorlib (`libs/motorlib`, copied from `dronebuildcalc`), used as published.
 - `specs.json`: tube standards, couplers, fasteners, openings, printer bed (exists).
 - Airfoils: one source (AeroSandbox names), `data/airfoils.json` only for imported coordinates.
 - `modules.json`: retired 2026-10-01 after converting the two example aircraft.

@@ -1,0 +1,567 @@
+Name,Ri,imax,wgt
+Airtronics 96334,25,20,5
+APD 40F3,14,40,11
+APD 80F3x,13,80,35
+APD 120F3x,11,120,71
+APD 200F3x,55,200,1.27
+APD HV Pro 13s,18,400,7.77
+APD HV Pro 20s,33,300,7.77
+APD HV Pro 24s,91,200,7.77
+Art-Tech 30A,5,30,1.06
+Astro 204,5,50,1.1
+Astro 204D,2,60,1.06
+Astro 210,3,45,74
+Astro 211,2,75,89
+Astro 215,3,30,32
+Astro 217,5,30,53
+Astro 217D,3,35,53
+Astro 800,2,15,70
+Astro 801,1,25,80
+Astro 805,12,30,75
+Aveox A-15,36,15,20
+Aveox A-55,18,55,30
+Aveox EZ30,14,30,1.6
+Aveox H160,7,60,2.0
+Aveox H160C/CM,57,70,2.0
+Aveox H260,7,60,2.0
+Aveox H260C/CM,57,70,2.0
+Aveox H360C/CM,4,90,2.0
+Aveox L130,14,35,1.6
+Aveox L160,7,60,2.0
+Aveox L160C/CM,4,70,2.0
+Aveox L260,7,60,2.0
+Aveox L260C/CM,4,70,2.0
+Aveox L360C/CM,4,90,4.0
+Aveox M160,7,60,2.0
+Aveox M160C/CM,4,70,2.0
+Aveox SH-18,28,25,2.6
+Aveox SH-24,28,25,2.6
+Aveox SH-48,28,40,2.6
+Aveox SL-48,28,45,1.7
+Black Widow 18A (built-in),100,18,0
+Black Widow 30A (built-in),70,30,0
+Black Widow 40A (built-in),50,40,0
+Castle C. Dragon 35,55,35,8
+Castle C. Dragon 55,23,55,1.2
+Castle C. Griffin 40,12,40,9
+Castle C. Griffin 50,11,50,75
+Castle C. Griffin 55,1,55,1.0
+Castle C. Pegasus 35,15,35,75
+CC PhoenixEdge 50,62,50,2.5
+CC PhoenixEdge 50 no wires,24,50,1.6
+CC PhoenixEdge 75,47,75,4.0
+CC PhoenixEdge 75 no wires,16,75,2.5
+CC PhoenixEdge 100,35,100,4.5
+CC PhoenixEdge 100 no wires,14,100,2.6
+CC PhoenixEdge 130,28,130,5.3
+CC PhoenixEdge 130 no wires,1,130,3.1
+CC PhoenixEdge 200,2,200,8.8
+CC PhoenixEdge 200 no wires,8,200,5.3
+CC PhoenixEdge Lite50,62,50,2.0
+CC PhoenixEdge Lite50 no wires,24,50,1.0
+CC PhoenixEdge Lite75,47,75,2.9
+CC PhoenixEdge Lite75 no wires,16,75,1.4
+CC PhoenixEdge Lite100,35,100,3.2
+CC PhoenixEdge Lite100 no wires,14,100,1.4
+CC PhoenixEdge Lite130,28,130,4.1
+CC PhoenixEdge Lite130 no wires,10,130,1.8
+CC PhoenixEdge Lite200,23,200,6.6
+CC PhoenixEdge Lite200 no wires,8,200,3.1
+CC PhoenixEdge HV40,71,40,2.4
+CC PhoenixEdge HV40 no wires,33,40,1.1
+CC PhoenixEdge HV60,53,60,3.9
+CC PhoenixEdge HV60 no wires,22,60,2.1
+CC PhoenixEdge HV80,39,80,4.4
+CC PhoenixEdge HV80 no wires,18,80,2.2
+CC PhoenixEdge HV120,31,120,5.3
+CC PhoenixEdge HV120 no wires,13,120,2.5
+CC PhoenixEdge HV160,25,160,8.3
+CC PhoenixEdge HV160 no wires,11,160,5.3
+CC PhoenixEdge HVF160,25,160,8.5
+CC PhoenixEdge HVF160 no wires,11,160,5.6
+CC PhoenixEdge HVLite 40,71,40,2.0
+CC PhoenixEdge HVLite 40no wires,33,40,1.0
+CC PhoenixEdge HVLite 60,53,60,3.4
+CC PhoenixEdge HVLite 60no wires,22,60,1.5
+CC PhoenixEdge HVLite 80,39,80,3.4
+CC PhoenixEdge HVLite 80no wires,18,80,1.5
+CC PhoenixEdge HVLite 120,31,120,4.1
+CC PhoenixEdge HVLite 120no wires,13,120,1.8
+CC PhoenixEdge HVLite 160,25,160,6.0
+CC PhoenixEdge HVLite 160no wires,11,160,3.1
+Castle C. Talon 15,231,15,0.3
+Castle C. Talon 15 no wires,64,15,0.1
+Castle C. Talon 25,95,25,0.6
+Castle C. Talon 25 no wires,28,25,0.3
+Castle C. Talon 35,93,35,1.0
+Castle C. Talon 35 no wires,26,35,0.4
+Castle C. Talon 60,45,60,2.0
+Castle C. Talon 60 no wires,16,60,1.1
+Castle C. Talon 90,24,90,3.0
+Castle C. Talon 90 no wires,13,90,2.1
+Castle C. Talon 120HV,26,120,6.6
+Castle C. Talon 120HV no wires,18,120,5.2
+Castle C. Phoenix 10,13,10,21
+Castle C. Phoenix 25,65,25,37
+Castle C. Phoenix 35,45,35,9
+Castle C. Phoenix 45,26,45,1.0
+Castle C. Phoenix 60,12,60,2.0
+Castle C. Phoenix 80,1,80,2.1
+Castle C. Phoenix 125,6,125,3.2
+Castle C. Pixie 14,45,14,3
+Castle C. Pixie 20P,25,20,3
+Castle C. Pixie 7,9,7,11
+Castle C. Pixie 7P,7,7,1
+Castle C. Pixie Lite,45,14,7
+Castle C. QuadPack 25,40,25,6
+Castle C. QuadPack 35,35,35,1.0
+Castle C. Sprite 20,4,20,4
+Castle C. Sprite 25,25,25,5
+Castle C. ThunderBird 6,20,6,1
+Castle C. ThunderBird 9,16,9,3
+Castle C. ThunderBird 18,11,18,6
+Castle C. ThunderBird 36,8,36,71
+Castle C. ThunderBird 54,4,54,1.2
+Cobra 33A,4,33,1.31
+Cobra 40A,49,40,2.1
+Cobra 60A,47,60,2.12
+DS Summit 100LV light,12,100,3.21
+DS Summit 100HV F3A,17,100,5.3
+DS Summit 120HV,14,120,5.65
+DS Summit 120LV,10,120,5.47
+Dualsky XC-12-Lite,17,12,0.26
+Dualsky XC-22-Lite,82,22,0.78
+Dualsky XC-45-Lite,26,45,1.34
+Dualsky XC-65-Lite,20,65,2.15
+Dualsky XC0610BA V2,40,6.6,0.19
+Dualsky XC1010BA V2,40,10,0.26
+Dualsky XC1210BA V2,121,12,0.42
+Dualsky XC1812BA V2,96,12,0.64
+Dualsky XC2512BA V2,71,25,0.78
+Dualsky XC3012BA V2,59,30,0.78
+Dualsky XC4018BA V2,31,40,1.13
+Dualsky XC6018BA V2,22,60,2.22
+Dualsky XC8018BA V2,16,80,2.51
+Dualsky XC10036HV V2,23,100,4.94
+Dualsky XC13036HV V2,15,130,6.53
+Dualsky PCU 60,18,60,2.15
+Dualsky PCU 100,12,100,2.19
+Dualsky PCU 80HV,17,80,2.19
+Dualsky XC-22-MR,82,22,0.78
+Dualsky XC-301-MR,45,30,1.02
+Dualsky XC-401-MR,38,40,1.09
+Dualsky XC-401-MR,38,40,2.93
+Dualsky XC406ULT,28,40,1.84
+Dualsky SUMMIT 100 light,12,100,3.21
+Dymond Master 10,13,10,21
+Dymond Master 80,1,80,2.12
+EP Aer11,150,11,35
+EP Aer22,100,22,78
+EP Aer33,80,33,1.2
+EP Aer40,60,40,1.77
+EP Aer60,45,60,2.29
+EP Aer80,35,80,2.29
+EP Aer100,25,100,2.75
+EP Aer150,15,150,3.28
+Great Planes C05,11,5,21
+Great Planes C10,55,10,27
+Great Planes C20,36,20,6
+Great Planes C30,28,30,7
+Great Planes C50,18,50,1.2
+G. Planes Electrifly BL-8,13,8,42
+G. Planes Electrifly BL-12,75,12,42
+G. Planes Electrifly SS-8,5,8,39
+G. Planes Electrifly SS-12,30,12,49
+G. Planes Electrifly SS-25,15,25,92
+G. Planes Electrifly SS-35,10,35,1.13
+G. Planes Electrifly SS-45,8,45,1.76
+Hacker X-5-Pro with BEC,164,5,18
+Hacker X-7-Pro with BEC,15,7,36
+Hacker X-12-Pro with BEC,15,12,53
+Hacker X-20-Pro with BEC,84,20,57
+Hacker X-30-Pro with BEC,56,30,85
+Hacker X-40-SB-Pro,44,40,1.52
+Hacker X-40-Opto-Pro,44,40,1.52
+Hacker X-55-SB-Pro,26,55,1.6
+Hacker X-70-SB-Pro,22,70,1.9
+Hacker X-70-SB-Pro,22,70,1.9
+Hacker X-80-Opto-Pro,13,80,4.76
+Hacker X-110-Opto-Pro,12,110,3.14
+Hacker Master ECO 08,5,8,25
+Hacker Master ECO 12,25,12,35
+Hacker Master ECO 18,25,18,74
+Hacker Master ECO 25,25,25,88
+Hacker Master ECO 40,14,40,1.52
+Hacker Master Basic 40-SB,12,40,1.55
+Hacker Master Basic 55-SB,59,55,2.0
+Hacker Master Basic 70-SB,63,70,1.98
+Hacker Master Basic 90 Opto,59,90,3.95
+Hacker Master 90,25,90,3.18
+Hacker Master 140,15,140,1.45
+Hacker Master 90-O-F5D,59,90,1.84
+Hacker Master 125-O-F5D,63,125,2.08
+Hacker Master 135-O-F5D,39,135,1.77
+Hacker Master 140-O-F5D,33,140,2.08
+Hacker Master 195-O-F5D,16,195,1.77
+Hacker MasterSPIN 11 Pro,5,11,42
+Hacker MasterSPIN 22 Pro,25,22,92
+Hacker MasterSPIN 33 Pro,167,33,1.12
+Hacker MasterSPIN 44 Pro,125,44,1.5
+Hacker MasterSPIN 70 Pro Opt,62,70,1.76
+Hacker MasterSPIN 75 Pro Opt,58,75,1.94
+Hacker MasterSPIN 77 Pro Opt,58,77,2.1
+Hacker MasterSPIN 99 Pro Opt,58,99,3.8
+Hacker MasterSPIN 125 Pro Opt,58,125,5.64
+Hacker MasterSPIN 170 Pro Opt,41,170,11.47
+Hacker MasterSPIN 220 Pro Opt,41,220,12.7
+Hacker SPIN 55 Pro,58,55,2.0
+Hacker SPIN 66 Pro,62,70,1.8
+Hacker SPIN 80 Pro,41,80,2.8
+Hacker SPIN 100 Pro,41,100,2.9
+Hacker SPIN 160 Pro,20,160,3.5
+Hacker 06-3P,12,6,42
+Hacker 18-3P,7,18,53
+Hacker 30-3P,6,30,71
+Hacker 40-3P Opto,5,40,1.09
+Hacker 48-3P Opto,5,48,1.69
+Hacker 70-3P Opto,3,70,1.45
+Hacker 77-3P Opto,3,77,1.52
+Hacker 99-3P Opto,2,99,1.69
+Hacker MEZON Pro 40 LMR,24,40,2.86
+Hacker MEZON Pro 50,24,50,3.18
+Hacker MEZON Pro 55,24,55,2.2
+Hacker MEZON Pro 70 LMR,95,70,3.0
+Hacker MEZON Pro 80,95,80,3.9
+Hacker MEZON Pro 85 Opto,95,85,2.5
+Hacker MEZON 75 Opto,9,75,4.2
+Hacker MEZON 90,55,90,4.2
+Hacker MEZON 90 lite,55,90,4.2
+Hacker MEZON 95 Opto,55,95,4.2
+Hacker MEZON 95 Opto lite,55,95,4.2
+Hacker MEZON 115 Opto,45,115,5.1
+Hacker MEZON 115 Opto lite,45,115,5.1
+Hacker MEZON 130,28,130,5.1
+Hacker MEZON 130 lite,28,130,5.1
+Hacker MEZON 135 Opto,28,135,5.1
+Hacker MEZON 135 Opto lite,28,135,5.1
+Hacker MEZON 160,18,160,5.1
+Hacker MEZON 160 lite,18,160,5.1
+Hacker MEZON 165 Opto,18,165,5.1
+Hacker MEZON 165 Opto lite,18,165,5.1
+Hacker Hicopter 30A Opto,17,30,1.1
+Hacker Hicopter 40A Opto,125,40,1.2
+Hacker Hicopter 70A Opto,63,70,2.0
+Hacker Hicopter 77A Opto,59,77,2.1
+Hacker Hicopter 90A Opto,59,90,3.2
+Hobbywing FlyFun 30A - 4s,14,30,1.24
+Hobbywing FlyFun Mini 30A - 4s,14,23,0.81
+Hobbywing FlyFun 40A - 6s,13,40,1.55
+Hobbywing FlyFun 60A - 6s,12,60,2.61
+Hobbywing FlyFun 80A - 8s,10,80,3.35
+Hobbywing FlyFun 110A  HV,7,110,6.35
+Hobbywing FlyFun 120A - 8s,6,120,3.28
+Hobbywing FlyFun 130A HV,6,130,7.59
+Hobbywing FlyFun 160A HV,6,160,7.84
+Hobbywing Platinum 25A LV,2,25,0.95
+Hobbywing Platinum 40A LV,15,40,1.69
+Hobbywing Platinum Pro 50A LV,10,50,1.73
+Hobbywing Platinum Pro 80A LV,8,80,3.39
+Hobbywing Platinum Pro 100A LV,6,100,3.71
+Hobbywing Platinum Pro 120A LV,6,120,3.78
+Hobbywing Platinum Pro 130A HV,4,130,5.97
+Hobbywing Platinum Pro 160A HV,2,160,10.06
+Hobbywing Platinum Pro 200A HV,1,200,10.77
+IBEX 55,20,55,2.4
+IBEX 65,17,65,2.4
+IBEX 80,17,80,2.12
+IBEX 85,17,85,2.86
+IBEX 115,114,115,3.18
+IBEX 120,80,120,3.88
+IBEX 130,68,130,3.88
+IBEX 155,44,155,3.18
+IBEX 200,58,200,9.53
+IBEX 220,49,220,7.77
+Jeti 08-3P,13,8,55
+Jeti 150,3,140,1.9
+Jeti eco,3,18,71
+Jeti 30-3P,4,30,1.0
+Jeti Advance 70-3P Opto,3,70,1.34
+Jeti JES 350,3,35,6
+Jeti JES 020,3,20,53
+Jeti JES 18-3P,3,18,53
+Jeti 77 Opti,1,77,2.0
+Jomar Mini-Max,14,30,1.2
+Jomar Sport-Max,9,40,1.4
+KDE Direct KDEXF-UAS20LV,2230,20,92
+KDE Direct KDEXF-UAS35,1700,35,1.62
+KDE Direct KDEXF-UAS55,1100,55,1.91
+KDE Direct KDEXF-UAS55HVC,1620,55,3.25
+KDE Direct KDEXF-UAS75HVC,1180,75,3.88
+KDE Direct KDEXF-UAS95HVC,935,95,3.88
+Kontronik JIVE PRO 80HV,2,80,1.84
+Kontronik JIVE PRO 120HV,1,120,3.81
+Kontronik KOLIBRI 140HV,1,140,6.0
+Kontronik KOLIBRI 140LV-I,1,140,5.65
+Kontronik KOLIBRI 50LV-I,2,50,2.51
+Kontronik KOLIBRI 90HV-I,1,90,3.88
+Kontronik KOLIBRI 90LV-I,1,90,3.88
+Kontronik KOLIBRI-X 60LV-I,2,60,2.51
+Kontronik KOLIBRI-X 90LV,1,60,3.88
+Kontronik KOOL Kosmik 200HV,3,160,8.82
+Kontronik KOOL Kosmik 200HV,1,200,8.82
+Kontronik KOOL Kosmik 250HV-I,1,250,8.82
+Kontronik KONTROL-X 30LV,5,30,1.09
+Kontronik KONTROL-X 40LV,2,40,1.09
+Kontronik KONTROL-X 55LV,2,55,1.34
+Kontronik DuoCool Kosmik 300HV-I,1,300,14.47
+Kontronik Kosmik 160HV,3,160,7.06
+Kontronik Kosmik 170HV-I,3,170,7.06
+Kontronik Kosmik 200HV-I,1,200,7.06
+Kontronik Kosmik 210HV-I,2,210,7.06
+Kontronik WaterCool Kosm 300HV-I,1,300,10.59
+Kontronik 3SL 70-6-18,4,70,1.24
+Kontronik Beat 40-6-12,56,40,1.17
+Kontronik Beat 55-6-18,43,55,1.17
+Kontronik Beat 70-6-12,21,70,1.3
+Kontronik Beat 80-6-18,21,80,1.32
+Kontronik Smile 40-6-12,56,40,1.3
+KISS ESC 12A,70,12,7
+KISS ESC 18A,40,18,7
+Leomotion LC30 Slim LV,140,30,46
+Leomotion LC50 Slim LV,120,50,81
+Master Basic 40-SB,125,40,1.55
+Master Basic 55-SB,58,55,2.12
+Master Basic 70-SB,625,70,2.12
+Master Basic 90-SB,588,90,3.88
+Master Spin 11 Pro,500,11,42
+Master Spin 22 Pro,250,22,92
+Master Spin 33 Pro,167,33,1.13
+Master Spin 44 Pro,125,44,1.55
+Master Spin 55 Pro,625,55,1.98
+Master Spin 66 Pro,588,66,2.12
+Master Spin 70 Pro opto,625,70,1.59
+Master Spin 75 Pro opto,588,75,1.94
+Master Spin 80 Pro,413,80,3.07
+Master Spin 99 Pro opto,588,99,3.88
+Master Spin 100 Pro,413,100,3.07
+Master Spin 125 Pro opto,588,125,4.24
+Master Spin 160 Pro,206,160,3.53
+Master Spin 170 Pro opto,410,170,11.51
+Master Spin 220 Pro opto,410,220,12.71
+Master Spin 300 Pro opto,410,300,12.71
+Master ECO 08,500,8,25
+Master ECO 12,250,12,35
+Master ECO 18,250,18,74
+Master ECO 25,250,25,88
+Master ECO 40,143,40,1.41
+Master 90-O-F5D,59,90,1.84
+Master 125-O-F5F,63,125,2.08
+Master 135-O-F5B,39,135,1.77
+Master 140-O-F5B,33,140,2.08
+Master 195-O-F5B,16,195,1.77
+Master MEZON Pro 40 LMR,240,40,2.65
+Master MEZON Pro 50,240,50,3.18
+Master MEZON Pro 55 opto,240,55,2.4
+Master MEZON Pro 70 LMR,95,70,3.0
+Master MEZON Pro 75 opto,90,75,4.24
+Master MEZON Pro 75 opto RPM,90,75,4.24
+Master MEZON Pro 80,95,80,3.88
+Master MEZON Pro 85,95,85,2.45
+Master MEZON Pro 90,55,90,4.24
+Master MEZON Pro 90 RPM,55,90,4.24
+Master MEZON Pro 90 lite,55,90,4.24
+Master MEZON Pro 95 opto,55,95,4.24
+Master MEZON Pro 95 opto Lite,55,95,4.24
+Master MEZON 115 opto,45,115,5.12
+Master MEZON 115 opto RPM,45,115,5.12
+Master MEZON 115 opto Lite,45,115,5.12
+Master MEZON 130,28,130,5.12
+Master MEZON 130 RPM,28,130,5.12
+Master MEZON 130 Lite,28,130,5.12
+Master MEZON 135 opto,28,135,5.12
+Master MEZON 135 opto RPM,28,135,5.12
+Master MEZON 135 opto Lite,28,135,5.12
+Master MEZON 160,18,160,5.12
+Master MEZON 160 RPM,18,160,5.12
+Master MEZON 160 Lite,18,160,5.12
+Master MEZON 160 opto,18,160,5.12
+Master MEZON 160 opto RPM,18,160,5.12
+Master MEZON 160 opto Lite,18,160,5.12
+Master Hicopter 30A opto,170,30,1.06
+Master Hicopter 40A opto,125,40,1.24
+Master Hicopter 70A opto,63,70,1.98
+Master Hicopter 77A opto,59,77,2.12
+Master Hicopter 90A opto,59,90,3.18
+Master Hicopter 90A opto,59,90,3.18
+MaxCim Maxu35A-21,15,60,3.0
+MaxCim Maxu35A-25NB,13,65,3.0
+MaxCim Maxu35C-21,9,65,3.0
+MaxCim Maxu35C-25NB,12,65,3.0
+Medusa Fusion ESC-2430BB,13,30,1.48
+Medusa Fusion ESC-2440BB,1,40,1.63
+Medusa Fusion ESC-2450BB,8,50,1.66
+Medusa Spectrum ESC-1210BB,4,10,39
+Medusa Spectrum ESC-1218BB,2,10,64
+Medusa Spectrum ESC-1230BB,13,30,99
+Medusa Spectrum ESC-1240BB,1,40,1.17
+Medusa Spectrum ESC-1250BB,8,50,1.24
+MGM ComPro 2512-3,39,25,71
+MGM 1210,126,12,39
+MGM 4012,26,40,1.17
+Microdrive M10P,14,10,71
+Microdrive M20P,35,20,71
+Microdrive M30P,18,40,1.24
+NES-050,25,4,14
+NES-110,2,11,57
+NES-140-compact,2,14,57
+NES-180,9,18,60
+NES-350,4,35,88
+RipMax Xtra 05,11,5,21
+RipMax Xtra 12,55,12,28
+RipMax Xtra 22,38,22,60
+RipMax Xtra 30,28,30,74
+RipMax Xtra 40,18,40,1.2
+RipMax Xtra 50,14,50,1.34
+RipMax Xtra 60,11,60,1.24
+Schulze future-11.20e,8,20,62
+Schulze future-11.30e,7,30,72
+Schulze future-11.40Ke,4,40,1.24
+Schulze future-11.40KWe,4,40,1.31
+Schulze future-12.36e,7,36,1.45
+Schulze future-12.46e,46,46,1.45
+Schulze future-12.46We,46,46,1.48
+Schulze future-12.97Fe,16,97,1.55
+Schulze future-18.129F,4,129,1.55
+Schulze future-18.129FW,8,129,1.59
+Schulze future-18.36,7,36,1.17
+Schulze future-18.46K,46,46,1.45
+Schulze future-18.46WK,46,50,1.66
+Schulze future-18.61,26,61,1.27
+Schulze future-18.97F,16,97,1.55
+Schulze future-18.97FW,16,97,1.59
+Schulze future-18.97KFW,16,97,2.58
+Schulze future-24.40K,6,40,1.45
+Schulze future-24.89F,1,89,1.55
+Schulze future-32.170W,18,170,6.89
+Schulze future-32.28K,16,28,1.45
+Schulze future-32.40K,74,40,1.45
+Schulze future-32.55,54,55,1.7
+Schulze future-32.55WK,54,62,2.12
+Schulze future-32.80F,24,80,1.55
+Schulze future-32.80FWK,24,95,2.23
+Schulze future-40.70,36,70,1.8
+Schulze future-40.70WK,36,83,2.51
+Schulze future-9.06ek,33,6,21
+Schulze future-9.12ek,15,12,21
+Schulze future-25b,5,25,6
+Schulze future-45be,22,45,1.48
+Schulze mcf31-47be,33,47,74
+Schulze mcf31-47bo,33,47,74
+Schulze mcf31-52bo,27,52,74
+Schulze mcf43-110bo,2,110,1.17
+Schulze mcf43-70be,25,70,1.17
+Schulze mcf43-75bo,2,75,1.17
+Schulze smart-47bo,33,47,74
+Schulze smart-52bo,27,47,74
+Schulze smart-70be,25,70,1.17
+Schulze smart-75be,2,75,1.17
+Scorpion Commander 11A LBEC V2,67,11,0.33
+Scorpion Commander 15A LBEC V2,711,15,0.62
+Scorpion Commander 25A LBEC V2,366,25,0.72
+Scorpion Commander 35A SBEC V3,256,35,1.27
+Scorpion Commander 45A SBEC V3,233,45,1.55
+Scorpion Commander 90A SBEC V3,117,90,2.68
+Scorpion Commander 110A SBEC V3,78,110,2.97
+Scorpion Commander 120A SBEC V3,67,120,8.19
+Scorpion Commander 160A SBEC,57,120,9.04
+Scorpion Commander 90A opto,91,90,9.04
+Scorpion Commander 130A opto,68,130,6.5
+Scorpion Commander 160A opto,58,160,9.04
+Scorpion Tribunus 06-80A,12,80,1.98
+Scorpion Tribunus 06-120A,16,120,3.81
+Scorpion Tribunus 06-120A opto,16,120,2.68
+Scorpion Tribunus II 12-80A,8,80,5.08
+Scorpion Tribunus II 12-130A,14,130,6.98
+Scorpion Tribunus II 14-200A,11,200,7.9
+Scorpion Tribunus II 14-300A,13,300,8.61
+Scorpion Tribunus III 06-110A,90,110,3.7
+Scorpion Tribunus III 06-160A,74,160,5.47
+Stefan 1-Fet BEC,1,12,9
+Stefan 4-Fet BEC Brake,25,48,1.2
+Stefan 4-Fet Brake,7,40,1.0
+Stefan Light 1-Fet BEC,1,12,6
+Sunrise YEP 7A-2s,1700,7,4
+Sunrise YEP 18A-4s,1100,18,78
+Sunrise YEP 60A-6s,450,60,1.98
+Sunrise YEP 90A-6s,300,90,3.18
+Sunrise YEP 120A-6s,200,120,3.28
+Sunrise YEP 120A-14s,200,120,3.6
+Sunrise YEP 180A-14s,130,180,4.52
+Suppo 10A,70,10,28
+Suppo 20A,45,20,71
+Suppo 30A,38,30,78
+Suppo 40A,30,40,95
+Suppo 50A,25,50,1.59
+Suppo 60A,25,60,2.22
+Suppo 70A,17,70,2.51
+Suppo 80A-HV,125,80,3.0
+Suppo 100A-LV,100,100,6.5
+Suppo 100A-HV,100,100,6.5
+Suppo 200A-LV,80,200,7.77
+Suppo 200A-HV,80,200,7.77
+Suppo 200A-HV,80,200,7.77
+TMM 40,25,40,1.55
+UAV-Control 20 opto,84,20,74
+UAV-Control 30 opto,56,30,86
+UAV-Control 40 opto,44,40,1.31
+UAV-Control 70 opto,22,70,1.94
+X-5-Pro,164,5,21
+X-7-Pro,150,7,39
+X-12-Pro,150,12,53
+X-20-Pro,84,20,78
+X-30-Pro,56,30,92
+X-40-SB-Pro,44,40,1.62
+X-40-opto-Pro,44,40,1.31
+X-55-SB-Pro,26,55,1.77
+X-70-SB-Pro,22,70,2.08
+X-70-opto-Pro,22,70,1.94
+X-80-opto-Pro,13,80,4.38
+X-110-opto-Pro,12,110,2.86
+XController XC06 10BA V2,400,6,19
+XController XC10 10BA V2,186,10,26
+XController XC12 10BA V2,121,12,42
+XController XC18 12BA V2,96,18,64
+XController XC25 12BA V2,71,25,78
+XController XC30 12BA V2,59,30,78
+XController XC40 18BA V2,31,40,1.13
+XController XC60 18BA V2,22,60,2.22
+XController XC80 18BA V2,16,80,2.51
+XController XC90 36BA V2,23,100,4.94
+XController XC-12-Lite,170,12,26
+XController XC-22-Lite,82,22,78
+XController XC-45-Lite,26,45,1.34
+XController XC-65-Lite,20,65,2.15
+YGE 35 LVT,75,35,88
+YGE 65 LVT,42,65,1.59
+YGE 95 LVT,30,95,3.28
+YGE 135 LVT,19,135,4.77
+YGE 135 SLIM,19,135,3.07
+YGE 90 HVT opto,28,90,3.18
+YGE 120 HVT opto,18,120,4.94
+YGE 165 HVT opto,13,165,6.28
+YGE 205 HVT opto,12,205,10.13
+Max 10 A,150,10,40
+Max 20 A,100,20,80
+Max 30 A,80,30,1.38
+Max 40 A,60,40,1.77
+Max 50 A,50,50,2.22
+Max 60 A,45,60,2.82
+Max 70 A,40,70,2.2
+Max 80 A,35,80,3.7
+Max 90 A,30,90,4.1
+Max 100 A,25,100,4.6
+Max 120 A,20,120,5.45
+Max 150 A,15,150,7.05
+Max 200 A,12,200,9.2
+Max 250 A,10,250,11.47
+Max 300 A,8,300,13.8

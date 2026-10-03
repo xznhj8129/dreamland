@@ -7,3 +7,9 @@
 - Approval covers exactly what the owner names. A suggestion I offered with several parts is approved only for the parts the reply mentions.
 - Cut code by its exact text, never by searching for the next 'def': the next top-level def can be hundreds of lines further (classes in between).
 - Before calling a servo/motor output 'already', 'saturated' or 'barely', state it against its range (1000-2000 us, centre 1500, +-500 throw) as a percentage.
+- Sample anything nonlinear (control deflection, stall) densely where the aircraft actually operates; fractions of a limit (0, 1/2, 1 of +-45 deg) put a stalled column next to neutral and interpolation then lies (90x adverse yaw, 1/9 roll). Check a table against a direct solve at small values.
+- Never write "exact" for a decomposition before a numerical check proves it: the symmetric/anti-symmetric control split is only exact for linear response; a check in aero_check.py caught it.
+- A model matching a log can be two errors cancelling. Check each component (prop, drag) at the logged operating point, not only the end result (the old prop matched m62v1 speed vs power while making ~0 N thrust there).
+- numpy's OpenBLAS spins a thread per core on small matrix products (NeuralFoil): 6x the CPU for no speedup. libs/__init__.py limits BLAS to one thread; measure CPU time (user) as well as wall time.
+- Never derive, fit or adjust model constants from a real flight log to close a gap: the model leaves out countless real details. Report the gap; use published data (motorlib) as is.
+- A missing part's resistance is not 0 in motorlib: its current solve assumes series resistance, and at 0 thrust rises with added resistance. Work the wiring out from the design instead.

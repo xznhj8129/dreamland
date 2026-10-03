@@ -15,6 +15,7 @@ Aerodynamics of a resolved airframe (libs/geometry.py). Geometry is read from th
 """
 
 import concurrent.futures
+import copy
 import math
 from dataclasses import dataclass, replace
 
@@ -150,9 +151,30 @@ def panel_sections(panel: Panel, control: ControlSurface | None, tip_first: bool
     return sections
 
 
+class SideControlSurface(asb.ControlSurface):
+    """A control surface deflected independently on each side of an XZ-symmetric asb.Wing: deflection on the wing's
+    own sections, mirror_deflection on its mirror. AeroBuildup solves a mirrored section with copy() of a non-symmetric
+    surface, deflection negated; aero_check.py verifies the split."""
+
+    def __init__(self, name: str, hinge_point: float, deflection: float, mirror_deflection: float):
+        super().__init__(name=name, symmetric=False, deflection=deflection, hinge_point=hinge_point)
+        self.mirror_deflection = mirror_deflection
+
+    def copy(self) -> asb.ControlSurface:
+        return asb.ControlSurface(name=self.name, symmetric=False, deflection=-self.mirror_deflection, hinge_point=self.hinge_point)
+
+
+def with_side_deflections(airplane: asb.Airplane, wing: int, deflection: float, mirror_deflection: float) -> asb.Airplane:
+    """Copy with every control surface of one wing at deflection, and on its XZ mirror (if any) at mirror_deflection."""
+    deflected = copy.deepcopy(airplane)
+    for section in deflected.wings[wing].xsecs:
+        section.control_surfaces = [SideControlSurface(surface.name, surface.hinge_point, deflection, mirror_deflection) for surface in section.control_surfaces]
+    return deflected
+
+
 def build_asb_airplane(resolved: ResolvedAirframe) -> asb.Airplane:
     """Each motor bell is part of the body it is mounted on (its pod, else the fuselage end): one extra section at the
-    bell's prop-side face. Alone, a bell is a 28 x 7 mm cylinder (stator size from the bench data, fineness 0.25), for
+    bell's prop-side face. Alone, a bell is a 28 x 7 mm cylinder (stator size from motorlib, fineness 0.25), for
     which AeroBuildup's fuselage form factor gives more drag than a flat disc."""
     body = resolved.body
     main_sections = [

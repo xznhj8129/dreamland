@@ -6,7 +6,10 @@ python aero_check.py aircraft/m62v1.json --aoa 0 5 10 --airspeed 20
 Checks the live aero's lifting line (libs/aero.py lifting_line_sweep, every AoA in one batch) against
 asb.LiftingLine solved per AoA on the same wings: they must agree to --tolerance (N, N m). Airframes with control
 surfaces are also checked with every control deflected CHECK_DEFLECTION_DEG, symmetrically and anti-symmetrically
-across XZ-mirror pairs.
+across XZ-mirror pairs. For each XZ-mirror pair with controls, AeroBuildup with each side deflected alone
+(SideControlSurface, as the JSBSim control tables) must add up to both sides deflected (but for the aircraft-level
+induced drag, see side_split_differences), and SideControlSurface with opposite sides must equal ASB's own
+anti-symmetric control.
 
 Then prints, per surface set and for information:
 - live: its lift in the live model (downwash from the other sets, lift carried across the body)
@@ -14,7 +17,7 @@ Then prints, per surface set and for information:
 - VLM exposed: AeroSandbox VLM on the exposed panels (inviscid, no body: body-mounted panels read low)
 - VLM thru: single horizontal pairs carried through the body in VLM
 
-Exit code 1 if the batched lifting line and asb.LiftingLine differ by more than --tolerance.
+Exit code 1 if the batched lifting line and asb.LiftingLine, or the side split, differ by more than --tolerance.
 """
 
 import argparse
@@ -28,7 +31,7 @@ import numpy as np
 
 from libs.aero import (
     AERO_MODEL_SIZE, LIFTING_LINE_CORE_RADIUS_M, LIFTING_LINE_SPANWISE_RESOLUTION, build_asb_airplane, build_hybrid_airplanes,
-    build_lifting_line_mesh, lifting_line_sweep,
+    build_lifting_line_mesh, lifting_line_sweep, with_side_deflections,
 )
 from libs.airframe import PARTS_PATH, load_airframe
 from libs.geometry import resolve_airframe
@@ -69,6 +72,32 @@ def lifting_line_difference(wing_plane: asb.Airplane, batched, column: int, aoa_
     totals = (batched.lift_n[:, column].sum(), batched.drag_n[:, column].sum(), batched.pitch_moment_nm[:, column].sum())
     expected = (float(reference["L"]), float(reference["D"]), float(reference["M_b"][1]))
     return totals[0], max(abs(a - b) for a, b in zip(totals, expected))
+
+
+def side_split_differences(airplane: asb.Airplane, wing: int, aoa_values: np.ndarray, atmosphere, airspeed_m_s: float) -> tuple[float, float]:
+    """AeroBuildup body forces and moments (N, N m): largest difference of (own side alone + mirror side alone - neutral)
+    against both sides deflected by ASB, and of SideControlSurface +/- against ASB's anti-symmetric control. The sums
+    leave out AeroBuildup's aircraft-level induced drag, from the total lift squared: the one load where controls
+    interact (2 x dL1 x dL2, a force only), which the JSBSim tables' summed increments do not carry."""
+    op_point = asb.OperatingPoint(atmosphere=atmosphere, velocity=airspeed_m_s, alpha=aoa_values)
+
+    def loads(plane: asb.Airplane, induced: bool = True) -> np.ndarray:
+        aero = asb.AeroBuildup(airplane=plane, op_point=op_point, model_size=AERO_MODEL_SIZE).run()
+        forces = np.array(aero["F_b"], dtype=float)
+        if not induced:
+            forces -= np.array(op_point.convert_axes(-aero["D_induced"], 0.0, 0.0, from_axes="wind", to_axes="body"), dtype=float)
+        return np.array([*forces, *aero["M_b"]], dtype=float)
+
+    def asb_deflected(symmetric: bool) -> asb.Airplane:
+        plane = copy.deepcopy(airplane)
+        for xsec in plane.wings[wing].xsecs:
+            for surface in xsec.control_surfaces:
+                surface.deflection, surface.symmetric = CHECK_DEFLECTION_DEG, symmetric
+        return plane
+
+    sides = sum(loads(with_side_deflections(airplane, wing, *deflections), induced=False) for deflections in ((CHECK_DEFLECTION_DEG, 0.0), (0.0, CHECK_DEFLECTION_DEG))) - loads(airplane, induced=False)
+    opposite = loads(with_side_deflections(airplane, wing, CHECK_DEFLECTION_DEG, -CHECK_DEFLECTION_DEG))
+    return float(np.max(np.abs(sides - loads(asb_deflected(True), induced=False)))), float(np.max(np.abs(opposite - loads(asb_deflected(False)))))
 
 
 def layout_label(surface_set) -> str:
@@ -120,6 +149,14 @@ def main() -> None:
             deflections.pop(0, None)
             label = f"(controls {'+' if symmetric else '+/-'}{CHECK_DEFLECTION_DEG:g})"
             deflected_cases.append((label, deflected_plane, lifting_line_sweep(mesh, wing_plane.xyz_ref, surface_count, atmosphere, args.airspeed, aoa_values, deflections)))
+        asb_airplane = build_asb_airplane(resolved)
+        for wing_index, (own, mirror) in enumerate(hybrid.controls):
+            if own and mirror:
+                for label, difference in zip(("sides add up", "+/- = anti-sym"), side_split_differences(asb_airplane, wing_index, aoa_values, atmosphere, args.airspeed)):
+                    status = "ok" if difference <= args.tolerance else "FAIL"
+                    if status == "FAIL":
+                        failures.append((path.stem, f"C{own}/C{mirror} {label}", None, difference))
+                    print(f"{path.stem:<14} {'all':>5}  C{own}/C{mirror} {label:<16} AeroBuildup max diff {difference:.1e}  {status}")
         for column, aoa_deg in enumerate(aoa_values):
             for label, plane, batched in (("(all wings)", wing_plane, live), *deflected_cases):
                 total, difference = lifting_line_difference(plane, batched, column, float(aoa_deg), atmosphere, args.airspeed)
@@ -142,9 +179,9 @@ def main() -> None:
                 )
 
     if failures:
-        print(f"\n{len(failures)} case(s) where the batched lifting line differs from asb.LiftingLine by more than {args.tolerance:g}: {failures}")
+        print(f"\n{len(failures)} case(s) over {args.tolerance:g}: {failures}")
         raise SystemExit(1)
-    print(f"\nBatched lifting line equals asb.LiftingLine within {args.tolerance:g} for every airframe and AoA.")
+    print(f"\nBatched lifting line equals asb.LiftingLine, and the AeroBuildup side split adds up, within {args.tolerance:g} for every airframe and AoA.")
 
 
 if __name__ == "__main__":

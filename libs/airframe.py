@@ -11,22 +11,22 @@ SI units throughout (m, kg), angles in degrees, positions measured from the nose
 Loading fails on any missing required field, unknown field, bad value or unresolved library reference.
 """
 
-import csv
 import json
 import math
 import sys
 from dataclasses import dataclass
+from functools import cache
 from pathlib import Path
 
 import aerosandbox as asb
 
+from libs.motorlib import DataRepo
 from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS, check_profile, normalize_shape_name
-from libs.simlib2 import TestedMotorData
 
 SCHEMA = "airframe/2"
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 PARTS_PATH = DATA_DIR / "parts.json"
-MOTORDATA_PATH = Path(__file__).resolve().parent / "motordata.csv"
+SPECS_PATH = DATA_DIR / "specs.json"
 PARTS_DIMENSION_UNIT_M = 0.001  # parts.json battery dimensions are in mm
 INCH_M = 0.0254
 
@@ -35,6 +35,7 @@ LAYOUTS = tuple(LAYOUT_PANEL_COUNTS)
 FIN_POSITIONS = ("top", "bottom")
 SURFACE_ROOTS = ("body", "axis")  # span measured from the body surface at the root LE, or from the fuselage axis (fins joined at the centre)
 VOLUME_SHAPES = ("box", "cylinder", "bore", "point")
+PART_CATEGORIES = ("battery", "esc")  # data/parts.json categories that can be placed (others are materials, prop masses)
 AXES = ("x", "y", "z")
 MOUNT_TARGETS = ("nose", "tail", "surface")
 THRUST_DIRECTIONS = ("tractor", "pusher")
@@ -154,10 +155,10 @@ class Surface:
 
 @dataclass(frozen=True)
 class MotorRef:
-    brand: str
-    model: str
-    kv: int
-    prop: str
+    manufacturer: str  # motorlib motor (libs/motorlib/data/motordatav2.csv)
+    name: str
+
+
 
 
 @dataclass(frozen=True)
@@ -183,11 +184,13 @@ class Mount:
 @dataclass(frozen=True)
 class Propulsion:
     motor: MotorRef
-    battery_volume: str
+    prop: str  # motorlib propeller (libs/motorlib/data/propellers.csv)
+    battery: str  # name of the placed battery part
+    esc: str  # name of the placed ESC part (battery leads end and motor leads start there)
     mounts: tuple[Mount, ...]
-    motor_mass_kg: float  # per motor, from bench data
-    bell_diameter_m: float  # stator diameter from bench data
-    bell_length_m: float  # stator height from bench data
+    motor_mass_kg: float  # per motor, motorlib
+    bell_diameter_m: float  # stator diameter, motorlib
+    bell_length_m: float  # stator height, motorlib
     prop_diameter_m: float
     prop_mass_kg: float  # per prop, from parts.json prop sizes
 
@@ -203,8 +206,19 @@ class Volume:
     diameter_m: float | None  # cylinder
     length_m: float | None  # cylinder, bore
     axis: str | None  # cylinder
-    mass_kg: tuple[float, float]  # (min, max); equal for a fixed mass
-    part: str | None
+    mass_kg: tuple[float, float] | None  # its own mass (min, max), e.g. ballast; None = space only (parts carry theirs)
+
+
+@dataclass(frozen=True)
+class PlacedPart:
+    """A library component sitting in a volume."""
+    name: str
+    part: str  # data/parts.json <category>:<name>
+    volume: str
+    offset_m: tuple[float, float, float]  # from the volume centre
+    position_m: tuple[float, float, float]  # volume centre + offset
+    size_m: tuple[float, float, float] | None  # library dimensions (x = l, y = w, z = h); None = none in the library (a point)
+    mass_kg: tuple[float, float]  # library mass or mass_kg; 0 = counted elsewhere (e.g. in a weighed section)
 
 
 @dataclass(frozen=True)
@@ -227,6 +241,7 @@ class Airframe:
     surfaces: tuple[Surface, ...]
     propulsion: Propulsion | None  # None when not powered
     volumes: tuple[Volume, ...]
+    parts: tuple[PlacedPart, ...]
     sections: Sections
 
 
@@ -459,34 +474,20 @@ def _mass_range(value, path: str) -> tuple[float, float]:
     return mass, mass
 
 
-def _volume(data: dict, path: str, parts_data: dict) -> Volume:
+def _volume(data: dict, path: str) -> Volume:
     fields = _Fields(data, path)
     name = fields.text("name")
     shape = fields.choice("shape", VOLUME_SHAPES)
     x_m = fields.number("x_m", minimum=0.0)
     y_m = fields.number("y_m") if "y_m" in fields.data else 0.0
     z_m = fields.number("z_m") if "z_m" in fields.data else 0.0
-    part = fields.optional("part", None)
-
-    part_data = None
-    if part is not None:
-        category, _, part_name = str(part).partition(":")
-        if category not in parts_data or part_name not in parts_data[category]:
-            raise AirframeError(f"{fields.at('part')}: {part!r} not found; use '<category>:<name>' from data/parts.json")
-        part_data = parts_data[category][part_name]
 
     size_m = diameter_m = length_m = axis = None
     if shape == "box":
-        if "size_m" in fields.data:
-            size = fields.required("size_m")
-            if type(size) is not list or len(size) != 3:
-                raise AirframeError(f"{fields.at('size_m')}: expected [x, y, z], got {size!r}")
-            size_m = tuple(fields.number("size_m", minimum=0.0, exclusive=True, value=item) for item in size)
-        elif part_data is not None and "dimensions" in part_data:
-            dims = part_data["dimensions"]
-            size_m = (dims["l"] * PARTS_DIMENSION_UNIT_M, dims["w"] * PARTS_DIMENSION_UNIT_M, dims["h"] * PARTS_DIMENSION_UNIT_M)
-        else:
-            raise AirframeError(f"{fields.at('size_m')}: box needs size_m or a part with dimensions")
+        size = fields.required("size_m")
+        if type(size) is not list or len(size) != 3:
+            raise AirframeError(f"{fields.at('size_m')}: expected [x, y, z], got {size!r}")
+        size_m = tuple(fields.number("size_m", minimum=0.0, exclusive=True, value=item) for item in size)
     elif shape == "cylinder":
         diameter_m = fields.positive("diameter_m")
         length_m = fields.positive("length_m")
@@ -494,27 +495,60 @@ def _volume(data: dict, path: str, parts_data: dict) -> Volume:
     elif shape == "bore":
         length_m = fields.positive("length_m")
 
-    if "mass_kg" in fields.data:
-        mass_kg = _mass_range(fields.required("mass_kg"), fields.at("mass_kg"))
-    elif part_data is not None:
-        mass_kg = _mass_range(part_data["mass"], f"{fields.at('part')} ({part}) mass")
-    else:
-        raise AirframeError(f"{fields.at('mass_kg')}: required field missing (no part to take it from)")
+    mass_kg = _mass_range(fields.required("mass_kg"), fields.at("mass_kg")) if "mass_kg" in fields.data else None
     fields.done()
     return Volume(
         name=name, shape=shape, x_m=x_m, y_m=y_m, z_m=z_m, size_m=size_m, diameter_m=diameter_m,
-        length_m=length_m, axis=axis, mass_kg=mass_kg, part=part,
+        length_m=length_m, axis=axis, mass_kg=mass_kg,
     )
 
 
-def bench_motor_specs(motor: MotorRef) -> tuple[float, float, float]:
-    """(mass_kg, stator_diameter_m, stator_height_m) from the bench data, averaged over rows (charts vary slightly)."""
-    with open(MOTORDATA_PATH, newline="") as file:
-        rows = [
-            row for row in csv.DictReader(file)
-            if row["Brand"] == motor.brand and row["Motor"] == motor.model and int(row["KV"]) == motor.kv
-        ]
-    return tuple(sum(float(row[column]) for row in rows) / len(rows) / 1000.0 for column in ("Weight g", "Stator Diameter", "Stator height"))
+def _part(data: dict, path: str, volumes: dict[str, Volume], parts_data: dict) -> PlacedPart:
+    fields = _Fields(data, path)
+    name = fields.text("name")
+    part = fields.text("part")
+    category, _, part_name = part.partition(":")
+    if category not in PART_CATEGORIES or part_name not in parts_data[category]:
+        raise AirframeError(f"{fields.at('part')}: {part!r} not found; use '<category>:<name>' from data/parts.json, category one of {PART_CATEGORIES}")
+    part_data = parts_data[category][part_name]
+    volume_name = fields.text("volume")
+    if volume_name not in volumes:
+        raise AirframeError(f"{fields.at('volume')}: {volume_name!r} is not a defined volume")
+    volume = volumes[volume_name]
+    offset_m = tuple(fields.number(key) if key in fields.data else 0.0 for key in ("x_offset_m", "y_offset_m", "z_offset_m"))
+    if "mass_kg" in fields.data:
+        value = fields.required("mass_kg")
+        mass_kg = _mass_range(value, fields.at("mass_kg")) if type(value) is list else (fields.number("mass_kg", minimum=0.0, value=value),) * 2
+    elif part_data.get("mass"):  # null or 0 in the library = not known
+        mass_kg = _mass_range(part_data["mass"], f"{fields.at('part')} ({part}) mass")
+    else:
+        raise AirframeError(f"{fields.at('mass_kg')}: {part!r} has no mass in data/parts.json; give mass_kg (0 = counted elsewhere)")
+    fields.done()
+    dims = part_data.get("dimensions")
+    return PlacedPart(
+        name=name, part=part, volume=volume_name, offset_m=offset_m,
+        position_m=(volume.x_m + offset_m[0], volume.y_m + offset_m[1], volume.z_m + offset_m[2]),
+        size_m=None if dims is None else (dims["l"] * PARTS_DIMENSION_UNIT_M, dims["w"] * PARTS_DIMENSION_UNIT_M, dims["h"] * PARTS_DIMENSION_UNIT_M),
+        mass_kg=mass_kg,
+    )
+
+
+@cache
+def motor_repo() -> DataRepo:
+    """motorlib's motors, props, cells, ESCs and wires, loaded once."""
+    return DataRepo()
+
+
+def motorlib_motor(motor: MotorRef):
+    """The motorlib motor for a reference (AirframeError if it is not there)."""
+    repo = motor_repo()
+    code = repo.manufacturer_by_name.get(motor.manufacturer.lower())
+    found = repo.motor_by_key.get((code, motor.name))
+    if found is None:
+        names = sorted(m.name for m in repo.motors_for(code)) if code is not None else []
+        raise AirframeError(f"motor {motor.manufacturer} {motor.name!r} not in motorlib; "
+                            + (f"{motor.manufacturer} motors: {names}" if code is not None else f"unknown manufacturer {motor.manufacturer!r}"))
+    return found
 
 
 def prop_mass_kg(diameter_in: float, parts_data: dict) -> float:
@@ -528,28 +562,28 @@ def prop_mass_kg(diameter_in: float, parts_data: dict) -> float:
     raise AirframeError(f"prop diameter {diameter_in} in is outside parts.json prop sizes {[d for d, _ in table]}")
 
 
-def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], volumes: tuple[Volume, ...], parts_data: dict) -> Propulsion:
+def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], parts: tuple[PlacedPart, ...], parts_data: dict) -> Propulsion:
     fields = _Fields(data, path)
     motor_fields = _Fields(fields.required("motor"), fields.at("motor"))
-    motor = MotorRef(
-        brand=motor_fields.text("brand"),
-        model=motor_fields.text("model"),
-        kv=int(motor_fields.positive("kv")),
-        prop=motor_fields.text("prop"),
-    )
+    motor = MotorRef(manufacturer=motor_fields.text("manufacturer"), name=motor_fields.text("name"))
     motor_fields.done()
-
-    battery_volume = fields.text("battery_volume")
-    battery = next((volume for volume in volumes if volume.name == battery_volume), None)
-    if battery is None or battery.part is None or not battery.part.startswith("battery:"):
-        raise AirframeError(f"{fields.at('battery_volume')}: {battery_volume!r} must name a volume whose part is 'battery:<name>'")
-    cells = int(parts_data["battery"][battery.part.partition(":")[2]]["s"])
     try:
-        tested = TestedMotorData(brand=motor.brand, motor=motor.model, kv=motor.kv, batt_s=cells, csv_path=MOTORDATA_PATH)
-    except ValueError as error:
-        raise AirframeError(f"{fields.at('motor')} with {cells}S battery {battery.part!r}: {error}") from error
-    if motor.prop not in tested.available_props():
-        raise AirframeError(f"{fields.at('motor')}: no bench data for prop {motor.prop!r} on {motor.brand} {motor.model} {motor.kv}KV {cells}S; tested props: {tested.available_props()}")
+        motor_data = motorlib_motor(motor)
+    except AirframeError as error:
+        raise AirframeError(f"{fields.at('motor')}: {error}") from error
+    if motor_data.stator_diameter_mm is None or motor_data.stator_height_mm is None:
+        raise AirframeError(f"{fields.at('motor')}: motorlib has no stator size for {motor.manufacturer} {motor.name}")
+    prop = fields.text("prop")
+    if prop not in motor_repo().prop_by_name:
+        raise AirframeError(f"{fields.at('prop')}: {prop!r} not in motorlib propellers")
+    prop_data = motor_repo().prop(prop)
+
+    categories = {part.name: part.part.partition(":")[0] for part in parts}
+    battery, esc = fields.text("battery"), fields.text("esc")
+    for key, name, category in (("battery", battery, "battery"), ("esc", esc, "esc")):
+        if categories.get(name) != category:
+            raise AirframeError(f"{fields.at(key)}: {name!r} must name a part whose part is '{category}:<name>'; {category} parts: "
+                                f"{sorted(n for n, c in categories.items() if c == category)}")
 
     surface_names = {surface.name: surface for surface in surfaces}
     mounts = []
@@ -593,12 +627,10 @@ def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], volumes: t
     if not mounts:
         raise AirframeError(f"{fields.at('mounts')}: at least one mount is required")
     fields.done()
-    motor_mass_kg, bell_diameter_m, bell_length_m = bench_motor_specs(motor)
-    prop_diameter_in = tested.prop_info(motor.prop)["diameter_in"]
     return Propulsion(
-        motor=motor, battery_volume=battery_volume, mounts=tuple(mounts), motor_mass_kg=motor_mass_kg,
-        bell_diameter_m=bell_diameter_m, bell_length_m=bell_length_m, prop_diameter_m=prop_diameter_in * INCH_M,
-        prop_mass_kg=prop_mass_kg(prop_diameter_in, parts_data),
+        motor=motor, prop=prop, battery=battery, esc=esc, mounts=tuple(mounts), motor_mass_kg=motor_data.weight_g / 1000.0,
+        bell_diameter_m=motor_data.stator_diameter_mm / 1000.0, bell_length_m=motor_data.stator_height_mm / 1000.0,
+        prop_diameter_m=prop_data.diam_in * INCH_M, prop_mass_kg=prop_mass_kg(prop_data.diam_in, parts_data),
     )
 
 
@@ -653,10 +685,15 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     if unweighed and print_settings.surface_bulk_density_kg_m3 is None:
         raise AirframeError(f"{print_fields.at('surface_bulk_density_kg_m3')}: required to compute the mass of surfaces {unweighed}")
     volumes = tuple(
-        _volume(volume_data, f"{fields.at('volumes')}[{index}]", parts_data)
+        _volume(volume_data, f"{fields.at('volumes')}[{index}]")
         for index, volume_data in enumerate(fields.required("volumes"))
     )
-    for collection, label in ((surfaces, "surfaces"), (volumes, "volumes")):
+    volumes_by_name = {volume.name: volume for volume in volumes}
+    parts = tuple(
+        _part(part_data, f"{fields.at('parts')}[{index}]", volumes_by_name, parts_data)
+        for index, part_data in enumerate(fields.required("parts"))
+    )
+    for collection, label in ((surfaces, "surfaces"), (volumes, "volumes"), (parts, "parts")):
         names = [item.name for item in collection]
         duplicates = sorted({item for item in names if names.count(item) > 1})
         if duplicates:
@@ -668,7 +705,7 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     propulsion_data = fields.optional("propulsion", None)
     if powered != (propulsion_data is not None):
         raise AirframeError(f"{fields.at('propulsion')}: required when powered is true, absent when false (powered is {str(powered).lower()})")
-    propulsion = None if propulsion_data is None else _propulsion(propulsion_data, fields.at("propulsion"), surfaces, volumes, parts_data)
+    propulsion = None if propulsion_data is None else _propulsion(propulsion_data, fields.at("propulsion"), surfaces, parts, parts_data)
 
     sections_fields = _Fields(fields.required("sections"), fields.at("sections"))
     cuts = tuple(
@@ -689,7 +726,7 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     fields.done()
     return Airframe(
         name=name, notes=notes, preset=preset, powered=powered, vtol=vtol, tailsitter=tailsitter, operating_point=operating_point, print=print_settings,
-        fuselage=fuselage, surfaces=surfaces, propulsion=propulsion, volumes=volumes,
+        fuselage=fuselage, surfaces=surfaces, propulsion=propulsion, volumes=volumes, parts=parts,
         sections=Sections(cuts_m=cuts, mass_kg=section_masses),
     )
 

@@ -23,7 +23,6 @@ from libs.aero import OperatingPointError, analyze_aero, build_asb_airplane
 from libs.airframe import PARTS_PATH, SCHEMA, AirframeError, parse_airframe
 from libs.geometry import resolve_airframe
 from libs.report import build_report_text
-from libs.simlib2 import TestedMotorData
 from libs.views.aero_analysis_view import AeroAnalysisMainView
 from libs.views.cad_view import CADMainView
 from libs.views.configuration_view import ConfigurationMainView
@@ -63,7 +62,6 @@ class BuilderApp:
         self.ui_draw = UI_DRAW
         self.view_options = VIEW_OPTIONS
         self.parts_data = load_parts_data()
-        self.motor_options = TestedMotorData.available_motors()
         self.airframe_path = airframe_path
         with open(airframe_path, "r") as file:
             self.definition = json.load(file)

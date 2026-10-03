@@ -101,8 +101,7 @@ CRUISE_STEADY_S = 3  # settled when airspeed changed less than CRUISE_STEADY_M_S
 CRUISE_STEADY_M_S = 0.2
 CRUISE_SINK_LIMIT_M_S = 0.5  # a step still sinking faster than this at its end cannot hold altitude: the sweep ends
 CRUISE_ALT_LOSS_LIMIT_M = 15.0  # or this far below the transition altitude (the script pilot sags ~1 m per slower step)
-USABLE_BATTERY_FRACTION = 0.8  # of nominal LiPo energy (3.7 V/cell)
-LIPO_NOMINAL_CELL_V = 3.7
+USABLE_BATTERY_FRACTION = 0.8  # of the nominal pack energy (libs/propulsion.py)
 ATTITUDE_SETTLE_DEG = 3.0  # arm once INAV's roll/pitch agree with truth this closely after the profile switch
 ATTITUDE_SETTLE_MAX_S = 20.0
 DASH_START_SPEED_M_S = 0.0  # a held start at speed feeds INAV moving GPS with an IMU at rest: its multirotor attitude estimate drifts
@@ -259,11 +258,11 @@ def hover_test(bench: Bench, export, motor_count: int, hold_s: float) -> None:
 
 def battery_power_w(fdm, export, motor_count: int) -> float:
     """Battery power of all motors from the JSBSim motor's constants and pack voltage (lossless ESC)."""
-    fit = export.motor_fit
+    motor = export.motor
     total = 0.0
     for index in range(motor_count):
         volts = fdm[f"fcs/throttle-pos-norm[{index}]"] * export.pack_voltage_v
-        amps = max(0.0, (volts - fdm[f"propulsion/engine[{index}]/propeller-rpm"] / fit.kv_rpm_v) / fit.resistance_ohm)
+        amps = max(0.0, (volts - fdm[f"propulsion/engine[{index}]/propeller-rpm"] / motor.kv_rpm_v) / motor.resistance_ohm)
         total += volts * amps
     return total
 
@@ -635,7 +634,7 @@ def main() -> None:
     parser.add_argument("--hover-s", type=float, default=15.0, help="hover test: hold time in seconds")
     parser.add_argument("--start-speed", type=float, default=None, help="level test: start airspeed in m/s (default: the operating airspeed)")
     parser.add_argument("--motor-steps", type=float, nargs="+", default=list(CRUISE_MOTOR_STEPS), help="cruise test: throttle targets, descending")
-    parser.add_argument("--pack-voltage", type=float, default=None, help="battery voltage under load (default: the motor test data's full-throttle voltage)")
+    parser.add_argument("--pack-voltage", type=float, default=None, help="battery voltage for the motors (default: nominal)")
     args = parser.parse_args()
 
     with open(PARTS_PATH, "r") as file:
@@ -695,7 +694,7 @@ def main() -> None:
     log_path = out_dir / f"sim_inav_{args.test}.csv"
     log_path.unlink(missing_ok=True)  # a run that fails before the bench logs must not plot the previous run
     try:
-        run_test(args, vehicle, log_path, resolved, export, motor_count, parts_data, start_speed_m_s)
+        run_test(args, vehicle, log_path, resolved, export, motor_count, start_speed_m_s)
     except GroundHit as hit:
         print(f"\nHit the ground {hit}; the run ends.")
     finally:
@@ -712,7 +711,7 @@ def main() -> None:
             print(f"pitch over time: {time_path}")
 
 
-def run_test(args, vehicle, log_path: Path, resolved, export, motor_count: int, parts_data: dict, start_speed_m_s: float) -> None:
+def run_test(args, vehicle, log_path: Path, resolved, export, motor_count: int, start_speed_m_s: float) -> None:
     airframe = resolved.airframe
     with FlightBench(vehicle, sitl=str(args.sitl), log=str(log_path)) as bench:
         if args.test == "plane":
@@ -720,8 +719,7 @@ def run_test(args, vehicle, log_path: Path, resolved, export, motor_count: int, 
         elif args.test == "hover":
             hover_test(bench, export, motor_count, args.hover_s)
         elif args.test in ("cruise", "level"):
-            battery = parts_data["battery"][next(v for v in airframe.volumes if v.name == airframe.propulsion.battery_volume).part.partition(":")[2]]
-            battery_wh = battery["s"] * LIPO_NOMINAL_CELL_V * battery["mah"] / 1000.0
+            battery_wh = export.motor.pack_wh
             if args.test == "cruise":
                 cruise_test(bench, export, motor_count, battery_wh, tuple(args.motor_steps))
             else:

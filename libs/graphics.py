@@ -19,6 +19,9 @@ MOTOR_BASE_LEN_M = 0.005
 SECTION_OUTLINE_SAMPLES = 72
 POINT_MASS_MARK_PX = 5
 VOLUME_COLOR = "#ffcc33"
+PART_COLOR = "#ff9966"
+WIRE_COLOR = "#ffff00"
+WIRE_DASH = (2, 3)  # dotted
 CUT_COLOR = "#33ccff"
 CUT_OVERHANG_PX = 14
 CONTROL_COLOR = "#cc66ff"
@@ -62,6 +65,18 @@ def volume_half_extents(resolved: ResolvedAirframe, volume) -> tuple[float, floa
     return 0.0, 0.0, 0.0
 
 
+def volume_projected_half(resolved: ResolvedAirframe, volume, roll_rad: float) -> float:
+    """Half extent of a volume across the side view at this roll: round sections stay round (a bore is the internal
+    section, a cylinder's support is half-length x |cos| + radius x sin of its axis to the view's transverse axis)."""
+    _half_x, half_y, half_z = volume_half_extents(resolved, volume)
+    if volume.shape == "bore":
+        return section_projected_half(half_y, half_z, resolved.body.shape, roll_rad)
+    if volume.shape == "cylinder":
+        along = {"x": 0.0, "y": math.sin(roll_rad), "z": math.cos(roll_rad)}[volume.axis]
+        return volume.length_m / 2.0 * abs(along) + volume.diameter_m / 2.0 * math.sqrt(1.0 - along * along)
+    return half_y * abs(math.sin(roll_rad)) + half_z * abs(math.cos(roll_rad))
+
+
 def marker_positions(resolved: ResolvedAirframe, aero) -> dict:
     positions = {"cg": resolved.cg_m[0], "np": float("nan"), "lift": float("nan")}
     if aero is not None:
@@ -70,9 +85,12 @@ def marker_positions(resolved: ResolvedAirframe, aero) -> dict:
     return positions
 
 
-def draw_marker_guide(canvas: tk.Canvas) -> None:
-    guide = [(MARKER_LABELS[key], color) for key, color in MARKER_COLORS.items()]
-    guide += [("Volumes (drag along x)", VOLUME_COLOR), ("Section cuts (drag along x); * = computed mass", CUT_COLOR)]
+def draw_marker_guide(canvas: tk.Canvas, positions: dict) -> None:
+    """Legend; the CG, neutral point and lift centre with their x from the nose (marker_positions)."""
+    guide = [(f"{MARKER_LABELS[key]}  x {positions[key] * 1000.0:.1f} mm" if not math.isnan(positions[key]) else f"{MARKER_LABELS[key]}  (aero pending)", color)
+             for key, color in MARKER_COLORS.items()]
+    guide += [("Volumes (drag along x)", VOLUME_COLOR), ("Parts (move with their volume)", PART_COLOR),
+              ("Wires: battery - ESC - motors", WIRE_COLOR), ("Section cuts (drag along x); * = computed mass", CUT_COLOR)]
     for index, (text, color) in enumerate(guide):
         canvas.create_text(12, 12 + index * 16, anchor="nw", text=text, fill=color, font=("TkDefaultFont", 9))
 
@@ -193,11 +211,31 @@ def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, 
             canvas.create_line(x_screen - mark, t_screen + mark, x_screen + mark, t_screen - mark, fill=VOLUME_COLOR, width=2, tags=tags)
             canvas.create_text(x_screen, t_screen - mark - 2, anchor="s", text=volume.name, fill=VOLUME_COLOR, font=("TkDefaultFont", 8), tags=tags)
             continue
-        half_x, half_y, half_z = volume_half_extents(resolved, volume)
-        half_t = half_y * abs(math.sin(roll_rad)) + half_z * abs(math.cos(roll_rad))
+        half_x = volume_half_extents(resolved, volume)[0]
+        half_t = volume_projected_half(resolved, volume, roll_rad)
         canvas.create_rectangle(x_screen - half_x * scale, t_screen - half_t * scale, x_screen + half_x * scale, t_screen + half_t * scale,
                                 outline=VOLUME_COLOR, fill="", width=1, dash=(4, 2), tags=tags)
-        canvas.create_text(x_screen, t_screen, text=volume.name, fill=VOLUME_COLOR, font=("TkDefaultFont", 8), tags=tags)
+        canvas.create_text(x_screen - half_x * scale, t_screen - half_t * scale - 2, anchor="sw", text=volume.name, fill=VOLUME_COLOR, font=("TkDefaultFont", 8), tags=tags)
+
+    for part in resolved.airframe.parts:
+        x, y, z = part.position_m
+        x_screen = x_to_screen(x)
+        t_screen = transverse_to_screen(longitudinal_transverse(y, z, roll_rad))
+        if part.size_m is None:
+            mark = POINT_MASS_MARK_PX
+            canvas.create_line(x_screen - mark, t_screen, x_screen + mark, t_screen, fill=PART_COLOR, width=2)
+            canvas.create_line(x_screen, t_screen - mark, x_screen, t_screen + mark, fill=PART_COLOR, width=2)
+        else:
+            half_x, half_y, half_z = (size / 2.0 for size in part.size_m)
+            half_t = half_y * abs(math.sin(roll_rad)) + half_z * abs(math.cos(roll_rad))
+            canvas.create_rectangle(x_screen - half_x * scale, t_screen - half_t * scale, x_screen + half_x * scale, t_screen + half_t * scale,
+                                    outline=PART_COLOR, fill="", width=1)
+        canvas.create_text(x_screen, t_screen + POINT_MASS_MARK_PX + 2, anchor="n", text=part.name, fill=PART_COLOR, font=("TkDefaultFont", 8))
+
+    if resolved.wires is not None:
+        for route in (resolved.wires.battery, *resolved.wires.motors):
+            points = [value for x, y, z in route for value in (x_to_screen(x), transverse_to_screen(longitudinal_transverse(y, z, roll_rad)))]
+            canvas.create_line(points, fill=WIRE_COLOR, width=2, dash=WIRE_DASH)
 
     sections = resolved.airframe.sections
     bounds = [0.0, *sections.cuts_m, body.length_m]
@@ -250,7 +288,7 @@ def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, 
     cg_low, cg_high = resolved.cg_x_range_m
     if cg_low != cg_high:
         canvas.create_line(x_to_screen(cg_low), center_y + 2 * MARKER_RADIUS_PX, x_to_screen(cg_high), center_y + 2 * MARKER_RADIUS_PX, fill=MARKER_COLORS["cg"], width=3)
-    draw_marker_guide(canvas)
+    draw_marker_guide(canvas, marker_positions(resolved, aero))
     metrics["scale"] = scale
     metrics["zoom_scale"] = zoom_scale
     metrics["pan_x"] = pan_x
@@ -260,7 +298,7 @@ def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, 
     return metrics
 
 
-def draw_front_view(canvas: tk.Canvas, resolved: ResolvedAirframe, ui_draw: str, ui_bg: str, zoom_scale: float, pan_x: float, pan_y: float,
+def draw_front_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, ui_draw: str, ui_bg: str, zoom_scale: float, pan_x: float, pan_y: float,
                     deflections: dict[int, float]) -> dict:
     canvas.delete("all")
     width = max(canvas.winfo_width(), 10)
@@ -287,8 +325,33 @@ def draw_front_view(canvas: tk.Canvas, resolved: ResolvedAirframe, ui_draw: str,
         _half_x, half_y, half_z = volume_half_extents(resolved, volume)
         x_screen = center_x + volume.y_m * scale
         y_screen = center_y - volume.z_m * scale
-        canvas.create_rectangle(x_screen - half_y * scale, y_screen - half_z * scale, x_screen + half_y * scale, y_screen + half_z * scale,
-                                outline=VOLUME_COLOR, fill="", width=1, dash=(4, 2))
+        if volume.shape == "bore":  # the internal section at its centre
+            outline = []
+            for index in range(SECTION_OUTLINE_SAMPLES + 1):
+                angle = 2.0 * math.pi * index / SECTION_OUTLINE_SAMPLES
+                radius = superellipse_radius(half_y, half_z, body.shape, angle)
+                outline.extend((x_screen + radius * math.cos(angle) * scale, y_screen - radius * math.sin(angle) * scale))
+            canvas.create_line(outline, fill=VOLUME_COLOR, width=1, dash=(4, 2))
+        elif volume.shape == "cylinder" and volume.axis == "x":
+            canvas.create_oval(x_screen - half_y * scale, y_screen - half_z * scale, x_screen + half_y * scale, y_screen + half_z * scale,
+                               outline=VOLUME_COLOR, width=1, dash=(4, 2))
+        else:
+            canvas.create_rectangle(x_screen - half_y * scale, y_screen - half_z * scale, x_screen + half_y * scale, y_screen + half_z * scale,
+                                    outline=VOLUME_COLOR, fill="", width=1, dash=(4, 2))
+    for part in resolved.airframe.parts:
+        _x, y, z = part.position_m
+        x_screen, y_screen = center_x + y * scale, center_y - z * scale
+        if part.size_m is None:
+            mark = POINT_MASS_MARK_PX
+            canvas.create_line(x_screen - mark, y_screen, x_screen + mark, y_screen, fill=PART_COLOR, width=2)
+            canvas.create_line(x_screen, y_screen - mark, x_screen, y_screen + mark, fill=PART_COLOR, width=2)
+        else:
+            half_y, half_z = part.size_m[1] / 2.0, part.size_m[2] / 2.0
+            canvas.create_rectangle(x_screen - half_y * scale, y_screen - half_z * scale, x_screen + half_y * scale, y_screen + half_z * scale,
+                                    outline=PART_COLOR, fill="", width=1)
+    if resolved.wires is not None:
+        for route in (resolved.wires.battery, *resolved.wires.motors):
+            canvas.create_line([value for _x, y, z in route for value in (center_x + y * scale, center_y - z * scale)], fill=WIRE_COLOR, width=2, dash=WIRE_DASH)
     for motor in resolved.motors:
         x_screen = center_x + motor.position[1] * scale
         y_screen = center_y - motor.position[2] * scale
@@ -305,7 +368,7 @@ def draw_front_view(canvas: tk.Canvas, resolved: ResolvedAirframe, ui_draw: str,
         length = math.hypot(y1 - y0, z1 - z0)
         canvas.create_text(center_x + y1 * scale + CONTROL_LABEL_OFFSET_PX * (y1 - y0) / length, center_y - z1 * scale - CONTROL_LABEL_OFFSET_PX * (z1 - z0) / length,
                            text=f"C{control.number}", fill=CONTROL_COLOR, font=("TkDefaultFont", 8, "bold"))
-    draw_marker_guide(canvas)
+    draw_marker_guide(canvas, marker_positions(resolved, aero))
     metrics["scale"] = scale
     metrics["zoom_scale"] = zoom_scale
     metrics["pan_x"] = pan_x
@@ -333,4 +396,4 @@ def draw_canvas_view(
     deflections = deflections or {}
     if view_mode == "Longitudinal":
         return draw_longitudinal_view(canvas, resolved, aero, roll_deg, ui_draw, zoom_scale, pan_x, pan_y, deflections)
-    return draw_front_view(canvas, resolved, ui_draw, ui_bg, zoom_scale, pan_x, pan_y, deflections)
+    return draw_front_view(canvas, resolved, aero, ui_draw, ui_bg, zoom_scale, pan_x, pan_y, deflections)
