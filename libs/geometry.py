@@ -408,7 +408,9 @@ def panel_strips(panel: Panel):
         t = (index + 0.5) / SPAN_STRIPS
         chord = panel.chord_root_m + (panel.chord_tip_m - panel.chord_root_m) * t
         le = tuple(r + (p - r) * t for r, p in zip(panel.root_le, panel.tip_le))
-        yield chord, width, (le[0] + chord / 2.0, le[1], le[2])
+        incidence = math.radians(panel.incidence_deg)  # mid-chord along the chord line, as the panel outline
+        yield chord, width, tuple(e + chord / 2.0 * ((math.cos(incidence) if axis == 0 else 0.0) - math.sin(incidence) * n)
+                                  for axis, (e, n) in enumerate(zip(le, panel.normal)))
 
 
 def combine_inertia(parts: list[tuple[float, Vec, Inertia]]) -> tuple[float, Vec, Inertia]:
@@ -477,7 +479,7 @@ def shell_between(body: Body, x0: float, x1: float, wall_m: float, density_kg_m3
     rings = []
     for (xa, wa, ha), (xb, wb, hb) in zip(sections, sections[1:]):
         perimeter = (superellipse_perimeter(2.0 * wa, 2.0 * ha, body.shape) + superellipse_perimeter(2.0 * wb, 2.0 * hb, body.shape)) / 2.0
-        segment = perimeter * math.hypot(xb - xa, wb - wa) * wall_m * density_kg_m3
+        segment = perimeter * math.hypot(xb - xa, ((wb - wa) + (hb - ha)) / 2.0) * wall_m * density_kg_m3  # mean wall slope
         ring = ring_inertia((wa + wb) / 2.0, (ha + hb) / 2.0)
         length_term = (xb - xa) ** 2 / 12.0
         rings.append((segment, ((xa + xb) / 2.0, 0.0, 0.0), (ring[0], ring[1] + length_term, ring[2] + length_term, 0.0, 0.0, 0.0)))

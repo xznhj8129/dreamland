@@ -118,8 +118,9 @@ LEVEL_SPEED_TOLERANCE_M_S = 0.5  # a step is held once airspeed is this close to
 LEVEL_THROTTLE_START = 0.5  # throttle stick the speed loop starts from
 LEVEL_THROTTLE_P_PER_M_S = 0.05
 LEVEL_THROTTLE_I_PER_M_S_S = 0.02
-LEVEL_THROTTLE_RAMP_PER_S = 0.2  # the throttle stick moves at most this much per second (0 to full in 5 s)
-GROUND_AIRBORNE_M = 2.0  # once higher than this, any ground contact ends the run (tailsitters start standing on it)
+LEVEL_THROTTLE_RAMP_PER_S = 1.0  # the throttle stick moves at most this much per second (0 to full in 1 s)
+GROUND_AIRBORNE_M = 2.0  # once higher than this (tailsitters start standing on the ground) ...
+GROUND_MIN_AGL_M = 0.5  # ... the run ends at or below this altitude above ground
 PLANE_CONFIG_LINES = (
     "set mag_hardware = FAKE",
     "# switches: AUX1 arm, AUX2 angle, AUX3 nav althold",
@@ -149,8 +150,7 @@ class GroundHit(Exception):
 
 
 class FlightBench(Bench):
-    """The bench, ending the run when the aircraft touches the ground after it has flown (JSBSim gear/wow: any contact
-    point loaded)."""
+    """The bench, ending the run when the aircraft comes down to GROUND_MIN_AGL_M after it has flown."""
     highest_agl_m = 0.0
 
     def run(self, seconds, until=None, check_every=0.05):
@@ -160,7 +160,7 @@ class FlightBench(Bench):
             nonlocal hit
             fdm = bench.plant.fdm
             self.highest_agl_m = max(self.highest_agl_m, fdm["position/h-agl-ft"] * FT)
-            hit = self.highest_agl_m > GROUND_AIRBORNE_M and fdm["gear/wow"] > 0.0
+            hit = self.highest_agl_m > GROUND_AIRBORNE_M and fdm["position/h-agl-ft"] * FT <= GROUND_MIN_AGL_M
             return hit or (until is not None and until(bench))
 
         fired = super().run(seconds, until=stop, check_every=check_every)
@@ -376,10 +376,11 @@ def cruise_sweep(bench: Bench, export, motor_count: int, battery_wh: float, moto
 
 @dataclass
 class SpeedHold:
-    """Throttle stick (PI) holding a target airspeed, ramped from the stick at arming (0) at LEVEL_THROTTLE_RAMP_PER_S."""
+    """Throttle stick (PI) holding a target airspeed, from LEVEL_THROTTLE_START at release, its changes limited to
+    LEVEL_THROTTLE_RAMP_PER_S."""
     target_m_s: float
     integral: float = 0.0
-    stick: float = 0.0
+    stick: float = LEVEL_THROTTLE_START
 
     def throttle(self, airspeed_m_s: float, dt: float) -> float:
         error = self.target_m_s - airspeed_m_s

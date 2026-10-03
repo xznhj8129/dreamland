@@ -151,11 +151,15 @@ def panel_sections(panel: Panel, control: ControlSurface | None, tip_first: bool
 
 
 def build_asb_airplane(resolved: ResolvedAirframe) -> asb.Airplane:
+    """Each motor bell is part of the body it is mounted on (its pod, else the fuselage end): one extra section at the
+    bell's prop-side face. Alone, a bell is a 28 x 7 mm cylinder (stator size from the bench data, fineness 0.25), for
+    which AeroBuildup's fuselage form factor gives more drag than a flat disc."""
     body = resolved.body
-    fuselages = [asb.Fuselage(name="Fuselage", xsecs=[
+    main_sections = [
         asb.FuselageXSec(xyz_c=[station.x_m, 0.0, 0.0], width=station.width_m, height=station.height_m, shape=body.shape)
         for station in body.stations
-    ])]
+    ]
+    fuselages = []
     wings = []
     for surface_set in resolved.surfaces:
         for panel in surface_set.panels:
@@ -168,16 +172,16 @@ def build_asb_airplane(resolved: ResolvedAirframe) -> asb.Airplane:
     propulsors = []
     for motor in resolved.motors:
         x, y, z = motor.position
-        half = motor.bell_length_m / 2.0
-        radius = motor.bell_diameter_m / 2.0
-        fuselages.append(asb.Fuselage(name=f"{motor.name} bell", xsecs=[
-            asb.FuselageXSec(xyz_c=[x - half, y, z], radius=radius), asb.FuselageXSec(xyz_c=[x + half, y, z], radius=radius),
-        ]))
+        prop_side = 1.0 if motor.prop_center[0] > x else -1.0
+        bell_face = (x + prop_side * motor.bell_length_m / 2.0, motor.bell_diameter_m / 2.0)
         if motor.pod_stations:
             fuselages.append(asb.Fuselage(name=f"{motor.name} pod", xsecs=[
-                asb.FuselageXSec(xyz_c=[pod_x, y, z], radius=pod_radius) for pod_x, pod_radius in motor.pod_stations
+                asb.FuselageXSec(xyz_c=[pod_x, y, z], radius=pod_radius) for pod_x, pod_radius in sorted([*motor.pod_stations, bell_face])
             ]))
+        else:  # nose or tail motor, on the axis
+            main_sections.append(asb.FuselageXSec(xyz_c=[bell_face[0], y, z], radius=bell_face[1]))
         propulsors.append(asb.Propulsor(name=motor.name, xyz_c=list(motor.prop_center), xyz_normal=list(motor.thrust_dir), radius=motor.prop_radius_m, length=0.0))
+    fuselages.insert(0, asb.Fuselage(name="Fuselage", xsecs=sorted(main_sections, key=lambda section: section.xyz_c[0])))
     reference = resolved.reference
     return asb.Airplane(
         name=resolved.airframe.name, xyz_ref=list(resolved.cg_m), s_ref=reference.area_m2, c_ref=reference.chord_m,

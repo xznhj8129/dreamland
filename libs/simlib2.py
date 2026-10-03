@@ -115,15 +115,6 @@ def tip_mach_at(rpm, diameter_in, sos=SOUND_SL):
     return math.pi * (diameter_in * INCH_TO_M) * rpm / (60.0 * sos)
 
 
-def rho_at_altitude(alt_m, temp_c=15.0):
-    """ISA air density at altitude."""
-    T0, L, g, M, R = 288.15, 0.0065, 9.80665, 0.0289644, 8.31447
-    T_k = 273.15 + temp_c
-    T_alt = T0 - L * alt_m
-    P = 101325.0 * (T_alt / T0) ** ((g * M) / (R * L))
-    return P / (287.05 * T_k)
-
-
 # ---------------------------------------------------------------------------
 # Internal per-prop data
 # ---------------------------------------------------------------------------
