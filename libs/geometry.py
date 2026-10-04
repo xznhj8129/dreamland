@@ -13,13 +13,14 @@ Panel normal convention: (0, -dir_z, dir_y), sign-flipped on left-hand panels so
 Positive incidence rotates the chord leading-edge-up about the leading edge, towards the normal.
 """
 
+import bisect
 import itertools
 import math
 from dataclasses import dataclass
 
 import aerosandbox as asb
 
-from libs.airframe import AXES, Airframe, AirframeError, Mount, PlacedPart, Surface, Volume
+from libs.airframe import AXES, Airframe, AirframeError, Mount, PlacedPart, Reinforcement, Surface, Volume
 from libs.pointed_shapes import sample_pointed_profile
 
 END_PROFILE_SAMPLES = 14
@@ -122,17 +123,31 @@ class MotorPlacement:
     bell_length_m: float
     pod_stations: tuple[tuple[float, float], ...]  # (x_m, radius_m) on the motor's axis line, nose to tail
     spin: str  # "cw" / "ccw" seen from where the thrust points (from above in hover)
+    mount_x_m: float  # where it is attached to the fuselage: its surface set's root leading edge, the nose (0) or the tail (length)
 
 
 @dataclass(frozen=True)
 class MassPoint:
     name: str
-    kind: str  # structure, surface, volume, part, motor, prop
+    kind: str  # structure, reinforcement, surface, volume, part, motor, prop
     position: Vec
     mass_kg: tuple[float, float]  # (min, max)
     computed: bool  # True when derived from geometry rather than given
     estimate_kg: float | None  # mass estimated from geometry and print settings, shown next to a weighed value; None = no estimate
     inertia_per_kg: Inertia  # about the point's own centroid, from its shape
+    attached_x_m: float | None = None  # where it is attached to the fuselage (surface set: root LE; motor and prop: their mount), which places it in a fuselage section; None = its own x
+
+
+@dataclass(frozen=True)
+class SectionMass:
+    """One fuselage section's masses, for the editor and the report."""
+    x0_m: float
+    x1_m: float
+    solid: bool
+    empty_estimate_kg: float | None  # shell or solid less volumes, from the print settings; None = no bulk density for a weighed solid section
+    empty_kg: float  # weighed or the estimate, as used
+    complete_itemised_kg: tuple[float, float]  # everything positioned in the section, itemised (min, max)
+    complete_kg: float | None  # weighed; replaces the itemised points; None = itemised
 
 
 @dataclass(frozen=True)
@@ -159,6 +174,7 @@ class ResolvedAirframe:
     motors: tuple[MotorPlacement, ...]
     controls: tuple[ControlPlacement, ...]
     mass_points: tuple[MassPoint, ...]
+    sections: tuple[SectionMass, ...]
     mass_kg: tuple[float, float]
     cg_m: Vec  # with every ranged mass at the middle of its range
     cg_x_range_m: tuple[float, float]  # forward-most and aft-most over all ranged-mass combinations
@@ -478,7 +494,8 @@ def surface_mass_point(surface_set: SurfaceSet, density_kg_m3: float | None) -> 
         cr, ct = definition.chord_root_m, definition.chord_tip_m
         estimate = len(surface_set.panels) * unit_section_area * definition.span_m * (cr * cr + cr * ct + ct * ct) / 3.0 * density_kg_m3
     mass = definition.mass_kg if definition.mass_kg is not None else estimate
-    return MassPoint(f"surface {surface_set.name}", "surface", centroid, (mass, mass), definition.mass_kg is None, estimate, per_unit(inertia, weight))
+    return MassPoint(f"surface {surface_set.name}", "surface", centroid, (mass, mass), definition.mass_kg is None, estimate, per_unit(inertia, weight),
+                     definition.x_root_le_m)
 
 
 def shell_between(body: Body, x0: float, x1: float, wall_m: float, density_kg_m3: float) -> tuple[float, Vec, Inertia]:
@@ -496,24 +513,135 @@ def shell_between(body: Body, x0: float, x1: float, wall_m: float, density_kg_m3
     return mass, centroid, per_unit(inertia, mass)
 
 
+def volume_size(volume: Volume, body: Body, wall_m: float) -> tuple[float, float]:
+    """(geometric volume m^3, extent along x m) of a volume; a point has none."""
+    if volume.shape == "box":
+        return volume.size_m[0] * volume.size_m[1] * volume.size_m[2], volume.size_m[0]
+    if volume.shape == "cylinder":
+        radius = volume.diameter_m / 2.0
+        return math.pi * radius * radius * volume.length_m, volume.length_m if volume.axis == "x" else volume.diameter_m
+    if volume.shape == "bore":
+        half_w, half_h = body_half_extents(body, volume.x_m)
+        return superellipse_area(2.0 * (half_w - wall_m), 2.0 * (half_h - wall_m), body.shape) * volume.length_m, volume.length_m
+    return 0.0, 0.0
+
+
+def solid_between(body: Body, x0: float, x1: float, volumes: tuple[Volume, ...], wall_m: float, density_kg_m3: float) -> tuple[float, Vec, Inertia]:
+    """(mass, centroid, inertia per kg) of the body printed solid between two stations, less the volumes inside it.
+    Each volume counts by the fraction of its x extent inside the stations; volumes enter as negative masses."""
+    xs = [x0] + [station.x_m for station in body.stations if x0 < station.x_m < x1] + [x1]
+    sections = [(x, *body_half_extents(body, x)) for x in xs]
+    pieces = []
+    for (xa, wa, ha), (xb, wb, hb) in zip(sections, sections[1:]):
+        area = (superellipse_area(2.0 * wa, 2.0 * ha, body.shape) + superellipse_area(2.0 * wb, 2.0 * hb, body.shape)) / 2.0
+        half_w, half_h, length_term = (wa + wb) / 2.0, (ha + hb) / 2.0, (xb - xa) ** 2 / 12.0
+        pieces.append((area * (xb - xa) * density_kg_m3, ((xa + xb) / 2.0, 0.0, 0.0),
+                       ((half_w ** 2 + half_h ** 2) / 4.0, half_h ** 2 / 4.0 + length_term, half_w ** 2 / 4.0 + length_term, 0.0, 0.0, 0.0)))
+    for volume in volumes:
+        size, extent = volume_size(volume, body, wall_m)
+        if extent == 0.0:
+            continue
+        low, high = max(x0, volume.x_m - extent / 2.0), min(x1, volume.x_m + extent / 2.0)
+        if high > low:
+            pieces.append((-size * (high - low) / extent * density_kg_m3, ((low + high) / 2.0, volume.y_m, volume.z_m), volume_inertia(volume, body, wall_m)))
+    mass, centroid, inertia = combine_inertia(pieces)
+    if mass <= 0.0:
+        raise AirframeError(f"solid section {x0 * 1000:.0f}-{x1 * 1000:.0f} mm: the volumes inside it take up all its material")
+    return mass, centroid, per_unit(inertia, mass)
+
+
 def structure_mass_points(airframe: Airframe, body: Body, density_kg_m3: float) -> list[MassPoint]:
-    """One mass point per fuselage section (weighed, or the shell estimate) and one per coupler. A weighed section
-    keeps the shell's centroid and inertia shape."""
+    """One mass point per fuselage section, in section order, then one per coupler. A section is a hollow shell or
+    solid less its volumes; a weighed empty mass keeps the computed centroid and inertia shape."""
     sections = airframe.sections
     wall = airframe.fuselage.section.wall_radial_m
+    bulk_density = airframe.print.bulk_density_kg_m3
     bounds = [0.0, *sections.cuts_m, body.length_m]
     points = []
     for index, (x0, x1) in enumerate(zip(bounds, bounds[1:])):
-        estimate, centroid, inertia = shell_between(body, x0, x1, wall, density_kg_m3)
-        weighed = sections.mass_kg[index]
-        mass = estimate if weighed is None else weighed
-        points.append(MassPoint(f"section {index + 1} ({x0 * 1000:.0f}-{x1 * 1000:.0f} mm)", "structure", centroid, (mass, mass), weighed is None, estimate, inertia))
+        row = sections.per_section[index]
+        if not row.solid:
+            estimate, centroid, inertia = shell_between(body, x0, x1, wall, density_kg_m3)
+        elif bulk_density is not None:
+            estimate, centroid, inertia = solid_between(body, x0, x1, airframe.volumes, wall, bulk_density)
+        else:  # weighed solid section without a bulk density: the shape alone gives centroid and inertia
+            estimate, (_, centroid, inertia) = None, solid_between(body, x0, x1, airframe.volumes, wall, 1.0)
+        mass = estimate if row.empty_mass_kg is None else row.empty_mass_kg
+        points.append(MassPoint(f"section {index + 1} ({x0 * 1000:.0f}-{x1 * 1000:.0f} mm)", "structure", centroid, (mass, mass),
+                                row.empty_mass_kg is None, estimate, inertia))
     coupler_mass = airframe.fuselage.joints.coupler_mass_kg
     if coupler_mass is not None:
         for index, cut in enumerate(sections.cuts_m):
             half_w, half_h = body_half_extents(body, cut)
             points.append(MassPoint(f"coupler {index + 1}", "structure", (cut, 0.0, 0.0), (coupler_mass, coupler_mass), False, None, ring_inertia(half_w - wall, half_h - wall)))
     return points
+
+
+def reinforcement_mass_points(reinforcement: Reinforcement, cuts_m: tuple[float, ...], density_kg_m3: float) -> list[MassPoint]:
+    """The rods, one mass point per fuselage section they run through, so each section holds its own piece."""
+    pattern = reinforcement.pattern
+    radius = pattern.diameter_m / 2.0
+    bounds = [-math.inf, *cuts_m, math.inf]
+    points = []
+    for index, (x0, x1) in enumerate(zip(bounds, bounds[1:])):
+        low, high = max(x0, reinforcement.from_x_m), min(x1, reinforcement.to_x_m)
+        if high <= low:
+            continue
+        rod_mass = math.pi * radius * radius * (high - low) * density_kg_m3
+        rod_inertia = cylinder_inertia(radius, high - low, "x")
+        rods = [(rod_mass, ((low + high) / 2.0, y, z), rod_inertia) for y, z in pattern.positions_m()]
+        mass, centroid, inertia = combine_inertia(rods)
+        points.append(MassPoint(f"rods in section {index + 1} ({low * 1000:.0f}-{high * 1000:.0f} mm)", "reinforcement", centroid, (mass, mass), True, mass,
+                                per_unit(inertia, mass)))
+    return points
+
+
+def section_index(cuts_m: tuple[float, ...], x_m: float) -> int:
+    """The fuselage section holding x: a point on a cut belongs to the section starting there; anything ahead of the
+    nose or behind the tail to the first or last section."""
+    return bisect.bisect_right(cuts_m, x_m)
+
+
+def apply_complete_masses(airframe: Airframe, body: Body, points: list[MassPoint]) -> tuple[list[MassPoint], tuple[SectionMass, ...]]:
+    """Per-section masses; a section with a weighed complete mass has every point in it (by position, or by what it is
+    attached to) replaced by one point of that mass at their combined centroid and inertia (ranged masses at mid-range)."""
+    sections = airframe.sections
+    bounds = [0.0, *sections.cuts_m, body.length_m]
+    members = [[] for _ in sections.per_section]
+    for point in points:
+        members[section_index(sections.cuts_m, point.position[0] if point.attached_x_m is None else point.attached_x_m)].append(point)
+    replaced = {}
+    section_masses = []
+    for index, (row, section_point) in enumerate(zip(sections.per_section, points)):
+        itemised = (sum(point.mass_kg[0] for point in members[index]), sum(point.mass_kg[1] for point in members[index]))
+        section_masses.append(SectionMass(bounds[index], bounds[index + 1], row.solid, section_point.estimate_kg, section_point.mass_kg[0], itemised, row.complete_mass_kg))
+        if row.complete_mass_kg is None:
+            continue
+        weight, centroid, inertia = combine_inertia([((point.mass_kg[0] + point.mass_kg[1]) / 2.0, point.position, point.inertia_per_kg) for point in members[index]])
+        replaced[id(members[index][0])] = MassPoint(
+            f"section {index + 1} complete ({bounds[index] * 1000:.0f}-{bounds[index + 1] * 1000:.0f} mm)", "structure", centroid,
+            (row.complete_mass_kg, row.complete_mass_kg), False, weight, per_unit(inertia, weight))
+        replaced.update({id(point): None for point in members[index][1:]})
+    kept = [replaced.get(id(point), point) for point in points]
+    return [point for point in kept if point is not None], tuple(section_masses)
+
+
+def preset_checks(airframe: Airframe) -> list[str]:
+    """The fuselage against its preset's limits (data/specs.json presets); none without a preset or limits."""
+    preset = airframe.preset
+    if preset is None or preset.limits is None:
+        return []
+    limits, section = preset.limits, airframe.fuselage.section
+    problems = []
+    checks = [("inner width", section.width_m - 2.0 * section.wall_radial_m, limits.inner_diameter_m),
+              ("inner height", section.height_m - 2.0 * section.wall_radial_m, limits.inner_diameter_m),
+              ("wall", section.wall_radial_m, limits.wall_radial_m)]
+    bounds = [0.0, *airframe.sections.cuts_m, airframe.fuselage.length_m]
+    checks += [(f"section {index + 1} length", x1 - x0, limits.section_length_m) for index, (x0, x1) in enumerate(zip(bounds, bounds[1:]))]
+    for label, value, (low, high) in checks:
+        if not low - 1e-9 <= value <= high + 1e-9:
+            problems.append(f"{label} {value * 1000:.2f} mm outside the {preset.name} limits {low * 1000:.2f}-{high * 1000:.2f} mm")
+    return problems
 
 
 def volume_inertia(volume: Volume, body: Body, wall_m: float) -> Inertia:
@@ -566,7 +694,7 @@ def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[
     if propulsion is None:
         return ()
     bell_len = propulsion.bell_length_m
-    placements = []  # (name, position, prop_side, pod_stations, spin, thrust_dir)
+    placements = []  # (name, position, prop_side, pod_stations, spin, thrust_dir, mount_x)
     for mount_index, mount in enumerate(propulsion.mounts):
         if mount.on == "surface":
             surface_set = next(item for item in surfaces if item.name == mount.surface)
@@ -575,10 +703,13 @@ def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[
                                                             for axis, (r, d) in enumerate(zip(panel.attach_le, panel.span_dir))))
                 for panel in surface_set.panels
             ]
+            mount_x = surface_set.definition.x_root_le_m
         elif mount.on == "nose":
             positions = [("nose", (-bell_len / 2.0, 0.0, 0.0))]
+            mount_x = 0.0
         else:
             positions = [("tail", (airframe.fuselage.length_m + bell_len / 2.0, 0.0, 0.0))]
+            mount_x = airframe.fuselage.length_m
         prop_side = -1.0 if mount.direction == "tractor" else 1.0  # tractor prop ahead of the motor (towards the nose)
         tilt = math.radians(mount.thrust_axis_tilt_deg)
         thrust_dir = (-math.cos(tilt), 0.0, math.sin(tilt))
@@ -593,15 +724,15 @@ def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[
                 curve = sample_pointed_profile(mount.pod.profile, mount.pod.curve_length_m, pod_radius, POD_PROFILE_SAMPLES)
                 stations += [(flat_end - prop_side * (mount.pod.curve_length_m - x), r) for x, r in curve[:-1]]
                 pod_stations = tuple(sorted(stations))
-            placements.append((f"motor {mount_index + 1} {name}", position, prop_side, pod_stations, spin, thrust_dir))
+            placements.append((f"motor {mount_index + 1} {name}", position, prop_side, pod_stations, spin, thrust_dir, mount_x))
     return tuple(
         MotorPlacement(
             name=name, position=position, thrust_dir=thrust_dir,
             prop_center=tuple(p - prop_side * (bell_len / 2.0 + PROP_SHAFT_LEN_M) * t for p, t in zip(position, thrust_dir)),
             prop_radius_m=propulsion.prop_diameter_m / 2.0, bell_diameter_m=propulsion.bell_diameter_m,
-            bell_length_m=bell_len, pod_stations=pod_stations, spin=spin,
+            bell_length_m=bell_len, pod_stations=pod_stations, spin=spin, mount_x_m=mount_x,
         )
-        for name, position, prop_side, pod_stations, spin, thrust_dir in placements
+        for name, position, prop_side, pod_stations, spin, thrust_dir, mount_x in placements
     )
 
 
@@ -703,14 +834,17 @@ def part_checks(airframe: Airframe, body: Body) -> list[str]:
 
 def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirframe, list[str]]:
     """Returns the resolved model and a list of layout problems (volumes outside the body or overlapping, parts not
-    fitting their volume)."""
+    fitting their volume, the fuselage outside its preset's limits)."""
     density = parts_data["material"][airframe.print.material]["density_kg_m3"]
     body = build_body(airframe)
     surfaces = tuple(build_surface(surface, body) for surface in airframe.surfaces)
     motors = build_motors(airframe, surfaces)
 
     points = structure_mass_points(airframe, body, density)
-    points += [surface_mass_point(surface_set, airframe.print.surface_bulk_density_kg_m3) for surface_set in surfaces]
+    reinforcement = airframe.fuselage.reinforcement
+    if reinforcement is not None:
+        points += reinforcement_mass_points(reinforcement, airframe.sections.cuts_m, parts_data["material"][reinforcement.pattern.material]["density_kg_m3"])
+    points += [surface_mass_point(surface_set, airframe.print.bulk_density_kg_m3) for surface_set in surfaces]
     wall = airframe.fuselage.section.wall_radial_m
     points += [
         MassPoint(f"volume {volume.name}", "volume", (volume.x_m, volume.y_m, volume.z_m), volume.mass_kg, False, None, volume_inertia(volume, body, wall))
@@ -722,8 +856,10 @@ def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirf
     ]
     for motor in motors:
         bell = cylinder_inertia(motor.bell_diameter_m / 2.0, motor.bell_length_m, "x")
-        points.append(MassPoint(motor.name, "motor", motor.position, (airframe.propulsion.motor_mass_kg,) * 2, False, None, bell))
-        points.append(MassPoint(f"prop {motor.name}", "prop", motor.prop_center, (airframe.propulsion.prop_mass_kg,) * 2, False, None, rotor_inertia(motor.prop_radius_m)))
+        points.append(MassPoint(motor.name, "motor", motor.position, (airframe.propulsion.motor_mass_kg,) * 2, False, None, bell, motor.mount_x_m))
+        points.append(MassPoint(f"prop {motor.name}", "prop", motor.prop_center, (airframe.propulsion.prop_mass_kg,) * 2, False, None, rotor_inertia(motor.prop_radius_m),
+                                motor.mount_x_m))
+    points, section_masses = apply_complete_masses(airframe, body, points)
     points = tuple(points)
 
     ranged = [index for index, point in enumerate(points) if point.mass_kg[0] != point.mass_kg[1]]
@@ -736,10 +872,10 @@ def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirf
         cg_xs.append(center_of_mass(points, masses)[0])
 
     resolved = ResolvedAirframe(
-        airframe=airframe, body=body, surfaces=surfaces, motors=motors, controls=build_controls(surfaces), mass_points=points,
+        airframe=airframe, body=body, surfaces=surfaces, motors=motors, controls=build_controls(surfaces), mass_points=points, sections=section_masses,
         mass_kg=(sum(point.mass_kg[0] for point in points), sum(point.mass_kg[1] for point in points)),
         cg_m=center_of_mass(points, nominal), cg_x_range_m=(min(cg_xs), max(cg_xs)),
         inertia_kg_m2=combine_inertia([(mass, point.position, point.inertia_per_kg) for mass, point in zip(nominal, points)])[2],
         reference=build_reference(surfaces, body), wires=build_wires(airframe, motors),
     )
-    return resolved, volume_checks(airframe, body) + part_checks(airframe, body)
+    return resolved, volume_checks(airframe, body) + part_checks(airframe, body) + preset_checks(airframe)

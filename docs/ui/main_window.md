@@ -29,6 +29,7 @@ GUIBuilderWindow [fill]
         ConfigurationView
         AeroAnalysisView
         VLMView
+        SITLView
         CADView
         PartEditorView
 
@@ -39,8 +40,9 @@ GUIBuilderWindow [fill]
 
 ```text
 Startup
-    - window title = "Builder V3"
-    - default geometry = 1800x980
+    - window title = "quadrocketbuilder - <project> (<aircraft name>)"
+    - default geometry = 1600x980
+    - opens the project given on the command line, default aircraft/m62v2
     - default visible view = Configuration
     - F5 triggers heavy recompute in most views
     - F5 reruns the current VLM sweep while VLM view is active
@@ -53,9 +55,11 @@ MenuBar [docked:top]
 
     * FileMenu [ui:dropdown, arrange:column]
         - Load
-            on:click -> open file picker, load JSON
+            on:click -> pick a project directory (starts in aircraft/), load it
         - Save
-            on:click -> open file picker, save JSON
+            on:click -> write the project's aircraft.json
+        - Save As
+            on:click -> ask a new project name, copy the whole project to aircraft/<name>/, save there, continue there
         - Exit
             on:click -> close application
 ```
@@ -63,20 +67,20 @@ MenuBar [docked:top]
 ### Load / Save behavior
 
 ```text
-Save payload
-    assembly_name
-    config
-    analysis
-    analysis excludes the expanded assembly field
+Project = aircraft/<project>/ with aircraft.json (the airframe/2 definition), inav/, sitl/, jsbsim/, logs/, cad/
 
-Load behavior
-    If JSON contains:
-        - parts                  -> treat file as direct config
-        - assembly_name/config   -> use config payload
-        - top-level assembly map -> use first key
+Load
+    - a directory without aircraft.json -> error dialog, nothing changes
+    - aircraft.json not airframe/2 -> error dialog, nothing changes
+    - otherwise everything is recomputed from the definition
 
-    analysis from file is ignored after load.
-    The app regenerates analysis from config immediately.
+Save
+    - writes the definition only; nothing computed is saved
+
+Save As
+    - a name that is not a plain directory name, or an existing project -> error dialog, nothing changes
+    - cancel -> nothing changes
+    - the old project stays as it was last saved
 ```
 
 ## Central View Host
@@ -95,6 +99,7 @@ MainViewHost [fill, switchable]
 Configuration  -> configuration_view.md
 Aero Analysis  -> aero_analysis_view.md
 VLM            -> vlm_view.md
+SITL           -> sitl_view.md
 CAD            -> cad_view.md
 Part Editor    -> part_editor_view.md
 ```
@@ -107,6 +112,7 @@ BottomBar [docked:bottom, arrange:row]
     - Configuration
     - Aero Analysis
     - VLM
+    - SITL
     - CAD
     - Part Editor
 ```
@@ -122,6 +128,10 @@ Aero Analysis
 
 VLM
     - raises the VLM sweep view
+
+SITL
+    - refreshes the scenario and INAV config lists
+    - raises the SITL simulation view
 
 CAD
     - raises the CAD view

@@ -6,7 +6,9 @@ This directory is the plane-first tube-aircraft design tool.
 
 Primary files:
 - `guibuilder.py`: Tk window and widget wiring
-- `libs/airframe.py`: airframe/2 schema loader and validator (the saved aircraft definition)
+- `libs/airframe.py`: airframe/2 schema loader and validator (the saved aircraft definition) and size preset validation
+- `libs/project.py`: aircraft project layout (`aircraft/<project>/`), open and copy
+- `libs/presets.py`: size presets (`data/specs.json` presets) applied to, compared with and saved from a definition
 - `libs/geometry.py`: `resolve_airframe`: shared geometry, mass points, CG, checks; every consumer reads it
 - `libs/aero.py`: aero (lifting-line wings + AeroBuildup bodies), Barrowman cross-check, VLM sweep
 - `libs/report.py`: plain-text report shared by the GUI and `analyze_airframe.py`
@@ -17,6 +19,7 @@ Primary files:
 - `libs/views/configuration_view.py`: configuration main-view layout and definition editors
 - `libs/views/aero_analysis_view.py`: Aero Analysis main-view layout and NeuralFoil airfoil comparison
 - `libs/views/vlm_view.py`: VLM main-view layout and selectors
+- `libs/views/sitl_view.py`: SITL main-view: runs `sim_inav.py` or `sim_script.py`, streams its output, live flight-log plot
 - `libs/views/cad_view.py`: CAD main-view with STEP/STL export controls
 - `libs/views/part_editor_view.py`: part-editor main-view mount
 - `libs/pointed_shapes.py`: pointed-profile geometry helpers
@@ -27,11 +30,14 @@ Primary files:
 - `libs/jsbsim.py`: JSBSim aircraft export (AeroBuildup aero tables, control surfaces) and INAV mixer profiles and servo mix
 - `libs/propulsion.py`: motor + prop model on motorlib, wiring resistance from the design, throttle as ESC duty
 - `sim_inav.py`: flies the JSBSim export in INAV SITL on `inav_development/inav-jsbsim-bench`
+- `sim_script.py`: flies the JSBSim export with a project's controller script, lockstep in simulated time
+- `libs/controller.py`: `Controller` script API: simulated SPI IMU, baro, mag, GPS, pitot, rangefinder in raw hardware units; ESC/servo pulses in us
+- `libs/simrun.py`: shared by both runners: start conditions, vehicle build, ground rule, electrical model, plots
 - `airfoil_analysis_example.py`: simple non-GUI example of the airfoil comparison
-- `aircraft/*.json`: airframe/2 aircraft definitions
+- `aircraft/<project>/`: one aircraft project: `aircraft.json` (airframe/2 definition), `inav/` (real INAV CLI diffs), `sitl/` (pinned SITL.elf, eeprom.bin, sitl.log), `jsbsim/` (export), `logs/` (SITL and script flight logs and plots), `cad/` (exports), `controllers/` (flight controller scripts)
 - `data/parts.json`: part library data
 - `data/airfoils.json`: imported airfoil coordinates
-- `data/specs.json`: optional standards catalog
+- `data/specs.json`: size presets (M62, M75), fasteners, openings, wiring
 
 ## Rules
 
@@ -46,8 +52,8 @@ Primary files:
 
 ## Save / Load Contract
 
-- Save writes the airframe/2 definition only; nothing computed is saved.
-- Load accepts airframe/2 files only and recomputes everything.
+- Load opens a project directory (`aircraft/<project>/`); its `aircraft.json` must be airframe/2; everything is recomputed.
+- Save writes the project's `aircraft.json` (the definition only; nothing computed). Save As copies the whole project under a new name, then saves there.
 
 ## Current Caveats
 
@@ -64,7 +70,7 @@ Primary files:
 ## Remember
 
 - When adding editable definition fields:
-  - add them to the schema in `libs/airframe.py` and to `aircraft/*.json`
+  - add them to the schema in `libs/airframe.py` and to `aircraft/*/aircraft.json`
   - document them in `PLAN.md` section 1
   - expose them in UI if intended
   - update `docs/ui/ui_layout.md`

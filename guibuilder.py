@@ -1,9 +1,10 @@
 """
 Usage:
 python guibuilder.py
-python guibuilder.py aircraft/quadlancer62.json
+python guibuilder.py aircraft/quadlancer62
 
-Tk front end for plane-first airframes (airframe/2 files, see PLAN.md): edit the aircraft definition and see
+Tk front end for plane-first airframes (aircraft projects, see libs/project.py; airframe/2 build files, see PLAN.md):
+edit the aircraft definition and see
 the drawing, mass/CG, aerodynamics and stability update. Geometry and mass update immediately; aero runs in
 the background and replaces the summary when it finishes.
 """
@@ -17,20 +18,21 @@ import threading
 import traceback
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, ttk
+from tkinter import filedialog, messagebox, simpledialog, ttk
 
 from libs.aero import OperatingPointError, analyze_aero, build_asb_airplane
 from libs.airframe import PARTS_PATH, SCHEMA, AirframeError, parse_airframe
 from libs.geometry import resolve_airframe
+from libs.project import BUILD_FILE, PROJECTS_DIR, Project, ProjectError, copy_project, open_project
 from libs.report import build_report_text
 from libs.views.aero_analysis_view import AeroAnalysisMainView
 from libs.views.cad_view import CADMainView
 from libs.views.configuration_view import ConfigurationMainView
 from libs.views.part_editor_view import PartEditorMainView
+from libs.views.sitl_view import SITLMainView
 from libs.views.vlm_view import VLMMainView
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-DEFAULT_AIRFRAME_PATH = SCRIPT_DIR / "aircraft" / "m62v2.json"
+DEFAULT_PROJECT = PROJECTS_DIR / "m62v2"
 VIEW_OPTIONS = ["Longitudinal", "Front"]
 UI_BG = "#000000"
 UI_PANEL = "#031a03"
@@ -48,7 +50,7 @@ def load_parts_data() -> dict:
 
 
 class BuilderApp:
-    def __init__(self, root: tk.Tk, airframe_path: Path) -> None:
+    def __init__(self, root: tk.Tk, project: Project) -> None:
         self.root = root
         self.root.geometry("1600x980")
         self.root.configure(background=UI_BG)
@@ -62,8 +64,8 @@ class BuilderApp:
         self.ui_draw = UI_DRAW
         self.view_options = VIEW_OPTIONS
         self.parts_data = load_parts_data()
-        self.airframe_path = airframe_path
-        with open(airframe_path, "r") as file:
+        self.project = project
+        with open(project.build_path, "r") as file:
             self.definition = json.load(file)
         self.resolved = None
         self.problems: list[str] = []
@@ -85,12 +87,14 @@ class BuilderApp:
         self.configuration_view = None
         self.airfoil_view = None
         self.vlm_view = None
+        self.sitl_view = None
         self.cad_view = None
         self.part_editor_view = None
         self.part_editor_panel = None
         self.configuration_main_view = None
         self.airfoil_main_view = None  # created on first show, with the airframe's airfoils selected
         self.vlm_main_view = None
+        self.sitl_main_view = None
         self.cad_main_view = None
         self.main_view_host = None
         self.part_editor_main_view = None
@@ -107,13 +111,13 @@ class BuilderApp:
         self.configuration_main_view.rebuild_editors()
 
     def set_title(self) -> None:
-        self.root.title(f"quadrocketbuilder - {self.airframe_path.name}")
+        self.root.title(f"quadrocketbuilder - {self.project.name} ({self.definition['name']})")
 
     def recompute(self, run_aero: bool = True) -> None:
         """Validate and resolve the definition now; aero follows in a background thread unless run_aero is False."""
         self.aero_generation += 1
         try:
-            airframe = parse_airframe(self.definition, self.parts_data, path=self.airframe_path.name)
+            airframe = parse_airframe(self.definition, self.parts_data, path=f"{self.project.name}/{BUILD_FILE}")
             resolved, problems = resolve_airframe(airframe, self.parts_data)
         except AirframeError as error:
             self.recompute_status_var.set("Definition error")
@@ -158,6 +162,7 @@ class BuilderApp:
 
     def shutdown(self) -> None:
         self.root.after_cancel(self.poll_after_id)
+        self.sitl_main_view.shutdown()
         self.root.destroy()
 
     def write_summary(self, text: str) -> None:
@@ -302,9 +307,9 @@ class BuilderApp:
             activeforeground=UI_ACCENT,
             borderwidth=1,
         )
-        file_menu.add_command(label="Load", command=self.load_json)
-        file_menu.add_command(label="Save", command=self.save_json)
-        file_menu.add_command(label="Save As", command=self.save_json_as)
+        file_menu.add_command(label="Load", command=self.load_project)
+        file_menu.add_command(label="Save", command=self.save_project)
+        file_menu.add_command(label="Save As", command=self.save_project_as)
         file_menu.add_separator()
         file_menu.add_command(label="Exit", command=self.shutdown)
         menu_bar.add_cascade(label="File", menu=file_menu)
@@ -323,6 +328,7 @@ class BuilderApp:
 
         self.configuration_main_view = ConfigurationMainView(self, main_view_host)
         self.vlm_main_view = VLMMainView(self, main_view_host)
+        self.sitl_main_view = SITLMainView(self, main_view_host)
         self.cad_main_view = CADMainView(self, main_view_host)
         self.part_editor_main_view = PartEditorMainView(self, main_view_host)
 
@@ -331,6 +337,7 @@ class BuilderApp:
         ttk.Button(bottom_bar, text="Configuration", command=lambda: self.show_main_view("Configuration")).pack(side="left")
         ttk.Button(bottom_bar, text="Aero Analysis", command=lambda: self.show_main_view("Aero Analysis")).pack(side="left", padx=(8, 0))
         ttk.Button(bottom_bar, text="VLM", command=lambda: self.show_main_view("VLM")).pack(side="left", padx=(8, 0))
+        ttk.Button(bottom_bar, text="SITL", command=lambda: self.show_main_view("SITL")).pack(side="left", padx=(8, 0))
         ttk.Button(bottom_bar, text="CAD", command=lambda: self.show_main_view("CAD")).pack(side="left", padx=(8, 0))
         ttk.Button(bottom_bar, text="Part Editor", command=lambda: self.show_main_view("Part Editor")).pack(side="left", padx=(8, 0))
         self.show_main_view("Configuration")
@@ -345,6 +352,10 @@ class BuilderApp:
         if view_name == "VLM":
             self.vlm_view.tkraise()
             return
+        if view_name == "SITL":
+            self.sitl_main_view.refresh()
+            self.sitl_view.tkraise()
+            return
         if view_name == "CAD":
             self.cad_view.tkraise()
             return
@@ -354,53 +365,57 @@ class BuilderApp:
             return
         self.configuration_view.tkraise()
 
-    def write_definition(self, path: Path) -> None:
-        with open(path, "w") as file:
+    def save_project(self) -> None:
+        with open(self.project.build_path, "w") as file:
             json.dump(self.definition, file, indent=4)
-        self.airframe_path = path
         self.set_title()
 
-    def save_json(self) -> None:
-        self.write_definition(self.airframe_path)
+    def save_project_as(self) -> None:
+        """Copy the whole project under a new name, then save the build file there and work on the copy."""
+        name = simpledialog.askstring("Save Project As", "New project name:", parent=self.root)
+        if not name:
+            return
+        if Path(name).name != name:
+            messagebox.showerror("Save Project As", f"'{name}' is not a plain directory name.", parent=self.root)
+            return
+        try:
+            project = copy_project(self.project, PROJECTS_DIR / name)
+        except ProjectError as error:
+            messagebox.showerror("Save Project As", str(error), parent=self.root)
+            return
+        self.project = project
+        self.save_project()
+        self.sitl_main_view.refresh()
 
-    def save_json_as(self) -> None:
-        path = filedialog.asksaveasfilename(
-            parent=self.root,
-            title="Save Airframe",
-            initialdir=str(self.airframe_path.parent),
-            defaultextension=".json",
-            filetypes=[("JSON", "*.json")],
-        )
-        if path:
-            self.write_definition(Path(path))
-
-    def load_json(self) -> None:
-        path = filedialog.askopenfilename(
-            parent=self.root,
-            title="Load Airframe",
-            initialdir=str(self.airframe_path.parent),
-            filetypes=[("JSON", "*.json")],
-        )
+    def load_project(self) -> None:
+        path = filedialog.askdirectory(parent=self.root, title="Load Project", initialdir=str(PROJECTS_DIR), mustexist=True)
         if not path:
             return
-        with open(path, "r") as file:
+        try:
+            project = open_project(Path(path))
+        except ProjectError as error:
+            messagebox.showerror("Load Project", str(error), parent=self.root)
+            return
+        with open(project.build_path, "r") as file:
             data = json.load(file)
         if data.get("schema") != SCHEMA:
-            messagebox.showerror("Load Airframe", f"{Path(path).name} is not an {SCHEMA} file (old module-stack configs are not supported).", parent=self.root)
+            messagebox.showerror("Load Project", f"{project.build_path} is not an {SCHEMA} file (old module-stack configs are not supported).", parent=self.root)
             return
         self.definition = data
-        self.airframe_path = Path(path)
+        self.project = project
         self.set_title()
         self.recompute()
         self.configuration_main_view.rebuild_editors()
+        self.sitl_main_view.refresh()
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plane-first airframe builder")
-    parser.add_argument("airframe", type=Path, nargs="?", default=DEFAULT_AIRFRAME_PATH, help="airframe/2 JSON file")
+    parser.add_argument("project", type=Path, nargs="?", default=DEFAULT_PROJECT, help="aircraft project directory (aircraft/<name>)")
     args = parser.parse_args()
+    project = open_project(args.project)
     root = tk.Tk()
-    BuilderApp(root, args.airframe)
+    BuilderApp(root, project)
     root.mainloop()
 
 

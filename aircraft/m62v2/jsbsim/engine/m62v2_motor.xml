@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!-- quadrocketbuilder: DYS X2807-1300 (1300 KV), APC E 7x5, 6S: motorlib's full-throttle static point (16638 RPM,
+     24.9 A) at 22.2 V nominal; resistance = wiring 293.3 mOhm per motor
+     (see libs/propulsion.py) + loaded winding; maxvolts = nominal pack voltage. -->
+<brushless_dc_motor name="DYS X2807-1300 (1300 KV)">
+  <velocityconstant> 1300.0 </velocityconstant>
+  <coilresistance> 0.37779 </coilresistance>
+  <noloadcurrent> 1.3050 </noloadcurrent>
+  <maxvolts> 22.200 </maxvolts>
+</brushless_dc_motor>

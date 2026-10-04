@@ -40,11 +40,25 @@ def build_report_text(resolved: ResolvedAirframe, aero: AeroResult, problems: li
     if any(not point.computed for point in estimated):
         given_g = sum(point.mass_kg[0] for point in estimated) * 1000.0
         estimate_g = sum(point.estimate_kg for point in estimated) * 1000.0
-        lines.append(f"  Printed parts    : {given_g:.1f} g as given, {estimate_g:.1f} g estimated (sections: shell wall x material density;")
-        lines.append("                     surfaces: solid airfoil volume x print.surface_bulk_density_kg_m3)")
+        lines.append(f"  Printed parts    : {given_g:.1f} g as given, {estimate_g:.1f} g estimated (hollow sections: shell wall x material density;")
+        lines.append("                     solid sections: less their volumes, and surfaces: solid airfoil volume, x print.bulk_density_kg_m3)")
+    lines.append("  Sections         : empty as used (estimate), complete = everything attached in it, itemised or weighed")
+    for index, section in enumerate(resolved.sections):
+        estimate = "-" if section.empty_estimate_kg is None else f"{section.empty_estimate_kg * 1000:.1f}"
+        low, high = section.complete_itemised_kg
+        itemised = f"{low * 1000:.1f}" if low == high else f"{low * 1000:.1f}-{high * 1000:.1f}"
+        complete = f"itemised {itemised} g" if section.complete_kg is None else f"weighed {section.complete_kg * 1000:.1f} g (itemised {itemised} g)"
+        lines.append(f"    S{index + 1} {section.x0_m * 1000:4.0f}-{section.x1_m * 1000:4.0f} mm {'solid ' if section.solid else 'hollow'}  "
+                     f"empty {section.empty_kg * 1000:6.1f} g ({estimate} g)  complete {complete}")
     lines.append("")
     lines.append("Geometry")
-    lines.append(f"  Fuselage         : {airframe.fuselage.length_m:.3f} m, section {airframe.fuselage.section.width_m * 1000:.1f} x {airframe.fuselage.section.height_m * 1000:.1f} mm")
+    preset = "" if airframe.preset is None else f", preset {airframe.preset.name}"
+    lines.append(f"  Fuselage         : {airframe.fuselage.length_m:.3f} m, section {airframe.fuselage.section.width_m * 1000:.1f} x {airframe.fuselage.section.height_m * 1000:.1f} mm{preset}")
+    reinforcement = airframe.fuselage.reinforcement
+    if reinforcement is not None:
+        pattern = reinforcement.pattern
+        lines.append(f"  Rods             : {pattern.polar_n} x {pattern.diameter_m * 1000:.1f} mm {pattern.material} at r {pattern.radial_position_m * 1000:.2f} mm, "
+                     f"{reinforcement.from_x_m * 1000:.0f}-{reinforcement.to_x_m * 1000:.0f} mm, angles {', '.join(f'{angle:g}' for angle in pattern.angles_deg())} deg from the horizontal")
     lines.append(f"  Reference        : {reference.basis}  S {reference.area_m2:.4f} m^2  c {reference.chord_m:.4f} m  b {reference.span_m:.3f} m")
     for surface_set in resolved.surfaces:
         lines.append(f"  {surface_set.name:<16} : {surface_set.definition.layout} x{len(surface_set.panels)}, area {surface_set.planform_area_m2:.4f} m^2, MAC {surface_set.mac_m:.4f} m")

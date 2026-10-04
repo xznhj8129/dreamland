@@ -27,7 +27,8 @@
         - Surface estimate = solid airfoil volume x print.surface_bulk_density_kg_m3 (318.3: weighed 77 g NACA2408 105 x 400 mm segment, single wall 5 % infill; build_calculator test_area.py's 637 is against half the airfoil area). Estimate vs given: m62v2 main-wing 55.4 / 50 g, qrwing-7in 58.6 / 100 g, tailfin 13.5 / 4 g; quadlancer62 9in-puller 77.8 / 100 g; quadlancer62 new-wing 100 g was a placeholder, now estimated (302.8 g; total 1632 g).
         - Section shell estimate vs weighed: plain tube sections 1.03-1.21x; nose 2.9x; motor-wing section 2.6x (m62v2) and 3.5x (quadlancer62); m62v2 tail with fins 2.4x.
         - Open: m62v2 motor-wing section = section 4 (122 g, old quad-wingmount-v3 module) + qrwing-7in (4 x 25 g, old wing entries), counted as 222 g. Estimate for the one-piece print: tube 47.5 g + wings 58.6 g. Owner to confirm whether the printed piece weighs ~122 g or ~222 g.
-        - spar_rods has no rod length/start (assumes full fuselage length); real m62v2/quadlancer62 use 4 x 2.5 mm x 400 mm carbon rods; no carbon material entry.
+        - Rods are `fuselage.reinforcement` (from/to x; carbon_rod 1550 kg/m^3 is a typical published density, not weighed). Real m62v2/quadlancer62 use 4 x 2.5 mm x 400 mm carbon rods (M62 preset: 8); not entered in their files yet.
+        - data/specs.json M75 suspect, carried over as written: wall (78.2 - 76.2) / 2 = 1.0 mm against its 1.5 mm minimum (M62 had the same, fixed to 1.25); coupler inner diameter 59.5 is M62's; the old id_dist 2.375 disagreed with its radial_dist.
 
 - B. Geometry (found on the module model; verify on the plane-first model):
         - Incidence on unpaired vertical fins opposite in CAD vs ASB (V: bottom fin chord y -0.086 CAD, +0.087 ASB); drawing applies c*sin(aoa)*cos(roll) to all panels. Emit explicit chord/normal unit vectors per panel.
@@ -88,3 +89,5 @@
         - cadparams/ FreeCAD spreadsheets (AirframeParams, WingVars, ParamAirfoil, CanardsAirfoil). Fix Fuselage_Thickness expr: OD - ID gives 2x wall; libs/cad.py uses (OD - ID) / 2.
         - parttojson.FCMacro (FreeCAD tree to JSON). Hidden objects are silently dropped; link_document and link_path hold each other's values.
         - README class hierarchy (Complex / System / Subsystem / Module / Submodule / Component / Subcomponent) and 2R04B1 assembly tree.
+
+- SITL: fixed-wings cannot start on the ground (`--start ground`): the JSBSim export gives them structure contacts only; needs wheels or a launcher.

@@ -1,0 +1,11 @@
+# Generated SITL diff of a fixed-wing or glider: after the design's mixer, before the bench and battery lines.
+set mag_hardware = FAKE
+# switches: AUX1 arm, AUX2 angle, AUX3 nav althold
+aux 0 0 0 1700 2100
+aux 1 1 1 1300 2100
+aux 2 3 2 1300 2100
+# NAV ALTHOLD holds height with pitch and adds throttle stick above cruise: cruise and min at idle, so the stick sets the power
+# (cruise 1001: INAV divides by cruise - 1000 in ANGLE mode, and 1000 crashes the SITL)
+set nav_fw_allow_manual_thr_increase = ON
+set nav_fw_cruise_thr = 1001
+set nav_fw_min_thr = 1000

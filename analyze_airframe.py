@@ -1,11 +1,11 @@
 """
 Usage:
-python analyze_airframe.py aircraft/m62v2.json
-python analyze_airframe.py aircraft/m62v2.json --aoa 5 --airspeed 20
-python analyze_airframe.py aircraft/m62v2.json --sweep
-python analyze_airframe.py aircraft/m62v2.json --export-step out.step --step-mode fused --export-stl out.stl
+python analyze_airframe.py aircraft/m62v2
+python analyze_airframe.py aircraft/m62v2 --aoa 5 --airspeed 20
+python analyze_airframe.py aircraft/m62v2 --sweep
+python analyze_airframe.py aircraft/m62v2 --export-step out.step --step-mode fused --export-stl out.stl
 
-Plane-first analysis of an airframe/2 file: geometry, mass and CG (with ranges), volume checks,
+Plane-first analysis of an aircraft project's airframe/2 build file: geometry, mass and CG (with ranges), volume checks,
 aerodynamics and static stability, optional STEP/STL export. --aoa/--airspeed/--altitude override the file's operating
 point.
 """
@@ -19,12 +19,13 @@ from libs.aero import analyze_aero
 from libs.airframe import PARTS_PATH, load_airframe
 from libs.cad import export_step, export_stl
 from libs.geometry import resolve_airframe
+from libs.project import open_project
 from libs.report import build_report_text
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Analyze a plane-first airframe definition.")
-    parser.add_argument("airframe", type=Path, help="airframe/2 JSON file")
+    parser.add_argument("project", type=Path, help="aircraft project directory (aircraft/<name>)")
     parser.add_argument("--aoa", type=float, default=None, help="Override operating point AoA (deg)")
     parser.add_argument("--airspeed", type=float, default=None, help="Override operating point airspeed (m/s)")
     parser.add_argument("--altitude", type=float, default=None, help="Override operating point altitude (m)")
@@ -37,14 +38,15 @@ def main() -> None:
 
     with open(PARTS_PATH, "r") as file:
         parts_data = json.load(file)
-    airframe = load_airframe(args.airframe, parts_data)
+    project = open_project(args.project)
+    airframe = load_airframe(project.build_path, parts_data)
     overrides = {key: value for key, value in (("aoa_deg", args.aoa), ("airspeed_m_s", args.airspeed), ("altitude_m", args.altitude)) if value is not None}
     if overrides:
         airframe = dataclasses.replace(airframe, operating_point=dataclasses.replace(airframe.operating_point, **overrides))
 
     resolved, problems = resolve_airframe(airframe, parts_data)
     aero = analyze_aero(resolved)
-    print(f"Source: {args.airframe}")
+    print(f"Source: {project.build_path}")
     print(build_report_text(resolved, aero, problems, parts_data, args.sweep))
     if args.export_step is not None:
         written_mode = export_step(resolved, args.export_step, mode=args.step_mode, include_prop_discs=args.export_prop_discs)

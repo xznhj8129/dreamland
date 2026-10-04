@@ -1,3 +1,5 @@
+import numpy  # noqa: F401  (the BLAS libraries load with numpy and scipy, and a limit reaches only libraries already loaded)
+import scipy.linalg  # noqa: F401
 from threadpoolctl import threadpool_limits
 
 # numpy's OpenBLAS starts a thread per core for every matrix product. NeuralFoil's are small, so the threads mostly

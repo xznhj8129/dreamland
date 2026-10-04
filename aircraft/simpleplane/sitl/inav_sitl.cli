@@ -1,0 +1,32 @@
+# quadrocketbuilder export of ezplane: fixed-wing, motors on throttle; servo mix from the
+# control roles, signs from each control's computed moments.
+set throttle_idle = 8
+mixer_profile 1
+set platform_type = AIRPLANE
+mmix reset
+mmix 0 1.000 +0.000 +0.000 +0.000    # motor 1 tail, cw
+smix reset
+smix 0 0 1 100 0 -1    # S1 pitch: C4 elevators panel 1
+smix 1 1 1 100 0 -1    # S2 pitch: C5 elevators panel 2
+smix 2 2 2 -100 0 -1    # S3 yaw: C3 rudder panel 1
+smix 3 3 0 -100 0 -1    # S4 roll: C1 main-wing panel 1
+smix 4 4 0 100 0 -1    # S5 roll: C2 main-wing panel 2
+set mag_hardware = FAKE
+# switches: AUX1 arm, AUX2 angle, AUX3 nav althold
+aux 0 0 0 1700 2100
+aux 1 1 1 1300 2100
+aux 2 3 2 1300 2100
+# NAV ALTHOLD holds height with pitch and adds throttle stick above cruise: cruise and min at idle, so the stick sets the power
+# (cruise 1001: INAV divides by cruise - 1000 in ANGLE mode, and 1000 crashes the SITL)
+set nav_fw_allow_manual_thr_increase = ON
+set nav_fw_cruise_thr = 1001
+set nav_fw_min_thr = 1000
+set receiver_type = SIM (SITL)
+set baro_hardware = FAKE
+set pitot_hardware = NONE
+feature GPS
+set gps_provider = MSP
+set init_gyro_cal = OFF
+feature VBAT
+feature CURRENT_METER
+set battery_capacity = 2200

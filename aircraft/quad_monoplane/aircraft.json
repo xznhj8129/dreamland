@@ -1,0 +1,181 @@
+{
+    "schema": "airframe/2",
+    "powered": true,
+    "vtol": true,
+    "tailsitter": true,
+    "name": "62mm Quad Monoplane 9in",
+    "notes": "quadlancer62 with only 2 main wings (H layout) at 5 deg dihedral; wing set 2 x 90 g measured (quadlancer wing with servo).",
+    "preset": "M62",
+    "operating_point": {
+        "aoa_deg": 0.0,
+        "airspeed_m_s": 15.0,
+        "altitude_m": 0.0
+    },
+    "print": {
+        "material": "elegoo_pla_plus",
+        "bulk_density_kg_m3": 318.3,
+        "printer_bed_m": [
+            0.24,
+            0.24,
+            0.25
+        ]
+    },
+    "fuselage": {
+        "length_m": 0.789,
+        "section": {
+            "width_m": 0.062,
+            "height_m": 0.062,
+            "shape": 2.0,
+            "wall_radial_m": 0.00125
+        },
+        "nose": {
+            "profile": "elliptical",
+            "length_m": 0.06,
+            "params": {}
+        },
+        "tail": {
+            "profile": "elliptical",
+            "length_m": 0.02,
+            "params": {}
+        },
+        "joints": {
+            "type": "radial_screws",
+            "count": 8,
+            "screw": "M3",
+            "insertion_depth_m": 0.01,
+            "coupler_mass_kg": 0.02136
+        },
+        "channels": []
+    },
+    "surfaces": [
+        {
+            "name": "new-wing",
+            "x_root_le_m": 0.398,
+            "layout": "H",
+            "fin_position": "top",
+            "dihedral_deg": 5.0,
+            "root_offset": 0.1807,
+            "root": "body",
+            "span_m": 0.32,
+            "chord_root_m": 0.1,
+            "chord_tip_m": 0.09,
+            "sweep_le_deg": 1.0,
+            "incidence_deg": 2.0,
+            "airfoil": "naca2412",
+            "mass_kg": 0.18
+        },
+        {
+            "name": "9in-puller",
+            "x_root_le_m": 0.6805,
+            "layout": "X",
+            "fin_position": "top",
+            "dihedral_deg": 45.0,
+            "root_offset": 0.0,
+            "root": "body",
+            "span_m": 0.137,
+            "chord_root_m": 0.1,
+            "chord_tip_m": 0.08,
+            "sweep_le_deg": 8.0,
+            "incidence_deg": 0.0,
+            "airfoil": "naca0008",
+            "mass_kg": 0.1
+        }
+    ],
+    "propulsion": {
+        "motor": {
+            "manufacturer": "DYS",
+            "name": "X2812-900"
+        },
+        "prop": "APC MR 9x4.5",
+        "battery": "battery",
+        "esc": "ESC",
+        "mounts": [
+            {
+                "on": "surface",
+                "surface": "9in-puller",
+                "span_position_m": 0.137,
+                "x_offset_m": 0.0,
+                "direction": "tractor",
+                "spin": "out",
+                "thrust_axis_tilt_deg": 0.0,
+                "pod": {
+                    "diameter_m": 0.035,
+                    "flat_length_m": 0.02,
+                    "curve_length_m": 0.05,
+                    "profile": "elliptical"
+                }
+            }
+        ]
+    },
+    "volumes": [
+        {
+            "name": "battery",
+            "shape": "box",
+            "x_m": 0.16,
+            "size_m": [
+                0.11,
+                0.0355,
+                0.049
+            ]
+        },
+        {
+            "name": "ESC",
+            "shape": "bore",
+            "x_m": 0.584,
+            "length_m": 0.05
+        }
+    ],
+    "parts": [
+        {
+            "name": "battery",
+            "part": "battery:lipo-6S-2200",
+            "volume": "battery"
+        },
+        {
+            "name": "ESC",
+            "part": "esc:esc-4in1-60a",
+            "volume": "ESC",
+            "mass_kg": 0.0
+        }
+    ],
+    "sections": {
+        "cuts_m": [
+            0.06,
+            0.26,
+            0.387,
+            0.509,
+            0.659,
+            0.769
+        ],
+        "per_section": [
+            {
+                "solid": false,
+                "empty_mass_kg": 0.047
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.065
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.085
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.05
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.055
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.122
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.015
+            }
+        ]
+    }
+}

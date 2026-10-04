@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!-- quadrocketbuilder: Flashobby A2812 900KV, 6S, fitted to the bench rows: effective resistance
+     (motor + ESC + wiring) from duty 1 at full throttle, no-load current from the battery currents (worst misfit
+     4.7 %); maxvolts = pack voltage under load at full throttle. -->
+<brushless_dc_motor name="Flashobby A2812 900KV">
+  <velocityconstant> 900.0 </velocityconstant>
+  <coilresistance> 0.24040 </coilresistance>
+  <noloadcurrent> 0.0000 </noloadcurrent>
+  <maxvolts> 24.920 </maxvolts>
+</brushless_dc_motor>

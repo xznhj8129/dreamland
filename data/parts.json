@@ -140,6 +140,9 @@
     "material": {
         "elegoo_pla_plus": {
             "density_kg_m3": 1300.0
+        },
+        "carbon_rod": {
+            "density_kg_m3": 1550.0
         }
     },
     "prop": {

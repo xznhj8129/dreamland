@@ -1,0 +1,36 @@
+# quadrocketbuilder export of 62mm Quadlancer 9in: INAV mixer profiles of the tailsitter, structured as the real m62v1
+# config that flew forward (Aug 2025): profile 1 hover (multirotor, tailsitter offset), profile 2 forward flight on
+# the motors (multirotor platform, nose-first mix). Motor outputs in INAV quad X order where it applies.
+set throttle_idle = 8
+set nav_mc_hover_thr = 1434    # predicted motor command 0.480 for 4.43 N per motor
+mixer_profile 1
+set platform_type = MULTIROTOR
+set tailsitter_orientation_offset = ON
+set motor_direction_inverted = OFF
+set mixer_control_profile_linking = ON
+mmix reset
+mmix 0 1.000 -1.000 +1.000 +1.000    # motor 1 9in-puller 1, ccw
+mmix 1 1.000 -1.000 -1.000 -1.000    # motor 1 9in-puller 3, cw
+mmix 2 1.000 +1.000 +1.000 -1.000    # motor 1 9in-puller 2, cw
+mmix 3 1.000 +1.000 -1.000 +1.000    # motor 1 9in-puller 4, ccw
+smix reset
+smix 0 0 2 100 0 -1    # S1 roll: C1 new-wing panel 1
+smix 1 1 2 -100 0 -1    # S2 roll: C4 new-wing panel 2
+smix 2 2 2 100 0 -1    # S3 roll: C2 new-wing panel 3
+smix 3 3 2 -100 0 -1    # S4 roll: C3 new-wing panel 4
+mixer_profile 2
+set platform_type = MULTIROTOR
+set tailsitter_orientation_offset = OFF
+set motor_direction_inverted = OFF
+set mixer_control_profile_linking = ON
+mmix reset
+mmix 0 1.000 -1.000 +1.000 -1.000    # motor 1 9in-puller 1, ccw
+mmix 1 1.000 +1.000 -1.000 -1.000    # motor 1 9in-puller 3, cw
+mmix 2 1.000 +1.000 +1.000 +1.000    # motor 1 9in-puller 2, cw
+mmix 3 1.000 -1.000 -1.000 +1.000    # motor 1 9in-puller 4, ccw
+smix reset
+smix 0 0 0 -100 0 -1    # S1 roll: C1 new-wing panel 1
+smix 1 1 0 100 0 -1    # S2 roll: C4 new-wing panel 2
+smix 2 2 0 -100 0 -1    # S3 roll: C2 new-wing panel 3
+smix 3 3 0 100 0 -1    # S4 roll: C3 new-wing panel 4
+mixer_profile 1

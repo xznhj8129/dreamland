@@ -1,0 +1,8 @@
+# What the bench's simulated hardware needs (inav-jsbsim-bench, MSP_SIMULATOR). Appended to every generated SITL diff.
+set receiver_type = SIM (SITL)
+set baro_hardware = FAKE
+set pitot_hardware = NONE
+feature GPS
+set gps_provider = MSP
+set init_gyro_cal = OFF
+set small_angle = 180    # air starts arm at whatever attitude they start in

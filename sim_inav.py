@@ -1,56 +1,61 @@
 """
 Usage:
-python sim_inav.py hover aircraft/m62v1.json --sitl ../inav_development/inav/build_SITL/bin/SITL.elf
-python sim_inav.py dash aircraft/m62v1.json --sitl <SITL.elf> --inav-config aircraft/inav/m62v1_2025-08-20.txt
+python sim_inav.py efficiency aircraft/m62v1
+python sim_inav.py efficiency aircraft/m62v1 --start ground      # take off and transition first
+python sim_inav.py top-speed aircraft/simpleplane
+python sim_inav.py controls aircraft/quadlancer62 --inav-config aircraft/quadlancer62/inav/<diff>.txt
+python sim_inav.py hover aircraft/m62v1 --sitl <SITL.elf>        # another INAV build than the project's pinned one
 
-Exports the airframe to JSBSim (libs/jsbsim.py) and flies it in INAV SITL on inav-jsbsim-bench (installed in the
-drone env). The INAV config is the export's generated hover profile, or a real CLI diff (--inav-config) with the
-real board's hardware and calibration lines removed (listed when run).
+Exports the aircraft project's airframe to JSBSim (libs/jsbsim.py, into the project's jsbsim/) and flies it in INAV
+SITL on inav-jsbsim-bench (installed in the drone env). The SITL runs the project's pinned sitl/SITL.elf, copied in
+from DEFAULT_SITL_PATH on the first run, with sitl/ as its workdir (eeprom.bin, sitl.log); the flight log and plots
+go to logs/. The flight log also carries what INAV reports (battery, altitude, GPS, navigation, modes) and the
+electrical model (battery power and current, each motor's voltage, current and rpm); INAV's battery and current
+meters are fed the modelled pack voltage (nominal) and current. The FC settings are generated from the design, or a
+real FC's CLI diff (--inav-config) with the real board's hardware and calibration lines removed (listed when run).
 
-hover: standing on its tail, arm in ANGLE, climb, then NAV POSHOLD (NAV ALTHOLD if the config has no POSHOLD) hover;
-       compares the hover motor command with the export's prediction. JSBSim pitch is +90 deg in hover, so tilt is
-       90 - pitch; INAV's roll/pitch are in the hover frame.
-cruise: tailsitter takeoff and cruise efficiency, flown like the VTOL plane it is: standing, arm, climb in ANGLE straight to
-       TAKEOFF_ALT_M, switch to the forward profile in ACRO, the script pilot pitches over and holds altitude; then level flight at descending motor
-       commands, each until the airspeed settles: speed, AoA, battery power, Wh/km, endurance and range. Battery power
-       uses the JSBSim motor's own constants (V = throttle position x pack voltage, I = (V - rpm/Kv) / R).
-dash:  full-throttle level dash in forward flight: airborne, level, from rest, in the forward mixer profile
-       (MIXER PROFILE 2) without ANGLE (ACRO, as flown). The script is the pilot: it holds altitude, wings level and heading with the
-       rate sticks, and runs until the airspeed stops rising.
-level: level-flight efficiency and slowest level speed, any powered airframe: starts in level flight at LEVEL_ALT_M and
-       --start-speed (a guess; default the operating airspeed). A fixed-wing flies INAV ANGLE + NAV ALTHOLD with the
-       sticks centred; a tailsitter its forward profile in ACRO with the script pilot holding altitude and heading. A
-       throttle loop holds each target airspeed, stepping down LEVEL_SPEED_STEP_M_S
-       until level flight cannot be held: speed, AoA, motor, battery power, Wh/km, best range and endurance.
-plane: fixed-wing or glider (hover, cruise and dash fly tailsitters): airborne at PLANE_ALT_M and the operating
-       airspeed, armed in ANGLE, sticks centred for PLANE_LEVEL_S, then a right roll, a pull up and right yaw on the
-       sticks in turn; each passes when the true attitude moves at least PLANE_RESPONSE_MIN_DEG the commanded way.
-       Prints the control-surface deflections, so the INAV servo mix is checked end to end.
+Scenarios, each on every aircraft that can physically fly it (scenario_reasons):
+hover:      VTOL. Standing on its tail, arm in ANGLE, climb, then NAV POSHOLD (NAV ALTHOLD if the FC settings have no
+            POSHOLD switch); compares the hover motor command with the export's prediction. JSBSim pitch is +90 deg in
+            hover, so tilt is 90 - pitch; INAV's roll/pitch are in the hover frame.
+efficiency: powered. Accelerates to the top speed, then a throttle loop holds each target airspeed from just under it
+            (or --sweep-from) down until level flight cannot be
+            held: speed, AoA, motor, battery power and current, Wh/km, slowest level speed, best range and endurance.
+            Battery power uses the JSBSim motor's own constants (V = throttle position x pack voltage, I = (V - rpm/Kv) / R).
+top-speed:  powered. Full throttle in level flight until the airspeed stops rising.
+controls:   any. Right roll, pull up and right yaw on the sticks in turn; each passes when the true attitude moves at
+            least CONTROLS_RESPONSE_MIN_DEG the commanded way. Prints the control-surface deflections, so the INAV servo
+            mix is checked end to end. Runs until done or the ground.
+glide:      any. Motors off from GLIDE_START_ALT_M; a pilot aims at airspeeds with pitch from fast to slow until the
+            ground: sink rate and glide ratio per step, the smallest sink rate and the best glide of the steady steps.
+The forward-flight scenarios start held in the air (--start air: level at START_ALT_M, a fixed-wing at its operating
+airspeed, a tailsitter from rest), or take off and transition first (--start ground, VTOL); controls holds the operating
+airspeed. --alt, --speed, --heading, --lat, --lon, --pitch, --roll, --wind-from and --wind-speed set the start (START_OPTIONS). Level flight is held by ForwardFlight, the only airframe-type-specific part:
+a fixed-wing flies INAV ANGLE + NAV ALTHOLD, a tailsitter its forward mixer profile in ACRO with the script pilot.
 """
 
 import argparse
-import csv
 import json
 import math
 import re
-from dataclasses import dataclass, field
+import shutil
+from dataclasses import dataclass
 from pathlib import Path
 
-import matplotlib
-import numpy as np
 from inavbench import Bench
-from inavbench.vehicles import Vehicle
 
 from libs.airframe import PARTS_PATH, load_airframe
 from libs.geometry import resolve_airframe
-from libs.jsbsim import INAV_THROTTLE_IDLE_PCT, export_jsbsim
+from libs.jsbsim import INAV_THROTTLE_IDLE_PCT, reuse_or_export
+from libs.project import Project, open_project
+from libs.simrun import (
+    FT, START_ALT_M, GroundHit, StartState, add_start_arguments, battery_power_w, build_vehicle,
+    electrical_columns, ground_hit_text, hit_ground, resolve_start, start_line, start_reasons, write_plots,
+)
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402  (after choosing the non-GUI backend)
-
-EXPORT_ROOT = Path("exports/jsbsim")
-FT = 0.3048
-KNOT_M_S = 0.514444
+REPO_DIR = Path(__file__).resolve().parent
+DEFAULT_SITL_PATH = REPO_DIR.parent / "inav_development" / "inav" / "build_SITL" / "bin" / "SITL.elf"
+SCENARIOS = ("hover", "efficiency", "top-speed", "controls", "glide")
 # Flying on the bench: RC, baro and GPS come in over MSP_SIMULATOR.
 SITL_SENSOR_LINES = (
     "set receiver_type = SIM (SITL)",
@@ -84,42 +89,44 @@ STAND_S = 2.0
 CLIMB_S = 2.5
 CLIMB_STICK_ABOVE_HOVER = 0.12  # throttle stick above the predicted hover stick for the climb
 ALTHOLD_STICK = 0.5  # stick centre: hold altitude
-STANCE_CLEARANCE_M = 0.0005
-HOVER_MIXER_PROFILE = 0  # INAV mixer profile 1
 FORWARD_MIXER_PROFILE = 1  # INAV mixer profile 2
-DASH_ALT_M = 100.0
-TAKEOFF_ALT_M = 60.0
+TAKEOFF_ALT_M = 60.0  # --start ground: the climb ends here, then the transition
+GLIDE_START_ALT_M = 1000.0  # glide starts in the air this high: the more height, the more speeds it measures
+GLIDE_SWEEP_FROM_FACTOR = 2.0  # the glide sweep's first target airspeed, times the operating airspeed
+GLIDE_SPEED_STEP_M_S = 2.0
+GLIDE_STEP_S = 8.0
+GLIDE_MEASURE_S = 3.0  # each step's sink rate and glide ratio are means over its last this many seconds
+GLIDE_STEADY_M_S = 0.5  # a step counts when its airspeed changed less than this over the measuring window (no zoom or dive)
+GLIDE_SPEED_GAIN_DEG_PER_M_S = 3.0  # the gliding pilot's pitch per m/s of airspeed above its target
 TAKEOFF_CLIMB_STICK_ABOVE_HOVER = 0.15
 TAKEOFF_MAX_S = 30.0
 CLIMB_STOP_S = 1.0  # hover throttle before the transition, so it does not carry the climb into the pitch-over
 TRANSITION_DONE_PITCH_DEG = 20.0
 TRANSITION_DONE_CLIMB_M_S = 1.0
-CRUISE_MOTOR_STEPS = (0.70, 0.60, 0.55, 0.52, 0.50, 0.48, 0.46, 0.44, 0.42, 0.40, 0.38)  # throttle targets, descending (mean motor runs lower: pitch control)
-CRUISE_STEP_MIN_S = 8.0
-CRUISE_STEP_MAX_S = 25.0
-CRUISE_STEADY_S = 3  # settled when airspeed changed less than CRUISE_STEADY_M_S over this many seconds
-CRUISE_STEADY_M_S = 0.2
-CRUISE_SINK_LIMIT_M_S = 0.5  # a step still sinking faster than this at its end cannot hold altitude: the sweep ends
-CRUISE_ALT_LOSS_LIMIT_M = 15.0  # or this far below the transition altitude (the script pilot sags ~1 m per slower step)
+TRANSITION_MOTOR = 0.70  # motor command the throttle blends to as the nose comes down in the transition
 USABLE_BATTERY_FRACTION = 0.8  # of the nominal pack energy (libs/propulsion.py)
 ATTITUDE_SETTLE_DEG = 3.0  # arm once INAV's roll/pitch agree with truth this closely after the profile switch
 ATTITUDE_SETTLE_MAX_S = 20.0
-DASH_START_SPEED_M_S = 0.0  # a held start at speed feeds INAV moving GPS with an IMU at rest: its multirotor attitude estimate drifts
-DASH_MAX_S = 60.0
-DASH_MIN_S = 15.0
-DASH_PLATEAU_S = 5  # stop once airspeed rose less than DASH_PLATEAU_M_S over this many seconds
-DASH_PLATEAU_M_S = 0.3
-LEVEL_ALT_M = 150.0
+TOP_SPEED_MAX_S = 60.0
+TOP_SPEED_MIN_S = 15.0
+TOP_SPEED_PLATEAU_S = 5  # stop once airspeed rose less than TOP_SPEED_PLATEAU_M_S over this many seconds
+TOP_SPEED_PLATEAU_M_S = 0.3
 LEVEL_SPEED_STEP_M_S = 2.0
 LEVEL_STEP_MIN_S = 8.0
 LEVEL_STEP_MAX_S = 30.0
 LEVEL_SPEED_TOLERANCE_M_S = 0.5  # a step is held once airspeed is this close to its target and the climb settled
+LEVEL_SINK_LIMIT_M_S = 0.5  # ... climbing or sinking slower than this
+LEVEL_STEADY_S = 3  # ... for this many seconds in a row
+# The sweep also ends when one step loses this much altitude. Per step, not from the sweep's start: the script pilot's
+# altitude hold is proportional, so it settles lower the more pitch a speed needs (2 m per degree of AltitudePilot gain).
+LEVEL_ALT_LOSS_LIMIT_M = 15.0
 LEVEL_THROTTLE_START = 0.5  # throttle stick the speed loop starts from
 LEVEL_THROTTLE_P_PER_M_S = 0.05
 LEVEL_THROTTLE_I_PER_M_S_S = 0.02
 LEVEL_THROTTLE_RAMP_PER_S = 1.0  # the throttle stick moves at most this much per second (0 to full in 1 s)
-GROUND_AIRBORNE_M = 2.0  # once higher than this (tailsitters start standing on the ground) ...
-GROUND_MIN_AGL_M = 0.5  # ... the run ends at or below this altitude above ground
+# The script pilot's pitch range. A tailsitter can hang on its thrust at any pitch, so nose-up goes nearly to vertical;
+# it stops short of 90 deg because the pilot steers by Euler roll and heading, which are undefined there.
+PILOT_PITCH_LIMITS_DEG = (-15.0, 80.0)
 PLANE_CONFIG_LINES = (
     "set mag_hardware = FAKE",
     "# switches: AUX1 arm, AUX2 angle, AUX3 nav althold",
@@ -132,24 +139,17 @@ PLANE_CONFIG_LINES = (
     "set nav_fw_cruise_thr = 1001",
     "set nav_fw_min_thr = 1000",
 )
-PLANE_ALT_M = 150.0
-PLANE_THROTTLE = 0.6  # throttle stick for powered planes in the plane test
-PLANE_LEVEL_S = 10.0
-PLANE_STEP_S = 3.0
-PLANE_RECOVER_S = 5.0
-PLANE_RESPONSE_MIN_DEG = 5.0
-PLANE_MIN_AGL_M = 30.0  # below this the test stops: the plane could not hold its height
+CONTROLS_LEVEL_S = 10.0
+CONTROLS_STEP_S = 3.0
+CONTROLS_RECOVER_S = 5.0
+CONTROLS_RESPONSE_MIN_DEG = 5.0
 # label, stick, stick deflection, attitude and the sign it should change by (RC pitch + is nose down)
-PLANE_STEPS = (("roll right", "roll", 0.5, "attitude/phi-deg", 1.0), ("pull up", "pitch", -0.5, "attitude/theta-deg", 1.0),
+CONTROL_STEPS = (("roll right", "roll", 0.5, "attitude/phi-deg", 1.0), ("pull up", "pitch", -0.5, "attitude/theta-deg", 1.0),
                ("yaw right", "yaw", 0.5, "attitude/psi-deg", 1.0))
 
 
-class GroundHit(Exception):
-    pass
-
-
 class FlightBench(Bench):
-    """The bench, ending the run when the aircraft comes down to GROUND_MIN_AGL_M after it has flown."""
+    """The bench, ending the run on the ground rule (libs.simrun.hit_ground)."""
     highest_agl_m = 0.0
 
     def run(self, seconds, until=None, check_every=0.05):
@@ -159,39 +159,80 @@ class FlightBench(Bench):
             nonlocal hit
             fdm = bench.plant.fdm
             self.highest_agl_m = max(self.highest_agl_m, fdm["position/h-agl-ft"] * FT)
-            hit = self.highest_agl_m > GROUND_AIRBORNE_M and fdm["position/h-agl-ft"] * FT <= GROUND_MIN_AGL_M
+            hit = hit_ground(fdm, self.highest_agl_m)
             return hit or (until is not None and until(bench))
 
         fired = super().run(seconds, until=stop, check_every=check_every)
         if hit:
-            fdm = self.plant.fdm
-            raise GroundHit(f"at {self.elapsed:.1f} s: airspeed {fdm['velocities/vt-fps'] * FT:.1f} m/s, descending {fdm['velocities/v-down-fps'] * FT:.1f} m/s, "
-                            f"pitch {fdm['attitude/theta-deg']:+.1f}, roll {fdm['attitude/phi-deg']:+.1f} deg")
+            raise GroundHit(ground_hit_text(self.elapsed, self.plant.fdm))
         return fired
 
 
 @dataclass
-class DashPilot:
+class AltitudePilot:
     """Script pilot on the rate sticks (ACRO): altitude via pitch, wings level, heading hold. Stick pitch + is nose
-    down, roll + right, yaw + nose right (RC conventions); JSBSim q is nose-up positive."""
+    down, roll + right, yaw + nose right (RC conventions); JSBSim q is nose-up positive. Yaw is a rate request from the
+    heading error alone: INAV's yaw rate loop does the damping, and a rate term of the pilot's own on top of it, through
+    the bench's loop delay, sustains a 5 Hz yaw oscillation once something kicks it (the transition does)."""
     target_alt_m: float
     target_heading_deg: float
     alt_gain_deg_per_m: float = 2.0
     climb_gain_deg_per_m_s: float = 2.0
-    pitch_limits_deg: tuple[float, float] = (-15.0, 25.0)
+    pitch_limits_deg: tuple[float, float] = PILOT_PITCH_LIMITS_DEG
     angle_gain_per_deg: float = 0.02
     rate_gain_per_deg_s: float = 0.002
-    log: list = field(default_factory=list)
+
+    def pitch_command_deg(self, fdm) -> float:
+        climb_m_s = -fdm["velocities/v-down-fps"] * FT
+        return self.alt_gain_deg_per_m * (self.target_alt_m - fdm["position/h-agl-ft"] * FT) - self.climb_gain_deg_per_m_s * climb_m_s
 
     def sticks(self, fdm) -> dict[str, float]:
-        climb_m_s = -fdm["velocities/v-down-fps"] * FT
-        pitch_cmd = self.alt_gain_deg_per_m * (self.target_alt_m - fdm["position/h-agl-ft"] * FT) - self.climb_gain_deg_per_m_s * climb_m_s
-        pitch_cmd = min(max(pitch_cmd, self.pitch_limits_deg[0]), self.pitch_limits_deg[1])
+        pitch_cmd = min(max(self.pitch_command_deg(fdm), self.pitch_limits_deg[0]), self.pitch_limits_deg[1])
         heading_error = (self.target_heading_deg - fdm["attitude/psi-deg"] + 180.0) % 360.0 - 180.0
         pitch = -(self.angle_gain_per_deg * (pitch_cmd - fdm["attitude/theta-deg"]) - self.rate_gain_per_deg_s * math.degrees(fdm["velocities/q-rad_sec"]))
         roll = self.angle_gain_per_deg * -fdm["attitude/phi-deg"] - self.rate_gain_per_deg_s * math.degrees(fdm["velocities/p-rad_sec"])
-        yaw = self.angle_gain_per_deg * heading_error - self.rate_gain_per_deg_s * math.degrees(fdm["velocities/r-rad_sec"])
+        yaw = self.angle_gain_per_deg * heading_error
         return {axis: min(max(value, -1.0), 1.0) for axis, value in (("pitch", pitch), ("roll", roll), ("yaw", yaw))}
+
+
+@dataclass
+class SpeedPilot(AltitudePilot):
+    """AltitudePilot that holds an airspeed with pitch instead of an altitude (gliding): nose up when fast, down when slow."""
+    target_speed_m_s: float = 0.0
+    speed_gain_deg_per_m_s: float = GLIDE_SPEED_GAIN_DEG_PER_M_S
+
+    def pitch_command_deg(self, fdm) -> float:
+        return self.speed_gain_deg_per_m_s * (fdm["velocities/vt-fps"] * FT - self.target_speed_m_s)
+
+
+def scenario_reasons(airframe) -> dict[str, str | None]:
+    """Each scenario: None when this airframe can fly it, otherwise why not (physics only)."""
+    return {
+        "hover": None if airframe.vtol else "needs a VTOL",
+        "efficiency": None if airframe.powered else "needs motors",
+        "top-speed": None if airframe.powered else "needs motors",
+        "controls": None,
+        "glide": None,
+    }
+
+
+def tests_for(airframe) -> list[str]:
+    """The scenarios this airframe can fly."""
+    return [scenario for scenario, reason in scenario_reasons(airframe).items() if reason is None]
+
+
+def flight_log_path(project: Project, scenario: str, start: str) -> Path:
+    """The bench's flight log (CSV) of a run; a forward-flight scenario started on the ground gets its own."""
+    return project.logs_dir / f"sim_inav_{scenario}{'_ground' if start == 'ground' and scenario != 'hover' else ''}.csv"
+
+
+def pinned_sitl(project: Project) -> Path:
+    """The project's SITL.elf, copied in from DEFAULT_SITL_PATH the first time."""
+    if not project.sitl_path.exists():
+        project.sitl_dir.mkdir(parents=True, exist_ok=True)
+        shutil.copy2(DEFAULT_SITL_PATH, project.sitl_path)
+        print(f"{project.name}: pinned SITL {DEFAULT_SITL_PATH} -> {project.sitl_path}")
+    return project.sitl_path
 
 
 def motor_fraction(us: int) -> float:
@@ -256,19 +297,29 @@ def hover_test(bench: Bench, export, motor_count: int, hold_s: float) -> None:
           f"({(mean / export.hover_motor_fraction - 1.0) * 100.0:+.1f} %)")
 
 
-def battery_power_w(fdm, export, motor_count: int) -> float:
-    """Battery power of all motors from the JSBSim motor's constants and pack voltage (lossless ESC)."""
-    motor = export.motor
-    total = 0.0
-    for index in range(motor_count):
-        volts = fdm[f"fcs/throttle-pos-norm[{index}]"] * export.pack_voltage_v
-        amps = max(0.0, (volts - fdm[f"propulsion/engine[{index}]/propeller-rpm"] / motor.kv_rpm_v) / motor.resistance_ohm)
-        total += volts * amps
-    return total
+def pack_state(export, motor_count: int):
+    """Bench battery feed: (pack voltage, pack current) for INAV's battery and current meters. The voltage is nominal
+    (no sag modelled); the current is the motors' battery power at that voltage."""
+    def state(bench) -> tuple[float, float]:
+        return export.pack_voltage_v, battery_power_w(bench.plant.fdm, export, motor_count) / export.pack_voltage_v
+    return state
+
+
+def battery_config_lines(export) -> list[str]:
+    """INAV CLI lines so its battery meters read the bench's pack feed (pack_state) and know the pack's capacity."""
+    return ["feature VBAT", "feature CURRENT_METER", f"set battery_capacity = {round(export.motor.pack_mah)}"]
+
+
+def electrical_log(export, motor_count: int):
+    """The electrical columns (libs.simrun.electrical_columns) as Bench log_extra."""
+    def columns(bench) -> dict[str, float]:
+        return electrical_columns(bench.plant.fdm, export, motor_count)
+    return columns
 
 
 @dataclass(frozen=True)
-class CruisePoint:
+class LevelPoint:
+    target_m_s: float
     motor: float
     airspeed_m_s: float
     aoa_deg: float
@@ -276,101 +327,6 @@ class CruisePoint:
     power_w: float
     altitude_error_m: float
     climb_m_s: float
-
-
-def cruise_test(bench: Bench, export, motor_count: int, battery_wh: float, motor_steps: tuple[float, ...]) -> None:
-    fdm = bench.plant.fdm
-    hover_stick = (export.hover_stick_us - 1000) / 1000.0
-    idle = INAV_THROTTLE_IDLE_PCT / 100.0
-    bench.release()  # stand on the tail contacts
-    bench.run(STAND_S)
-    bench.mode("ANGLE")
-    bench.arm()
-    start = bench.elapsed
-    bench.sticks(throttle=min(1.0, hover_stick + TAKEOFF_CLIMB_STICK_ABOVE_HOVER))
-    max_tilt = 0.0
-
-    def climbed(b: Bench) -> bool:
-        nonlocal max_tilt
-        max_tilt = max(max_tilt, 90.0 - b.truth()["pitch"])
-        return b.truth()["agl_m"] >= TAKEOFF_ALT_M
-
-    if not bench.run(TAKEOFF_MAX_S, until=climbed):
-        raise RuntimeError(f"takeoff did not reach {TAKEOFF_ALT_M} m in {TAKEOFF_MAX_S} s: agl {bench.truth()['agl_m']:.1f} m")
-    print(f"takeoff: {TAKEOFF_ALT_M:.0f} m in {bench.elapsed - start:.1f} s, max tilt {max_tilt:.1f} deg")
-    bench.sticks(throttle=hover_stick)
-    bench.run(CLIMB_STOP_S)
-
-    # transition: forward profile, ACRO; the pilot pitches over gently and holds this altitude while the throttle
-    # blends from hover to the first cruise step as the nose comes down (vertical thrust stays near the weight)
-    pilot = DashPilot(target_alt_m=bench.truth()["agl_m"], target_heading_deg=fdm["attitude/psi-deg"])
-    cruise_stick = (motor_steps[0] - idle) / (1.0 - idle)
-    bench.mode("ANGLE", on=False)
-    bench.mode("MIXER PROFILE 2")
-    start = bench.elapsed
-    lowest = highest = bench.truth()["agl_m"]
-    while True:
-        nose_down = min(max(1.0 - fdm["attitude/theta-deg"] / 90.0, 0.0), 1.0)
-        bench.sticks(throttle=hover_stick + (cruise_stick - hover_stick) * nose_down, **pilot.sticks(fdm))
-        bench.run(0.02)
-        altitude = bench.truth()["agl_m"]
-        lowest, highest = min(lowest, altitude), max(highest, altitude)
-        if (bench.mixer_profile == FORWARD_MIXER_PROFILE and abs(fdm["attitude/theta-deg"]) < TRANSITION_DONE_PITCH_DEG
-                and abs(bench.truth()["vd"]) < TRANSITION_DONE_CLIMB_M_S):
-            break
-        if bench.elapsed - start > TAKEOFF_MAX_S:
-            raise RuntimeError(f"transition did not settle: pitch {fdm['attitude/theta-deg']:.1f} deg, climb {-bench.truth()['vd']:+.1f} m/s, profile {bench.mixer_profile}")
-    print(f"transition: level and settled after {bench.elapsed - start:.1f} s at {fdm['velocities/vt-fps'] * FT:.1f} m/s; "
-          f"altitude {lowest - pilot.target_alt_m:+.1f} / {highest - pilot.target_alt_m:+.1f} m around {pilot.target_alt_m:.1f} m")
-
-    cruise_sweep(bench, export, motor_count, battery_wh, motor_steps, pilot)
-
-
-def cruise_sweep(bench: Bench, export, motor_count: int, battery_wh: float, motor_steps: tuple[float, ...], pilot: DashPilot) -> None:
-    """Level flight at each motor command in turn, the pilot holding altitude and heading; prints the table and the
-    best range and endurance of the steps."""
-    fdm = bench.plant.fdm
-    idle = INAV_THROTTLE_IDLE_PCT / 100.0
-    points = []
-    print(f"\n{'motor':>6} {'airspeed':>9} {'AoA':>6} {'pitch':>6} {'battery W':>10} {'A @pack':>8} {'Wh/km':>6} {'alt err':>8}")
-    for motor_target in motor_steps:
-        bench.sticks(throttle=(motor_target - idle) / (1.0 - idle))
-        step_start = bench.elapsed
-        next_sample = step_start + 1.0
-        speeds = []
-        while bench.elapsed - step_start < CRUISE_STEP_MAX_S:
-            bench.sticks(**pilot.sticks(fdm))
-            bench.run(0.02)
-            if bench.elapsed < next_sample:
-                continue
-            next_sample += 1.0
-            speeds.append(fdm["velocities/vt-fps"] * FT)
-            if bench.elapsed - step_start >= CRUISE_STEP_MIN_S and len(speeds) > CRUISE_STEADY_S and abs(speeds[-1] - speeds[-1 - CRUISE_STEADY_S]) < CRUISE_STEADY_M_S:
-                break
-        power = battery_power_w(fdm, export, motor_count)
-        point = CruisePoint(
-            motor=sum(motor_fraction(us) for us in bench.motors[:motor_count]) / motor_count, airspeed_m_s=speeds[-1],
-            aoa_deg=fdm["aero/alpha-deg"], pitch_deg=fdm["attitude/theta-deg"], power_w=power,
-            altitude_error_m=bench.truth()["agl_m"] - pilot.target_alt_m, climb_m_s=-bench.truth()["vd"],
-        )
-        print(f"{point.motor:6.3f} {point.airspeed_m_s:7.1f} m/s {point.aoa_deg:+5.1f} {point.pitch_deg:+5.1f} {point.power_w:9.0f}  "
-              f"{point.power_w / export.pack_voltage_v:7.1f} {point.power_w / (3.6 * point.airspeed_m_s):6.2f} {point.altitude_error_m:+7.1f} m")
-        if point.climb_m_s < -CRUISE_SINK_LIMIT_M_S or point.altitude_error_m < -CRUISE_ALT_LOSS_LIMIT_M:
-            print(f"  cannot hold altitude at motor {point.motor:.3f} (sinking {-point.climb_m_s:.1f} m/s): sweep ends")
-            break
-        points.append(point)
-
-    if not points:
-        print("\nNo step held altitude.")
-        return
-    usable_wh = USABLE_BATTERY_FRACTION * battery_wh
-    best_range = min(points, key=lambda p: p.power_w / p.airspeed_m_s)
-    best_endurance = min(points, key=lambda p: p.power_w)
-    print(f"\nOn {USABLE_BATTERY_FRACTION:.0%} of {battery_wh:.1f} Wh (no battery sag modelled):")
-    print(f"  best range of the steps:     {best_range.airspeed_m_s * 3.6:.0f} km/h at {best_range.power_w:.0f} W -> "
-          f"{best_range.power_w / (3.6 * best_range.airspeed_m_s):.2f} Wh/km, {usable_wh / (best_range.power_w / (3.6 * best_range.airspeed_m_s)):.1f} km")
-    print(f"  best endurance of the steps: {best_endurance.airspeed_m_s * 3.6:.0f} km/h at {best_endurance.power_w:.0f} W -> "
-          f"{usable_wh / best_endurance.power_w * 60.0:.1f} min")
 
 
 @dataclass
@@ -392,66 +348,6 @@ class SpeedHold:
         return stick
 
 
-def level_test(bench: Bench, export, motor_count: int, battery_wh: float, start_speed_m_s: float, tailsitter: bool) -> None:
-    fdm = bench.plant.fdm
-    if tailsitter:
-        enter_forward_profile(bench)
-    bench.arm()
-    # Tailsitters fly their forward (multirotor-platform) profile in ACRO with the script pilot; fixed-wings let INAV
-    # hold attitude and height (ANGLE + NAV ALTHOLD, sticks centred) and the test sets only the throttle.
-    pilot = DashPilot(target_alt_m=bench.truth()["agl_m"], target_heading_deg=fdm["attitude/psi-deg"]) if tailsitter else None
-    if not tailsitter:
-        bench.mode("ANGLE")
-        bench.mode("NAV ALTHOLD")
-        bench.sticks(roll=0.0, pitch=0.0, yaw=0.0)
-    target_alt_m = bench.truth()["agl_m"]
-    speed = SpeedHold(target_m_s=start_speed_m_s)
-    bench.release()
-    points = []
-    print(f"\n{'target':>7} {'airspeed':>9} {'AoA':>6} {'pitch':>6} {'motor':>6} {'battery W':>10} {'A @pack':>8} {'Wh/km':>6} {'alt err':>8}")
-    while speed.target_m_s > 0.0:
-        step_start = bench.elapsed
-        next_sample = step_start + 1.0
-        held = []
-        while bench.elapsed - step_start < LEVEL_STEP_MAX_S:
-            airspeed = fdm["velocities/vt-fps"] * FT
-            bench.sticks(throttle=speed.throttle(airspeed, 0.02), **(pilot.sticks(fdm) if pilot else {}))
-            bench.run(0.02)
-            if bench.elapsed < next_sample:
-                continue
-            next_sample += 1.0
-            held.append(abs(airspeed - speed.target_m_s) < LEVEL_SPEED_TOLERANCE_M_S and abs(bench.truth()["vd"]) < CRUISE_SINK_LIMIT_M_S)
-            if bench.elapsed - step_start >= LEVEL_STEP_MIN_S and len(held) >= CRUISE_STEADY_S and all(held[-CRUISE_STEADY_S:]):
-                break
-        power = battery_power_w(fdm, export, motor_count)
-        point = CruisePoint(
-            motor=sum(motor_fraction(us) for us in bench.motors[:motor_count]) / motor_count, airspeed_m_s=fdm["velocities/vt-fps"] * FT,
-            aoa_deg=fdm["aero/alpha-deg"], pitch_deg=fdm["attitude/theta-deg"], power_w=power,
-            altitude_error_m=bench.truth()["agl_m"] - target_alt_m, climb_m_s=-bench.truth()["vd"],
-        )
-        print(f"{speed.target_m_s:5.1f} m/s {point.airspeed_m_s:6.1f} m/s {point.aoa_deg:+5.1f} {point.pitch_deg:+5.1f} {point.motor:6.3f} {point.power_w:9.0f}  "
-              f"{point.power_w / export.pack_voltage_v:7.1f} {point.power_w / (3.6 * point.airspeed_m_s):6.2f} {point.altitude_error_m:+7.1f} m")
-        if not all(held[-CRUISE_STEADY_S:]) or point.altitude_error_m < -CRUISE_ALT_LOSS_LIMIT_M:
-            print(f"  level flight at {speed.target_m_s:.1f} m/s not held (airspeed {point.airspeed_m_s:.1f} m/s, climb {point.climb_m_s:+.1f} m/s, "
-                  f"altitude {point.altitude_error_m:+.1f} m): the sweep ends")
-            break
-        points.append(point)
-        speed.target_m_s -= LEVEL_SPEED_STEP_M_S
-    if not points:
-        print(f"\nLevel flight not held at the start speed {start_speed_m_s:.1f} m/s.")
-        return
-    usable_wh = USABLE_BATTERY_FRACTION * battery_wh
-    best_range = min(points, key=lambda p: p.power_w / p.airspeed_m_s)
-    best_endurance = min(points, key=lambda p: p.power_w)
-    print(f"\nSlowest level flight held: {points[-1].airspeed_m_s:.1f} m/s ({points[-1].airspeed_m_s * 3.6:.0f} km/h) at AoA {points[-1].aoa_deg:+.1f} deg; "
-          f"not held at {speed.target_m_s:.1f} m/s")
-    print(f"On {USABLE_BATTERY_FRACTION:.0%} of {battery_wh:.1f} Wh (no battery sag modelled):")
-    print(f"  best range of the steps:     {best_range.airspeed_m_s * 3.6:.0f} km/h at {best_range.power_w:.0f} W -> "
-          f"{best_range.power_w / (3.6 * best_range.airspeed_m_s):.2f} Wh/km, {usable_wh / (best_range.power_w / (3.6 * best_range.airspeed_m_s)):.1f} km")
-    print(f"  best endurance of the steps: {best_endurance.airspeed_m_s * 3.6:.0f} km/h at {best_endurance.power_w:.0f} W -> "
-          f"{usable_wh / best_endurance.power_w * 60.0:.1f} min")
-
-
 def enter_forward_profile(bench: Bench) -> None:
     """Tailsitter: switch to mixer profile 2 and wait for INAV's attitude estimate to swing round to its sensor frame."""
     bench.mode("MIXER PROFILE 2")
@@ -468,186 +364,325 @@ def enter_forward_profile(bench: Bench) -> None:
     print(f"profile 2 active, INAV attitude settled (roll {bench.fc.roll:+.1f}, pitch {bench.fc.pitch:+.1f}) after {bench.elapsed:.1f} s")
 
 
-def dash_test(bench: Bench, motor_count: int) -> None:
-    enter_forward_profile(bench)
-    bench.arm()
+class ForwardFlight:
+    """Level forward flight: the one part of a scenario that depends on the airframe type. Scenarios set the throttle
+    (and in controls one stick) through sticks(), every tick.
+    Fixed-wing: INAV ANGLE, plus NAV ALTHOLD when powered, sticks centred; the throttle stick sets the power
+    (PLANE_CONFIG_LINES). Tailsitter: its forward mixer profile in ACRO, the script pilot holding altitude, wings level
+    and heading."""
+
+    def __init__(self, airframe) -> None:
+        self.tailsitter = airframe.tailsitter
+        self.powered = airframe.powered
+        self.pilot: AltitudePilot | None = None
+
+    def air_start_speed_m_s(self, operating_m_s: float) -> float:
+        """Airspeed of the held air start. A tailsitter starts from rest: held at speed, INAV gets moving GPS with an
+        IMU at rest, and its multirotor attitude estimate (the forward profile is a multirotor platform) drifts. A
+        fixed-wing starts at the operating airspeed."""
+        return 0.0 if self.tailsitter else operating_m_s
+
+    def hands_on(self, bench: Bench, on: bool) -> None:
+        """A stick step flies the aircraft directly: a fixed-wing leaves NAV ALTHOLD (it turns the pitch stick into a
+        climb-rate request) for plain ANGLE while on; a tailsitter's pilot is overridden on the stepped axis by sticks()."""
+        if not self.tailsitter and self.powered:
+            bench.mode("NAV ALTHOLD", on=not on)
+
+    def start_airborne(self, bench: Bench) -> None:
+        """From the held start (level at START_ALT_M and the start airspeed): arm, take up the hold, release."""
+        if self.tailsitter:
+            enter_forward_profile(bench)
+            bench.arm()
+            fdm = bench.plant.fdm
+            self.pilot = AltitudePilot(target_alt_m=bench.truth()["agl_m"], target_heading_deg=fdm["attitude/psi-deg"])
+        else:
+            bench.mode("ANGLE")
+            bench.arm()
+            if self.powered:
+                bench.mode("NAV ALTHOLD")
+        bench.release()
+
+    def take_off(self, bench: Bench, export) -> None:
+        """Tailsitter, standing: arm, climb in ANGLE straight to TAKEOFF_ALT_M, switch to the forward profile in ACRO;
+        the pilot pitches over and holds that altitude while the throttle blends from hover to TRANSITION_MOTOR as the
+        nose comes down (vertical thrust stays near the weight), until level and settled."""
+        fdm = bench.plant.fdm
+        hover_stick = (export.hover_stick_us - 1000) / 1000.0
+        idle = INAV_THROTTLE_IDLE_PCT / 100.0
+        bench.release()  # stand on the tail contacts
+        bench.run(STAND_S)
+        bench.mode("ANGLE")
+        bench.arm()
+        start = bench.elapsed
+        bench.sticks(throttle=min(1.0, hover_stick + TAKEOFF_CLIMB_STICK_ABOVE_HOVER))
+        max_tilt = 0.0
+
+        def climbed(b: Bench) -> bool:
+            nonlocal max_tilt
+            max_tilt = max(max_tilt, 90.0 - b.truth()["pitch"])
+            return b.truth()["agl_m"] >= TAKEOFF_ALT_M
+
+        if not bench.run(TAKEOFF_MAX_S, until=climbed):
+            raise RuntimeError(f"takeoff did not reach {TAKEOFF_ALT_M} m in {TAKEOFF_MAX_S} s: agl {bench.truth()['agl_m']:.1f} m")
+        print(f"takeoff: {TAKEOFF_ALT_M:.0f} m in {bench.elapsed - start:.1f} s, max tilt {max_tilt:.1f} deg")
+        bench.sticks(throttle=hover_stick)
+        bench.run(CLIMB_STOP_S)
+
+        # transition: forward profile, ACRO; the pilot pitches over gently and holds this altitude while the throttle
+        # blends from hover to TRANSITION_MOTOR as the nose comes down (vertical thrust stays near the weight)
+        pilot = AltitudePilot(target_alt_m=bench.truth()["agl_m"], target_heading_deg=fdm["attitude/psi-deg"])
+        cruise_stick = (TRANSITION_MOTOR - idle) / (1.0 - idle)
+        bench.mode("ANGLE", on=False)
+        bench.mode("MIXER PROFILE 2")
+        start = bench.elapsed
+        lowest = highest = bench.truth()["agl_m"]
+        while True:
+            nose_down = min(max(1.0 - fdm["attitude/theta-deg"] / 90.0, 0.0), 1.0)
+            bench.sticks(throttle=hover_stick + (cruise_stick - hover_stick) * nose_down, **pilot.sticks(fdm))
+            bench.run(0.02)
+            altitude = bench.truth()["agl_m"]
+            lowest, highest = min(lowest, altitude), max(highest, altitude)
+            if (bench.mixer_profile == FORWARD_MIXER_PROFILE and abs(fdm["attitude/theta-deg"]) < TRANSITION_DONE_PITCH_DEG
+                    and abs(bench.truth()["vd"]) < TRANSITION_DONE_CLIMB_M_S):
+                break
+            if bench.elapsed - start > TAKEOFF_MAX_S:
+                raise RuntimeError(f"transition did not settle: pitch {fdm['attitude/theta-deg']:.1f} deg, climb {-bench.truth()['vd']:+.1f} m/s, profile {bench.mixer_profile}")
+        print(f"transition: level and settled after {bench.elapsed - start:.1f} s at {fdm['velocities/vt-fps'] * FT:.1f} m/s; "
+              f"altitude {lowest - pilot.target_alt_m:+.1f} / {highest - pilot.target_alt_m:+.1f} m around {pilot.target_alt_m:.1f} m")
+        # the heading taken nose-up at the start of the transition is meaningless (Euler heading near 90 deg pitch): the
+        # pilot would hunt for it with the yaw stick; hold the heading the aircraft levelled out on instead
+        self.pilot = AltitudePilot(target_alt_m=pilot.target_alt_m, target_heading_deg=fdm["attitude/psi-deg"])
+
+    def glide(self, bench: Bench, speed_m_s: float) -> SpeedPilot:
+        """Rate mode for both types with the gliding pilot holding speed_m_s: a fixed-wing leaves ANGLE (and NAV
+        ALTHOLD); motors are left at idle by the caller's throttle."""
+        if not self.tailsitter:
+            bench.mode("ANGLE", on=False)
+            if self.powered:
+                bench.mode("NAV ALTHOLD", on=False)
+        self.pilot = SpeedPilot(target_alt_m=0.0, target_heading_deg=bench.plant.fdm["attitude/psi-deg"], target_speed_m_s=speed_m_s)
+        return self.pilot
+
+    def sticks(self, bench: Bench, throttle: float, override: dict[str, float] | None = None) -> None:
+        axes = self.pilot.sticks(bench.plant.fdm) if self.pilot is not None else {"roll": 0.0, "pitch": 0.0, "yaw": 0.0}
+        bench.sticks(throttle=throttle, **(axes | (override or {})))
+
+
+def level_line(bench: Bench, motor_count: int) -> str:
+    """One status line of forward flight: speed, height, attitude, AoA, motors, rpm, profile."""
     fdm = bench.plant.fdm
-    pilot = DashPilot(target_alt_m=fdm["position/h-agl-ft"] * FT, target_heading_deg=fdm["attitude/psi-deg"])
-    bench.sticks(throttle=1.0)
-    bench.release()
+    motors = " ".join(f"{motor_fraction(us):.2f}" for us in bench.motors[:motor_count])
+    rpm = f"  rpm {fdm['propulsion/engine[0]/propeller-rpm']:6.0f}" if motor_count else ""
+    return (f"{bench.elapsed:5.1f}s airspeed {fdm['velocities/vt-fps'] * FT:5.1f} m/s  agl {fdm['position/h-agl-ft'] * FT:6.1f} m  "
+            f"climb {-fdm['velocities/v-down-fps'] * FT:+5.1f}  pitch {fdm['attitude/theta-deg']:+5.1f}  roll {fdm['attitude/phi-deg']:+6.1f}  "
+            f"heading {fdm['attitude/psi-deg']:5.1f}  AoA {fdm['aero/alpha-deg']:+5.1f}  motors {motors}{rpm}  "
+            f"profile {bench.mixer_profile + 1 if bench.mixer_profile is not None else 1}  {'ARMED' if bench.fc.armed else 'disarmed'}")
+
+
+def efficiency(bench: Bench, flight: ForwardFlight, export, motor_count: int, sweep_from_m_s: float | None) -> None:
+    """A throttle loop holds each target airspeed, from sweep_from_m_s (default: the top speed, rounded down to the
+    LEVEL_SPEED_STEP_M_S grid) down in LEVEL_SPEED_STEP_M_S steps, until level flight cannot be held: per step speed, AoA,
+    motor, battery power and current, Wh/km (means over its last LEVEL_STEADY_S seconds); then the slowest level speed, best range and best endurance on
+    USABLE_BATTERY_FRACTION of the pack."""
+    fdm = bench.plant.fdm
+    if sweep_from_m_s is None:
+        top = accelerate(bench, flight, motor_count)
+        sweep_from_m_s = math.floor(top / LEVEL_SPEED_STEP_M_S) * LEVEL_SPEED_STEP_M_S
+        print(f"top speed {top:.1f} m/s: the sweep starts at {sweep_from_m_s:.0f} m/s")
+    start_speed_m_s = sweep_from_m_s
+    target_alt_m = bench.truth()["agl_m"]
+    speed = SpeedHold(target_m_s=start_speed_m_s)
+    points = []
+    print(f"\n{'target':>7} {'airspeed':>9} {'AoA':>6} {'pitch':>6} {'motor':>6} {'battery W':>10} {'A @pack':>8} {'Wh/km':>6} {'alt err':>8}")
+    while speed.target_m_s > 0.0:
+        step_start, step_alt_m = bench.elapsed, bench.truth()["agl_m"]
+        next_sample = step_start + 1.0
+        held = []
+        samples = []  # (time, motor, airspeed, AoA, pitch, battery W) every tick: a step reports the mean of its steady window
+        while bench.elapsed - step_start < LEVEL_STEP_MAX_S:
+            flight.sticks(bench, speed.throttle(fdm["velocities/vt-fps"] * FT, 0.02))
+            bench.run(0.02)
+            samples.append((bench.elapsed, sum(motor_fraction(us) for us in bench.motors[:motor_count]) / motor_count, fdm["velocities/vt-fps"] * FT,
+                            fdm["aero/alpha-deg"], fdm["attitude/theta-deg"], battery_power_w(fdm, export, motor_count)))
+            if bench.elapsed < next_sample:
+                continue
+            next_sample += 1.0
+            held.append(abs(fdm["velocities/vt-fps"] * FT - speed.target_m_s) < LEVEL_SPEED_TOLERANCE_M_S and abs(bench.truth()["vd"]) < LEVEL_SINK_LIMIT_M_S)
+            if bench.elapsed - step_start >= LEVEL_STEP_MIN_S and len(held) >= LEVEL_STEADY_S and all(held[-LEVEL_STEADY_S:]):
+                break
+            if bench.truth()["agl_m"] - step_alt_m < -LEVEL_ALT_LOSS_LIMIT_M:  # level flight lost: no point flying the step out
+                break
+        window = [sample[1:] for sample in samples if sample[0] >= bench.elapsed - LEVEL_STEADY_S]
+        motor, airspeed, aoa, pitch, power = (sum(column) / len(window) for column in zip(*window))
+        point = LevelPoint(
+            target_m_s=speed.target_m_s, motor=motor, airspeed_m_s=airspeed, aoa_deg=aoa, pitch_deg=pitch, power_w=power,
+            altitude_error_m=bench.truth()["agl_m"] - target_alt_m, climb_m_s=-bench.truth()["vd"],
+        )
+        print(f"{point.target_m_s:5.1f} m/s {point.airspeed_m_s:6.1f} m/s {point.aoa_deg:+5.1f} {point.pitch_deg:+5.1f} {point.motor:6.3f} {point.power_w:9.0f}  "
+              f"{point.power_w / export.pack_voltage_v:7.1f} {point.power_w / (3.6 * point.airspeed_m_s):6.2f} {point.altitude_error_m:+7.1f} m")
+        if not all(held[-LEVEL_STEADY_S:]) or bench.truth()["agl_m"] - step_alt_m < -LEVEL_ALT_LOSS_LIMIT_M:
+            print(f"  level flight at {speed.target_m_s:.1f} m/s not held (airspeed {point.airspeed_m_s:.1f} m/s, climb {point.climb_m_s:+.1f} m/s, "
+                  f"altitude {point.altitude_error_m:+.1f} m): the sweep ends")
+            break
+        points.append(point)
+        speed.target_m_s -= LEVEL_SPEED_STEP_M_S
+    if not points:
+        print(f"\nLevel flight not held at the start speed {start_speed_m_s:.1f} m/s.")
+        return
+    battery_wh = export.motor.pack_wh
+    usable_wh = USABLE_BATTERY_FRACTION * battery_wh
+    best_range = min(points, key=lambda p: p.power_w / p.airspeed_m_s)
+    best_endurance = min(points, key=lambda p: p.power_w)
+    print(f"\nSlowest level flight held: {points[-1].airspeed_m_s:.1f} m/s ({points[-1].airspeed_m_s * 3.6:.0f} km/h) at AoA {points[-1].aoa_deg:+.1f} deg; "
+          f"not held at {speed.target_m_s:.1f} m/s")
+    print(f"On {USABLE_BATTERY_FRACTION:.0%} of {battery_wh:.1f} Wh (no battery sag modelled):")
+    print(f"  best range of the steps:     {best_range.airspeed_m_s * 3.6:.0f} km/h at {best_range.power_w:.0f} W -> "
+          f"{best_range.power_w / (3.6 * best_range.airspeed_m_s):.2f} Wh/km, {usable_wh / (best_range.power_w / (3.6 * best_range.airspeed_m_s)):.1f} km")
+    print(f"  best endurance of the steps: {best_endurance.airspeed_m_s * 3.6:.0f} km/h at {best_endurance.power_w:.0f} W -> "
+          f"{usable_wh / best_endurance.power_w * 60.0:.1f} min")
+
+
+def top_speed(bench: Bench, flight: ForwardFlight, motor_count: int) -> None:
+    top = accelerate(bench, flight, motor_count)
+    print(f"\nTop speed at full throttle, level: {top:.1f} m/s = {top * 3.6:.0f} km/h")
+
+
+def accelerate(bench: Bench, flight: ForwardFlight, motor_count: int) -> float:
+    """Full throttle in level flight until the airspeed stops rising (TOP_SPEED_PLATEAU_M_S over TOP_SPEED_PLATEAU_S,
+    after TOP_SPEED_MIN_S); returns the top speed."""
+    fdm = bench.plant.fdm
     speeds = []
-    next_report = bench.elapsed
     start = bench.elapsed
-    while bench.elapsed - start < DASH_MAX_S:
-        bench.sticks(**pilot.sticks(fdm))
+    next_report = start + 1.0
+    while bench.elapsed - start < TOP_SPEED_MAX_S:
+        flight.sticks(bench, 1.0)
         bench.run(0.02)
         if bench.elapsed < next_report:
             continue
         next_report += 1.0
-        airspeed = fdm["velocities/vt-fps"] * FT
-        speeds.append(airspeed)
-        motors = [motor_fraction(us) for us in bench.motors[:motor_count]]
-        thrust_g = sum(fdm[f"propulsion/engine[{i}]/thrust-lbs"] for i in range(motor_count)) / motor_count * 453.59237
-        print(
-            f"{bench.elapsed - start:5.1f}s airspeed {airspeed:5.1f} m/s ({airspeed * 3.6:5.1f} km/h)  agl {fdm['position/h-agl-ft'] * FT:6.1f} m  "
-            f"pitch {fdm['attitude/theta-deg']:+5.1f}  roll {fdm['attitude/phi-deg']:+5.1f}  AoA {fdm['aero/alpha-deg']:+5.1f} deg  "
-            f"motors {' '.join(f'{m:.2f}' for m in motors)}  rpm {fdm['propulsion/engine[0]/propeller-rpm']:6.0f}  thrust {thrust_g:5.0f} g/motor  "
-            f"profile {bench.mixer_profile + 1}  {'ARMED' if bench.fc.armed else 'disarmed'}"
-        )
-        if bench.elapsed - start >= DASH_MIN_S and len(speeds) > DASH_PLATEAU_S and speeds[-1] - speeds[-1 - DASH_PLATEAU_S] < DASH_PLATEAU_M_S:
+        speeds.append(fdm["velocities/vt-fps"] * FT)
+        print(level_line(bench, motor_count))
+        if bench.elapsed - start >= TOP_SPEED_MIN_S and len(speeds) > TOP_SPEED_PLATEAU_S and speeds[-1] - speeds[-1 - TOP_SPEED_PLATEAU_S] < TOP_SPEED_PLATEAU_M_S:
             break
-    top = max(speeds)
-    print(f"\nTop speed at full throttle, level: {top:.1f} m/s = {top * 3.6:.0f} km/h")
+    return max(speeds)
 
 
-def plane_report(bench: Bench, phase: str, control_count: int) -> None:
+def controls(bench: Bench, flight: ForwardFlight, motor_count: int, control_count: int, speed_m_s: float | None) -> None:
+    """Level for CONTROLS_LEVEL_S, then a right roll, a pull up and right yaw on the sticks in turn, each for
+    CONTROLS_STEP_S and followed by CONTROLS_RECOVER_S; an axis passes when the true attitude moves at least
+    CONTROLS_RESPONSE_MIN_DEG the commanded way during its step, flown hands on (ForwardFlight.hands_on) through the step
+    and its recovery. A powered aircraft holds speed_m_s with the throttle
+    loop throughout; an unpowered one glides. Prints the control-surface deflections, so the INAV servo mix is checked
+    end to end."""
     fdm = bench.plant.fdm
-    controls = " ".join(f"C{number} {fdm[f'fcs/control-{number}-pos-deg']:+5.1f}" for number in range(1, control_count + 1))
-    print(
-        f"{bench.elapsed:5.1f}s {phase:<10} airspeed {fdm['velocities/vt-fps'] * FT:5.1f} m/s  agl {fdm['position/h-agl-ft'] * FT:6.1f} m  "
-        f"climb {-fdm['velocities/v-down-fps'] * FT:+5.1f}  roll {fdm['attitude/phi-deg']:+6.1f}  pitch {fdm['attitude/theta-deg']:+5.1f}  "
-        f"heading {fdm['attitude/psi-deg']:5.1f}  AoA {fdm['aero/alpha-deg']:+5.1f}  {controls}  {'ARMED' if bench.fc.armed else 'disarmed'}"
-    )
-
-
-class PlaneLostHeight(Exception):
-    pass
-
-
-def plane_fly(bench: Bench, seconds: float, phase: str, control_count: int) -> None:
-    for _ in range(int(round(seconds))):
-        bench.run(1.0)
-        plane_report(bench, phase, control_count)
-        if bench.plant.fdm["position/h-agl-ft"] * FT < PLANE_MIN_AGL_M:
-            raise PlaneLostHeight(f"below {PLANE_MIN_AGL_M:g} m AGL during '{phase}'")
-
-
-def plane_test(bench: Bench, powered: bool, control_count: int) -> None:
-    bench.mode("ANGLE")
-    bench.arm()
-    bench.sticks(throttle=PLANE_THROTTLE if powered else 0.0)
-    bench.release()
+    speed = None if speed_m_s is None else SpeedHold(target_m_s=speed_m_s)
     results = []
+
+    def hold(seconds: float, phase: str, override: dict[str, float] | None = None, attitude: str | None = None) -> float:
+        """Fly for seconds; returns how far the attitude moved (unwrapped, deg) at its furthest from the start."""
+        start, previous, moved, extreme = bench.elapsed, fdm[attitude] if attitude else 0.0, 0.0, 0.0
+        next_report = start + 1.0
+        while bench.elapsed - start < seconds:
+            flight.sticks(bench, 0.0 if speed is None else speed.throttle(fdm["velocities/vt-fps"] * FT, 0.02), override)
+            bench.run(0.02)
+            if attitude:
+                moved += (fdm[attitude] - previous + 180.0) % 360.0 - 180.0
+                previous = fdm[attitude]
+                extreme = max(extreme, moved, key=abs)
+            if bench.elapsed >= next_report:
+                next_report += 1.0
+                deflections = " ".join(f"C{number} {fdm[f'fcs/control-{number}-pos-deg']:+5.1f}" for number in range(1, control_count + 1))
+                print(f"{phase:<10} {level_line(bench, motor_count)}  {deflections}")
+        return extreme
+
     try:
-        plane_steps(bench, control_count, results)
-    except PlaneLostHeight as error:
-        print(f"  FAIL: {error}; the remaining steps were not flown")
-    print(f"\nPlane test: {sum(results)}/{len(PLANE_STEPS)} axes respond the commanded way")
+        hold(CONTROLS_LEVEL_S, "level")
+        for label, stick, deflection, attitude, expected_sign in CONTROL_STEPS:
+            flight.hands_on(bench, True)
+            moved = hold(CONTROLS_STEP_S, label, {stick: deflection}, attitude)
+            hold(CONTROLS_RECOVER_S, "recover")
+            flight.hands_on(bench, False)
+            passed = moved * expected_sign >= CONTROLS_RESPONSE_MIN_DEG
+            results.append(passed)
+            print(f"  {label}: {attitude.split('/')[1]} moved {moved:+.1f} deg -> {'PASS' if passed else 'FAIL'}")
+    except GroundHit as hit:
+        print(f"\nHit the ground {hit}")
+    print(f"\nControls: {sum(results)}/{len(CONTROL_STEPS)} axes respond the commanded way")
 
 
-def plane_steps(bench: Bench, control_count: int, results: list[bool]) -> None:
+def glide(bench: Bench, flight: ForwardFlight, cruise_m_s: float) -> None:
+    """Motors off; the gliding pilot aims at each target airspeed with pitch, from GLIDE_SWEEP_FROM_FACTOR x the operating
+    airspeed down in GLIDE_SPEED_STEP_M_S steps, until the ground: per step the sink rate and glide ratio (means over its
+    last GLIDE_MEASURE_S); then the smallest sink rate and the best glide of the steady steps, whatever speed they settled at."""
     fdm = bench.plant.fdm
-    plane_fly(bench, PLANE_LEVEL_S, "level", control_count)
-    for label, stick, deflection, attitude, expected_sign in PLANE_STEPS:
-        start = fdm[attitude]
-        bench.sticks(**{stick: deflection})
-        plane_fly(bench, PLANE_STEP_S, label, control_count)
-        change = (fdm[attitude] - start + 180.0) % 360.0 - 180.0
-        bench.sticks(**{stick: 0.0})
-        plane_fly(bench, PLANE_RECOVER_S, "centred", control_count)
-        passed = change * expected_sign >= PLANE_RESPONSE_MIN_DEG
-        results.append(passed)
-        print(f"  {label}: {attitude.split('/')[1]} changed {change:+.1f} deg -> {'PASS' if passed else 'FAIL'}")
-
-
-def plot_flight_path(log_path: Path, png_path: Path, title: str) -> None:
-    """Altitude above ground against distance flown over the ground, both axes to the same scale."""
-    with open(log_path) as file:
-        rows = list(csv.DictReader(file))
-    north, east, agl, armed = (np.array([float(row[key]) for row in rows]) for key in ("north_m", "east_m", "agl_m", "armed"))
-    distance = np.concatenate(([0.0], np.cumsum(np.hypot(np.diff(north), np.diff(east)))))
-    fig, ax = plt.subplots(figsize=(14, 5))
-    ax.plot(distance, agl, color="C0", linewidth=1.5)
-    if armed.any():
-        index = int(np.argmax(armed > 0))
-        ax.plot(distance[index], agl[index], "o", color="C2", label="armed")
-    ax.plot(distance[-1], agl[-1], "x", color="C3", markersize=9, label=f"end: {distance[-1]:.0f} m flown, {agl[-1]:.0f} m AGL")
-    ax.set_aspect("equal", adjustable="datalim")
-    ax.set_xlabel("distance over ground (m)")
-    ax.set_ylabel("altitude above ground (m)")
-    ax.set_title(title)
-    ax.grid(alpha=0.3)
-    ax.legend(loc="upper right", fontsize=8)
-    fig.tight_layout()
-    fig.savefig(png_path, dpi=110)
-    plt.close(fig)
-
-
-@dataclass(frozen=True)
-class Elevator:
-    """A pitch-role control's INAV servo and its deflection limits, to turn the logged servo output into degrees."""
-    label: str
-    servo: int  # INAV servo index (S1 = 0)
-    deflection_min_deg: float
-    deflection_max_deg: float
-
-
-def plot_pitch_time(log_path: Path, png_path: Path, title: str, elevators: list[Elevator]) -> None:
-    """Airspeed, altitude, pitch, pitch stick and elevator deflection against time, each on its own axis (normalised, scales shown)."""
-    with open(log_path) as file:
-        rows = list(csv.DictReader(file))
-
-    def column(key: str) -> np.ndarray:
-        return np.array([float(row[key]) for row in rows])
-
-    t = column("t")
-    axes_series = [  # one y-axis each: (axis label, [(trace label, values)], colour)
-        ("airspeed (m/s)", [("airspeed", column("ias_kts") * KNOT_M_S)], "C0"),
-        ("altitude above ground (m)", [("altitude", column("agl_m"))], "C4"),
-        ("pitch (deg)", [("pitch", column("pitch"))], "C1"),
-        ("pitch stick (+ = nose up)", [("pitch stick", -(column("rc2") - 1500.0) / 500.0)], "C2"),
-    ]
-    if elevators:
-        traces = []
-        for elevator in elevators:
-            norm = np.clip((column(f"servo{elevator.servo}") - 1500.0) / 500.0, -1.0, 1.0)
-            traces.append((f"{elevator.label} S{elevator.servo + 1}", np.where(norm > 0.0, norm * elevator.deflection_max_deg, -norm * elevator.deflection_min_deg)))
-        axes_series.append(("elevator (deg, + = TE down)", traces, "C3"))
-    fig, host = plt.subplots(figsize=(14, 5))
-    axes = [host] + [host.twinx() for _ in axes_series[1:]]
-    for index, (ax, (label, traces, color)) in enumerate(zip(axes, axes_series)):
-        if index > 1:
-            ax.spines["right"].set_position(("axes", 1.0 + 0.08 * (index - 1)))
-        for trace, (trace_label, values) in enumerate(traces):
-            ax.plot(t, values, color=color, linewidth=1.2, linestyle=("-", "--", ":")[trace % 3], label=trace_label)
-        ax.set_ylabel(label, color=color)
-        ax.tick_params(axis="y", colors=color)
-    if elevators and len(elevators) > 1:
-        axes[-1].legend(loc="lower left", fontsize=8)
-    armed = column("armed")
-    if armed.any():
-        host.axvline(t[int(np.argmax(armed > 0))], color="0.5", linestyle="--", linewidth=1.0)
-    host.set_xlabel("time (s); dashed: armed")
-    host.set_title(title)
-    host.grid(alpha=0.3)
-    fig.tight_layout()
-    fig.savefig(png_path, dpi=110)
-    plt.close(fig)
+    pilot = flight.glide(bench, GLIDE_SWEEP_FROM_FACTOR * cruise_m_s)
+    steady = []
+    print(f"\n{'target':>7} {'airspeed':>9} {'sink':>9} {'glide':>6} {'AoA':>6} {'pitch':>6} {'agl':>7}")
+    try:
+        while pilot.target_speed_m_s > 0.0:
+            step_start = bench.elapsed
+            samples = []  # (time, airspeed, sink, ground speed, AoA, pitch)
+            while bench.elapsed - step_start < GLIDE_STEP_S:
+                flight.sticks(bench, 0.0)
+                bench.run(0.02)
+                truth = bench.truth()
+                samples.append((bench.elapsed, fdm["velocities/vt-fps"] * FT, truth["vd"], math.hypot(truth["vn"], truth["ve"]), fdm["aero/alpha-deg"], truth["pitch"]))
+            window = [sample[1:] for sample in samples if sample[0] >= bench.elapsed - GLIDE_MEASURE_S]
+            airspeed, sink, ground_speed, aoa, pitch = (sum(column) / len(window) for column in zip(*window))
+            ratio = ground_speed / sink if sink > 0.0 else math.inf
+            settled = abs(window[-1][0] - window[0][0]) < GLIDE_STEADY_M_S
+            print(f"{pilot.target_speed_m_s:5.1f} m/s {airspeed:6.1f} m/s {sink:5.2f} m/s {ratio:6.1f} {aoa:+5.1f} {pitch:+5.1f} {bench.truth()['agl_m']:6.0f} m"
+                  f"{'' if settled else '  not steady'}")
+            if settled:
+                steady.append((pilot.target_speed_m_s, airspeed, sink, ratio))
+            pilot.target_speed_m_s -= GLIDE_SPEED_STEP_M_S
+    except GroundHit as hit:
+        print(f"\nHit the ground {hit}")
+    if not steady:
+        print("\nNo steady glide step.")
+        return
+    least_sink = min(steady, key=lambda point: point[2])
+    best_glide = max(steady, key=lambda point: point[3])
+    print(f"\nSmallest sink rate: {least_sink[2]:.2f} m/s at {least_sink[1]:.1f} m/s ({least_sink[1] * 3.6:.0f} km/h)")
+    print(f"Best glide: {best_glide[3]:.1f} : 1 ({math.degrees(math.atan2(1.0, best_glide[3])):.1f} deg) at {best_glide[1]:.1f} m/s "
+          f"({best_glide[1] * 3.6:.0f} km/h), sinking {best_glide[2]:.2f} m/s")
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Fly an airframe/2 aircraft in INAV SITL on JSBSim (inav-jsbsim-bench).")
-    parser.add_argument("test", choices=("hover", "cruise", "dash", "level", "plane"))
-    parser.add_argument("airframe", type=Path, help="airframe/2 file")
-    parser.add_argument("--sitl", type=Path, required=True, help="INAV SITL.elf")
-    parser.add_argument("--inav-config", type=Path, default=None, help="real INAV CLI diff to fly (default: the export's generated hover profile)")
-    parser.add_argument("--hover-s", type=float, default=15.0, help="hover test: hold time in seconds")
-    parser.add_argument("--start-speed", type=float, default=None, help="level test: start airspeed in m/s (default: the operating airspeed)")
-    parser.add_argument("--motor-steps", type=float, nargs="+", default=list(CRUISE_MOTOR_STEPS), help="cruise test: throttle targets, descending")
+    parser.add_argument("scenario", choices=list(SCENARIOS))
+    parser.add_argument("project", type=Path, help="aircraft project directory (aircraft/<name>)")
+    parser.add_argument("--sitl", type=Path, default=None, help="INAV SITL.elf (default: the project's pinned sitl/SITL.elf)")
+    parser.add_argument("--inav-config", type=Path, default=None, help="real INAV CLI diff to fly (default: FC settings generated from the design)")
+    parser.add_argument("--hover-s", type=float, default=15.0, help="hover: hold time in seconds")
+    parser.add_argument("--sweep-from", type=float, default=None, help="efficiency: first target airspeed in m/s (default: the top speed, measured first)")
     parser.add_argument("--pack-voltage", type=float, default=None, help="battery voltage for the motors (default: nominal)")
+    add_start_arguments(parser)  # forward-flight scenarios; hover always starts standing
     args = parser.parse_args()
 
+    project = open_project(args.project)
     with open(PARTS_PATH, "r") as file:
         parts_data = json.load(file)
-    resolved, _problems = resolve_airframe(load_airframe(args.airframe, parts_data), parts_data)
+    resolved, _problems = resolve_airframe(load_airframe(project.build_path, parts_data), parts_data)
     airframe = resolved.airframe
-    if args.test in ("hover", "cruise", "dash") and not airframe.tailsitter or args.test == "plane" and airframe.tailsitter:
-        parser.error(f"{args.airframe}: hover, cruise and dash fly tailsitters, the plane test fixed-wings and gliders")
-    if args.test == "level" and not airframe.powered:
-        parser.error(f"{args.airframe}: the level test needs motors")
-    start_speed_m_s = airframe.operating_point.airspeed_m_s if args.start_speed is None else args.start_speed
-    out_dir = (EXPORT_ROOT / args.airframe.stem).resolve()
-    export = export_jsbsim(resolved, parts_data, out_dir, args.airframe.stem, args.pack_voltage)
+    reason = scenario_reasons(airframe)[args.scenario]
+    if reason is not None:
+        parser.error(f"{args.project}: {args.scenario} {reason}")
+    if args.scenario == "hover":
+        if args.start == "air":
+            parser.error("hover starts standing on the ground")
+        start = "ground"
+    else:
+        start = args.start or "air"
+        reason = start_reasons(airframe)[start]
+        if reason is not None:
+            parser.error(f"{args.project}: start {start}: {reason}")
+    flight = ForwardFlight(airframe)
+    cruise_m_s = airframe.operating_point.airspeed_m_s
+    state = resolve_start(parser, args, start, GLIDE_START_ALT_M if args.scenario == "glide" else START_ALT_M, flight.air_start_speed_m_s(cruise_m_s))
+    sitl_path = pinned_sitl(project) if args.sitl is None else args.sitl
+    out_dir = project.jsbsim_dir
+    export, reused = reuse_or_export(resolved, parts_data, project.build_path, out_dir, project.name, args.pack_voltage)
     if args.inav_config is None:
         config_lines = [*export.inav_cli_path.read_text().splitlines(), *(GENERATED_CONFIG_LINES if airframe.tailsitter else PLANE_CONFIG_LINES)]
     else:
@@ -655,77 +690,54 @@ def main() -> None:
         print(f"{args.inav_config}: {len(config_lines)} aircraft-defining lines kept (INAV 10 names), {left_out} left at INAV 10 defaults:")
         for line in config_lines:
             print(f"  {line}")
-    profile_path = out_dir / "inav_sitl.cli"
-    profile_path.write_text("\n".join([*config_lines, *SITL_SENSOR_LINES]) + "\n")
+    project.sitl_dir.mkdir(parents=True, exist_ok=True)
+    profile_path = project.sitl_dir / "inav_sitl.cli"
+    battery_lines = battery_config_lines(export) if export.motor is not None else []
+    profile_path.write_text("\n".join([*config_lines, *SITL_SENSOR_LINES, *battery_lines]) + "\n")
     motor_count = len(export.motor_properties)
-    if not airframe.tailsitter:
-        print(f"{airframe.name}: {sum(resolved.mass_kg) / 2.0 * 1000:.0f} g, {motor_count} motors, {len(resolved.controls)} control surfaces on "
-              f"{len(export.servo_properties)} servo outputs, JSBSim model in {out_dir}")
-        for note in export.servo_notes:
-            print(f"  servo mix: {note}")
-    else:
-        print(f"{airframe.name}: {sum(resolved.mass_kg) / 2.0 * 1000:.0f} g, pack {export.pack_voltage_v:.2f} V, predicted hover motor command {export.hover_motor_fraction:.3f} "
-              f"(stick {export.hover_stick_us} us, throttle_idle {INAV_THROTTLE_IDLE_PCT} %), JSBSim model in {out_dir}")
+    print(f"{airframe.name}: {sum(resolved.mass_kg) / 2.0 * 1000:.0f} g, {motor_count} motors, {len(resolved.controls)} control surfaces on "
+          f"{len(export.servo_properties)} servo outputs, JSBSim model in {out_dir} ({'reused: nothing it depends on changed' if reused else 'exported'})")
+    if export.motor is not None:
+        print(f"  pack {export.pack_voltage_v:.2f} V, throttle_idle {INAV_THROTTLE_IDLE_PCT} %"
+              + (f", predicted hover motor command {export.hover_motor_fraction:.3f} (stick {export.hover_stick_us} us)" if airframe.vtol else ""))
 
-    if args.test == "level":
-        vehicle = Vehicle(
-            model=export.model_name, profile=str(profile_path), motors=export.motor_properties, servos=export.servo_properties,
-            airborne=True, alt_m=LEVEL_ALT_M, speed_kts=start_speed_m_s / KNOT_M_S, init={"ic/theta-deg": 0.0}, model_dir=str(out_dir),
-            tailsitter=airframe.tailsitter, hover_mixer_profile=HOVER_MIXER_PROFILE,
-        )
-    elif not airframe.tailsitter:
-        vehicle = Vehicle(
-            model=export.model_name, profile=str(profile_path), motors=export.motor_properties, servos=export.servo_properties,
-            airborne=True, alt_m=PLANE_ALT_M, speed_kts=airframe.operating_point.airspeed_m_s / KNOT_M_S,
-            init={"ic/theta-deg": 0.0}, model_dir=str(out_dir),
-        )
-    elif args.test in ("hover", "cruise"):
-        vehicle = Vehicle(
-            model=export.model_name, profile=str(profile_path), motors=export.motor_properties,
-            airborne=True, alt_m=export.stance_height_m + STANCE_CLEARANCE_M, speed_kts=0.0,
-            init={"ic/theta-deg": 90.0}, model_dir=str(out_dir), tailsitter=True, hover_mixer_profile=HOVER_MIXER_PROFILE,
-        )
-    else:
-        vehicle = Vehicle(
-            model=export.model_name, profile=str(profile_path), motors=export.motor_properties,
-            airborne=True, alt_m=DASH_ALT_M, speed_kts=DASH_START_SPEED_M_S / KNOT_M_S,
-            init={"ic/theta-deg": 0.0}, model_dir=str(out_dir), tailsitter=True, hover_mixer_profile=HOVER_MIXER_PROFILE,
-        )
-    log_path = out_dir / f"sim_inav_{args.test}.csv"
-    log_path.unlink(missing_ok=True)  # a run that fails before the bench logs must not plot the previous run
+    print(start_line(start, state))
+    vehicle = build_vehicle(export, str(profile_path), start, state, airframe.tailsitter)
+    run_log = flight_log_path(project, args.scenario, start)
+    run_log.parent.mkdir(parents=True, exist_ok=True)
+    run_log.unlink(missing_ok=True)  # a run that fails before the bench logs must not plot the previous run
+    title = f"{airframe.name}: {run_log.stem.removeprefix('sim_inav_')}"
     try:
-        run_test(args, vehicle, log_path, resolved, export, motor_count, start_speed_m_s)
+        run_scenario(args.scenario, start, state, args, flight, vehicle, sitl_path, project.sitl_dir, run_log, resolved, export, motor_count, cruise_m_s)
     except GroundHit as hit:
         print(f"\nHit the ground {hit}; the run ends.")
     finally:
-        if log_path.exists():
-            png_path = out_dir / f"sim_inav_{args.test}_path.png"
-            plot_flight_path(log_path, png_path, f"{airframe.name}: {args.test} test")
-            print(f"flight path: {png_path}")
-            definitions = {surface_set.name: surface_set.definition.control for surface_set in resolved.surfaces}
-            elevators = [Elevator(f"C{control.number} {control.surface}", int(control.servo[1:]) - 1, definitions[control.surface].deflection_min_deg,
-                                  definitions[control.surface].deflection_max_deg)
-                         for control in resolved.controls if "pitch" in definitions[control.surface].roles and not airframe.tailsitter]
-            time_path = out_dir / f"sim_inav_{args.test}_pitch.png"
-            plot_pitch_time(log_path, time_path, f"{airframe.name}: {args.test} test, pitch", elevators)
-            print(f"pitch over time: {time_path}")
+        if run_log.exists():
+            write_plots(run_log, resolved, title)
 
 
-def run_test(args, vehicle, log_path: Path, resolved, export, motor_count: int, start_speed_m_s: float) -> None:
-    airframe = resolved.airframe
-    with FlightBench(vehicle, sitl=str(args.sitl), log=str(log_path)) as bench:
-        if args.test == "plane":
-            plane_test(bench, airframe.powered, len(resolved.controls))
-        elif args.test == "hover":
+def run_scenario(scenario: str, start: str, state: StartState, args, flight: ForwardFlight, vehicle, sitl_path: Path, workdir: Path, log_path: Path,
+                 resolved, export, motor_count: int, cruise_m_s: float) -> None:
+    powered = export.motor is not None
+    with FlightBench(vehicle, sitl=str(sitl_path), workdir=str(workdir), log=str(log_path), log_fc=True, heading_deg=state.heading_deg,
+                     home=(state.lat_deg, state.lon_deg), log_extra=electrical_log(export, motor_count) if powered else None,
+                     battery=pack_state(export, motor_count) if powered else None) as bench:
+        bench.wind(*state.wind_ned_m_s())
+        if scenario == "hover":
             hover_test(bench, export, motor_count, args.hover_s)
-        elif args.test in ("cruise", "level"):
-            battery_wh = export.motor.pack_wh
-            if args.test == "cruise":
-                cruise_test(bench, export, motor_count, battery_wh, tuple(args.motor_steps))
-            else:
-                level_test(bench, export, motor_count, battery_wh, start_speed_m_s, airframe.tailsitter)
+            return
+        if start == "ground":
+            flight.take_off(bench, export)
         else:
-            dash_test(bench, motor_count)
+            flight.start_airborne(bench)
+        if scenario == "efficiency":
+            efficiency(bench, flight, export, motor_count, args.sweep_from)
+        elif scenario == "top-speed":
+            top_speed(bench, flight, motor_count)
+        elif scenario == "glide":
+            glide(bench, flight, cruise_m_s)
+        else:
+            controls(bench, flight, motor_count, len(resolved.controls), cruise_m_s if powered else None)
 
 
 if __name__ == "__main__":

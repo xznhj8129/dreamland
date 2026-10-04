@@ -175,55 +175,98 @@ ASB view
 RightPane [arrange:column]
 
     * RightTabs [ui:tabs]
-        Parameters
+        Airframe
+        Fuselage
+        Surfaces
         Propulsion
-        Assembly
+        Volumes
+        Parts
 ```
 
-## Parameters tab
+## Fuselage tab
 
 ```text
-ParametersTab [arrange:column]
+FuselageTab [scrollable, arrange:column]
 
-    * ParametersHeader
-    * AssemblyCard
+    * SizePresetPanel
+    * FuselagePanel
+    * ReinforcementPanel
+    * SectionsTable
 ```
 
-### ParametersHeader
+### SizePresetPanel
 
 ```text
-ParametersHeader [arrange:column]
+SizePresetPanel  (title "Size preset (data/specs.json)")
 
-    - Assembly Name [ui:textbox, bind:assembly_name]
-    - Standard Profile [ui:dropdown, bind:config.standard_profile]
-    - Apply [ui:checkbox, bind:config.apply_standard]
-    - Fuselage OD (mm) [ui:textbox, bind:config.fuselage_od_mm]
-    - Fuselage ID (mm) [ui:textbox, bind:config.fuselage_id_mm]
-    - Material Density (g/cm^3) [ui:textbox, bind:config.material_density_g_cm3]
+    - aircraft [ui:text]
+        none | <preset> | <preset> (modified)
+        modified = section, joints or rod pattern differ from the preset; updates after every edit
+    - preset [ui:dropdown, readonly]
+        values = (none), then the presets in data/specs.json
+    - Load [ui:button]
+        on:click -> fill section, joints (not coupler mass) and rod pattern (not from/to x) from the preset,
+                    label the aircraft with it; rods it had keep their from/to x, new rods run nose end to tail start;
+                    a preset without rods removes them; (none) clears the label only
+    - Save [ui:button]
+        on:click -> confirm, then overwrite the picked preset with this aircraft's section, joints and rod pattern;
+                    the preset keeps its limits and CAD data; (none) asks to pick a preset or use New
+    - New [ui:button]
+        on:click -> ask a name, save this aircraft's values as a new preset (no limits, no CAD data), label the aircraft with it;
+                    an existing name is refused
+    a preset that fails validation is not written; data/specs.json stays as it was and the reason is shown
 ```
 
-### AssemblyCard
+### FuselagePanel
 
 ```text
-AssemblyCard [editable]
+FuselagePanel
+    - length
+    * section: width, height, shape (superellipse exponent, 2 = circle), wall radial
+    * nose, tail: profile [ui:dropdown], length, the profile's parameters
+    * joints: type [ui:dropdown], count, screw, insertion depth, coupler mass
+```
 
-    fields from config excluding:
-        - parts
-        - fuselage_od_mm
-        - fuselage_id_mm
-        - material_density_g_cm3
-        - thrust_axis_tilt_deg
-        - standard_profile
-        - apply_standard
-        - battery
-        - motors
-        - props
+### ReinforcementPanel
 
-    bool fields
-        ui:checkbox
+```text
+ReinforcementPanel  (title "Reinforcement (longitudinal rods)")
 
-    scalar fields
-        ui:textbox
+    - rods [ui:checkbox]
+        off -> rods removed (kept to restore while the window is open)
+        on  -> the removed rods, or the labelled preset's pattern, or 4 single 2.5 mm carbon rods at 45 deg against the inner wall;
+               new rods run nose end to tail start
+    - type [ui:dropdown]
+    - material [ui:dropdown]  (data/parts.json materials)
+    - diameter, radial position (rod centre from the axis)
+    - polar_n (all rods), polar_offset_angle (deg from the horizontal), polar_split (0 = single, 2 = pair),
+      polar_split_angle (deg: a pair sits at offset +/- this)
+    - from x, to x
+    one rod position per quadrant, mirrored left/right and top/bottom
+    drawn as dashed lines in the side view and small circles in the front view
+```
+
+### SectionsTable
+
+```text
+SectionsTable  (title "Sections (cut lines; drag them in the side view)")
+
+    - Add cut [ui:button]
+        on:click -> split the longest section at its middle; both halves keep its solid flag and lose its weighed masses
+
+    columns, one row per section
+        section mm   S<n> from-to
+        cut mm       the section's end cut [ui:textbox]; none on the last section
+        solid        [ui:checkbox]  off = hollow shell wall; on = solid less the volumes inside it
+        empty g      weighed printed mass [ui:textbox]; blank = calc
+        calc         computed printed mass (hollow: shell wall x material density; solid: x print bulk density)
+        complete g   weighed printed mass + everything attached in the section [ui:textbox]; blank = items
+        items        itemised mass of everything attached in the section (props with their motor, motors with their mount,
+                     wing sets at their root leading edge); a range when it holds a mass range
+        Del          [ui:button] delete the section's end cut: the two sections merge, keeping the left one's solid flag,
+                     each weighed mass summed when both had one
+    calc and items update after every edit
+    the side view labels each section "S<n> <empty> g" (* = computed), its length, "solid", and "<complete> g all" when weighed
 ```
 
 ## Propulsion tab
@@ -306,158 +349,6 @@ Text report
 Refreshes after every edit
 ```
 
-## Assembly tab
-
-```text
-AssemblyTab [arrange:column]
-
-    - Add New [ui:button]
-    * ModuleStack [fill, scrollable, arrange:column]
-```
-
-### PartCard
-
-```text
-PartCard [editable, arrange:column]
-
-    title = "{index}. {module_name}"
-    header includes a small + / - collapse toggle beside the title
-
-    * PartControls [arrange:row]
-        - Up
-        - Down
-        - Delete
-
-    * LoadModuleRow
-        - module-library dropdown
-        - Load button
-
-    * ParametersSection
-    * SurfaceSection
-    * PartFieldsSection
-```
-
-### ParametersSection
-
-```text
-ParametersSection [editable]
-
-    preferred module field order:
-        name
-        type
-        len
-        mass
-        cg
-        wings_layout
-        wings_fin_pos
-        wings_ang
-        wings_x
-        wings_y_offset
-        pointed_shape
-        fins
-        ballast
-        battery
-        payload
-        esc
-        motor
-        motor_x_pos
-        motor_y_pos
-        motor_dir
-
-    hidden module fields:
-        diam
-        model
-
-    read-only rows
-        - wing count, derived from the selected layout (shown for wingmounts
-          and for end modules with fins enabled)
-
-    special cases
-        - wings_layout is a dropdown with options H, 1, 3, +, X
-        - selecting X sets dihedral to 45 if it was 0
-        - wings_y_offset meaning depends on layout: for H-type pairs
-          -1=bottom, 0=mid, 1=top; for X, -1=mid, 0=45 deg, 1=top
-        - wings_fin_pos is only shown for layouts 1 and 3
-        - end modules only expose fin placement fields when fins is enabled
-        - end modules edit pointed geometry through a nested pointed_shape block
-        - inside pointed_shape, only the parameters relevant to the selected shape are shown
-        - canonical exposed shape parameters include:
-            K' for parabolic
-            rho for secant ogive
-            L1 and R1 for bi-conic
-            r_n for spherically blunted shapes
-        - motor placement fields are hidden when motor is false
-```
-
-### SurfaceSection
-
-```text
-SurfaceSection [editable]
-
-    shown only when the part supports surfaces
-
-    preferred surface field order:
-        name
-        type
-        semispan
-        mass
-        cg
-        chord_root
-        chord_tip
-        aoa_ang
-        sweep_ang
-        airfoil
-        motor
-        motor_x_pos
-        motor_y_pos
-        motor_dir
-        pod_diam
-        pod_len_flat
-        pod_len_curve
-        pod_shape
-        ctl_surface
-        all_moving
-
-    hidden surface fields:
-        model
-
-    special cases
-        - shows a derived read-only mid-span chord, computed as the trapezoid chord halfway from root to tip
-        - motor placement and pod fields are hidden when motor is false
-```
-
-### PartFieldsSection
-
-```text
-PartFieldsSection [editable]
-
-    placement fields appear when module.battery, module.payload, or module.ballast is true:
-        x
-            FRU local frame
-            positive = Front
-            relative to module geometric center
-        y
-            FRU local frame
-            positive = Right
-            relative to module geometric center
-        z
-            FRU local frame
-            positive = Up
-            relative to module geometric center
-        pitch
-        yaw
-        roll
-
-    special mass fields
-        - payload_mass when module.payload is true
-        - ballast_mass when module.ballast is true
-
-    orientation fields
-        - are stored in assembly data
-        - are exposed in the UI
-        - are not yet used by analysis or drawing
-```
-
 ## Field input behavior
 
 ```text
@@ -483,14 +374,4 @@ motor_dir
 
 pod_shape
     - enum = { elliptical, ogive }
-```
-
-## Config normalization
-
-```text
-Built-in default and loaded saved configs
-    - are normalized through templates before editing or rendering
-    - module dicts inherit their full module template by type
-    - surface dicts inherit their full surface template by type
-    - part dicts inherit part_defaults
 ```

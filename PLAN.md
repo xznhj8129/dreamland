@@ -20,10 +20,12 @@ Status: draft spec, awaiting approval. Supersedes the Lego module-stack model as
 - Main design driver after the overall shape: user-defined internal volumes (like battery and payload) with a size (e.g. 20x20x20 mm, or internal diameter x 50 mm), a mass (fixed, e.g. 20 g, or a range, e.g. 10-30 g), dragged to where they are needed. They drive and constrain everything else.
 - CadQuery generates the bigger sections and volumes; final fine adjustments may be done in FreeCAD. Not every facet and cut is defined in spec files.
 - Old part sums are approximately accurate (m62v2 ~1.1 kg real).
+- 2026-10-03: Goal: a do-it-all design framework for new-generation drone designs: quadcopter, plane, quadplane, rocket boosted, any mix. JSBSim simulates all of it. Next propulsion type: rocket motors, with staging (OpenRocket logic).
+- 2026-10-03: Flight controller scripts: Python for now (later ArduPilot/PX4/Arduino-level code). One `Controller` class defines the API; scripts in `aircraft/<project>/controllers/`; setup()/loop() at a chosen rate, lockstep simulated time; hardware units as an Arduino gets them (SPI IMU counts, Pa, NAV-PVT GPS, PWM us). Same flight log and plots as an INAV run.
 
 ## 1. Aircraft definition (saved file, schema "airframe/2")
 
-Implemented in `libs/airframe.py` (`python -m libs.airframe aircraft/m62v2.json`). SI units (m, kg); angles in degrees; x from the nose tip. Library parts are referenced as `<category>:<name>` from `data/parts.json`. Loading fails on any missing required field, unknown field, bad value or unresolved reference.
+Implemented in `libs/airframe.py` (`python -m libs.airframe aircraft/m62v2/aircraft.json`). Saved as `aircraft/<project>/aircraft.json` (`libs/project.py`). SI units (m, kg); angles in degrees; x from the nose tip. Library parts are referenced as `<category>:<name>` from `data/parts.json`. Loading fails on any missing required field, unknown field, bad value or unresolved reference.
 
 ```
 schema              "airframe/2"
@@ -31,17 +33,23 @@ powered, vtol, tailsitter   true/false; tailsitter needs vtol, vtol needs powere
                     tailsitter = hover + forward mixer profiles; not vtol = AIRPLANE profile, motors on throttle only;
                     other VTOL types and unpowered airframes are not exported. Hover numbers only for vtol.
 name, notes
-preset              optional label (M62, M75); values are always written out in full
+preset              optional: a data/specs.json preset name (M62, M75). Loading it fills section, joints (not coupler_mass_kg)
+                    and the reinforcement pattern (not from_x_m/to_x_m); values are always written out in full, and the
+                    fuselage is checked against the preset's limits
 operating_point     aoa_deg, airspeed_m_s, altitude_m
 print               material (parts.json material), printer_bed_m [x, y, z],
-                    surface_bulk_density_kg_m3 (printed surface mass per solid airfoil volume; required only if a surface
-                    has no mass_kg; 318.3 = single-wall 5 % infill PLA, from a weighed 77 g NACA2408 105 x 400 mm segment)
+                    bulk_density_kg_m3 (printed mass per solid volume; required only if a surface has no mass_kg or a solid
+                    section no empty_mass_kg; 318.3 = single-wall 5 % infill PLA, from a weighed 77 g NACA2408 105 x 400 mm segment)
 fuselage
   length_m
   section           width_m, height_m, shape (superellipse exponent; 2 = circle), wall_radial_m
   nose, tail        profile (pointed_shapes name), length_m, params (exactly the profile's keys)
   joints            type radial_screws, count, screw, insertion_depth_m, coupler_mass_kg (optional, one per cut)
-  spar_rods         optional: count, diameter_m, radial_position_m, angle_offset_deg, material
+  reinforcement     optional longitudinal rods: type cf_rod, material (parts.json), diameter_m, radial_position_m (rod centre
+                    from the axis), polar_n (all rods), polar_offset_angle (deg from the horizontal, one position per quadrant,
+                    mirrored left/right and top/bottom), polar_split (0 = one rod per position, 2 = a pair at
+                    polar_offset_angle +/- polar_split_angle), polar_split_angle (deg), from_x_m, to_x_m;
+                    rods inside the outer surface and strictly inside their quadrant
   channels[]        name, diameter_m, from_x_m, to_x_m, angle_deg
 surfaces[]          name, x_root_le_m (must be on the body; chords may overhang the tail),
                     layout (H X + 1 3), fin_position (top/bottom), dihedral_deg, root_offset (-1..1),
@@ -82,18 +90,23 @@ parts[]             library components: name, part (<category>:<name> from data/
                     (x = l, y = w, z = h), a point without them; must fit its volume, must not overlap other parts
 sections
   cuts_m[]          cut stations (ascending, inside the fuselage); section i spans cut i-1 .. cut i
-  mass_kg[]         optional, one per section: weighed printed mass (includes whatever is mounted in it), null = computed shell
+  per_section[]     one per section: solid (true: printed solid less the volumes inside it, x print.bulk_density_kg_m3;
+                    false: hollow shell wall), empty_mass_kg (optional: weighed printed mass), complete_mass_kg (optional:
+                    weighed printed mass + everything attached in the section, which it replaces: points by position,
+                    props with their motor, motors with their mount, surface sets at their root LE)
 ```
 
 Body-rooted panels keep the true root edge on the body (follows nose/tail cones) and use an equivalent aero root at the mean body radius under the root chord. Axis-rooted panels start on the axis; Barrowman uses their exposed part.
 
-Converted examples: `aircraft/m62v2.json` and `aircraft/quadlancer62.json` reproduce the old totals (1.1408 / 1.3732 kg, plus props 1.1608 / 1.4292 kg). The old modules are sections (cuts at the module boundaries, module mass as the section's weighed mass), couplers 21.36 g per joint, the battery is the only volume. m62v2 tail fins are axis-rooted, 55 mm span (delta: straight trailing edge, joined at the centre).
+Converted examples: `aircraft/m62v2/` and `aircraft/quadlancer62/` reproduce the old totals (1.1408 / 1.3732 kg, plus props 1.1608 / 1.4292 kg). The old modules are sections (cuts at the module boundaries, module mass as the section's weighed empty mass), couplers 21.36 g per joint, the battery is the only volume. m62v2 tail fins are axis-rooted, 55 mm span (delta: straight trailing edge, joined at the centre).
 
 ## 2. Libraries (data/)
 
 - `parts.json`: batteries (mass required, > 0), ESCs, FCs, cameras, payloads, props (mass), materials.
 - Motors and props: motorlib (`libs/motorlib`, copied from `dronebuildcalc`), used as published.
-- `specs.json`: tube standards, couplers, fasteners, openings, printer bed (exists).
+- `specs.json`: size presets (`presets`: section, joints, reinforcement pattern in the aircraft's own form, limits checked
+  against the aircraft, CAD data), fasteners, openings, printer bed, wiring. Presets are created and saved from the
+  GUI's Fuselage tab.
 - Airfoils: one source (AeroSandbox names), `data/airfoils.json` only for imported coordinates.
 - `modules.json`: retired 2026-10-01 after converting the two example aircraft.
 
@@ -122,8 +135,11 @@ Then minimise section count, then balance lengths. Infeasible combinations (e.g.
 
 ## 5. Structural mass
 
-- Body: wall shell volume between cuts (cross-section perimeter x radial wall) x material density.
-- Couplers and spar rods: from the joint and rod parameters (rod material density).
+- Body, hollow section: wall shell volume between cuts (cross-section perimeter x radial wall) x material density.
+- Body, solid section: outer volume between cuts less the volumes inside it (by the share of each volume's x extent) x
+  print bulk density.
+- Couplers: weighed coupler mass per cut. Rods: rod volume x rod material density, one mass point per section crossed.
+- A section's complete mass replaces it and everything attached in it with one weighed point.
 - Nose/tail: shell of the profile.
 - Surfaces: airfoil cross-section area x span x infill x density.
 - Any section or surface set can be overridden with a weighed mass.

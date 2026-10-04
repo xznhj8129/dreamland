@@ -1,0 +1,26 @@
+# quadrocketbuilder export of 62mm Quad 7in v1: INAV mixer profiles of the tailsitter, structured as the real m62v1
+# config that flew forward (Aug 2025): profile 1 hover (multirotor, tailsitter offset), profile 2 forward flight on
+# the motors (multirotor platform, nose-first mix). Motor outputs in INAV quad X order where it applies.
+set throttle_idle = 8
+set nav_mc_hover_thr = 1281    # predicted motor command 0.339 for 2.53 N per motor
+mixer_profile 1
+set platform_type = MULTIROTOR
+set tailsitter_orientation_offset = ON
+set motor_direction_inverted = OFF
+set mixer_control_profile_linking = ON
+mmix reset
+mmix 0 1.000 -1.000 +1.000 +1.000    # motor 1 qrwing-7in 1, ccw
+mmix 1 1.000 -1.000 -1.000 -1.000    # motor 1 qrwing-7in 3, cw
+mmix 2 1.000 +1.000 +1.000 -1.000    # motor 1 qrwing-7in 2, cw
+mmix 3 1.000 +1.000 -1.000 +1.000    # motor 1 qrwing-7in 4, ccw
+mixer_profile 2
+set platform_type = MULTIROTOR
+set tailsitter_orientation_offset = OFF
+set motor_direction_inverted = OFF
+set mixer_control_profile_linking = ON
+mmix reset
+mmix 0 1.000 -1.000 +1.000 -1.000    # motor 1 qrwing-7in 1, ccw
+mmix 1 1.000 +1.000 -1.000 -1.000    # motor 1 qrwing-7in 3, cw
+mmix 2 1.000 +1.000 +1.000 +1.000    # motor 1 qrwing-7in 2, cw
+mmix 3 1.000 -1.000 -1.000 +1.000    # motor 1 qrwing-7in 4, ccw
+mixer_profile 1

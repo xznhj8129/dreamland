@@ -1,7 +1,7 @@
 """
 Usage:
 from libs.cad import build_freecad_exports, build_airframe_assembly, export_step, export_stl
-exports = build_freecad_exports(resolved, standards_data)
+exports = build_freecad_exports(resolved)
 export_step(resolved, "out.step", mode="assembly")
 
 CAD export of a resolved airframe (libs/geometry.py): FreeCAD varset values and CadQuery solids. Solid geometry
@@ -77,7 +77,7 @@ def _airfoil_section_coordinates(airfoil_name: str):
     return [(float(x), float(y)) for x, y in coordinates]
 
 
-def build_airframe_params_export(resolved: ResolvedAirframe, standards_data: dict) -> dict:
+def build_airframe_params_export(resolved: ResolvedAirframe) -> dict:
     airframe = resolved.airframe
     section = airframe.fuselage.section
     width_mm = section.width_m * M_TO_MM
@@ -112,18 +112,18 @@ def build_airframe_params_export(resolved: ResolvedAirframe, standards_data: dic
             "MotorHeight": freecad_property("App::PropertyLength", motor.bell_length_m * M_TO_MM, "mm"),
             "PropDiameter": freecad_property("App::PropertyLength", motor.prop_radius_m * 2.0 * M_TO_MM, "mm"),
         }
-    if airframe.preset in standards_data["specs"]:
+    if airframe.preset is not None and airframe.preset.cad is not None:
         export["Modules"] = {
-            "CouplerHoleDist": freecad_property("App::PropertyLength", standards_data["specs"][airframe.preset]["coupling"]["hole_edge_dist"], "mm"),
+            "CouplerHoleDist": freecad_property("App::PropertyLength", airframe.preset.cad.hole_edge_dist_m * M_TO_MM, "mm"),
             "CouplerLen": freecad_property("App::PropertyLength", airframe.fuselage.joints.insertion_depth_m * 2.0 * M_TO_MM, "mm"),
             "WingSecFuselageThickness": freecad_property("App::PropertyLength", wall_mm, "mm"),
         }
     return export
 
 
-def build_freecad_exports(resolved: ResolvedAirframe, standards_data: dict) -> dict:
+def build_freecad_exports(resolved: ResolvedAirframe) -> dict:
     return {
-        "AirframeParams": build_airframe_params_export(resolved, standards_data),
+        "AirframeParams": build_airframe_params_export(resolved),
     }
 
 

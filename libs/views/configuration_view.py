@@ -11,17 +11,19 @@ from __future__ import annotations
 
 import copy
 import tkinter as tk
-from tkinter import ttk
+from tkinter import messagebox, simpledialog, ttk
 
 import matplotlib.pyplot as plt
 from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 from libs.airframe import (
-    AXES, CONTROL_KINDS, CONTROL_ROLES, FIN_POSITIONS, JOINT_TYPES, LAYOUT_PANEL_COUNTS, LAYOUTS, MOUNT_TARGETS, SERVO_OUTPUTS,
-    PART_CATEGORIES, SINGLE_PROP_SPINS, SURFACE_PROP_SPINS, SURFACE_ROOTS, THRUST_DIRECTIONS, VOLUME_SHAPES, motor_repo,
+    AXES, CONTROL_KINDS, CONTROL_ROLES, FIN_POSITIONS, JOINT_TYPES, LAYOUT_PANEL_COUNTS, LAYOUTS, MOUNT_TARGETS, REINFORCEMENT_TYPES,
+    SERVO_OUTPUTS, PART_CATEGORIES, SINGLE_PROP_SPINS, SURFACE_PROP_SPINS, SURFACE_ROOTS, THRUST_DIRECTIONS, VOLUME_SHAPES, AirframeError,
+    motor_repo,
 )
 from libs.graphics import draw_canvas_view
+from libs.presets import ROD_PATTERN_KEYS, apply_preset, default_rod_extent, preset_names, preset_status, read_specs, save_preset
 from libs.propulsion import propulsion_summary, summary_lines
 from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS
 
@@ -34,7 +36,7 @@ MM_KEYS = {
     "from_x_m", "to_x_m", "x_root_le_m", "span_m", "chord_root_m", "chord_tip_m", "span_position_m",
     "x_offset_m", "y_offset_m", "z_offset_m", "x_m", "y_m", "z_m", "flat_length_m", "curve_length_m", "nose_radius", "size_m", "printer_bed_m", "cuts_m",
 }
-GRAM_KEYS = {"mass_kg", "coupler_mass_kg"}
+GRAM_KEYS = {"mass_kg", "coupler_mass_kg", "empty_mass_kg", "complete_mass_kg"}
 UNIT_SUFFIXES = ("_kg_m3", "_m_s", "_deg_s", "_deg", "_kg", "_m")
 CHOICES = {
     "layout": list(LAYOUTS),
@@ -63,6 +65,11 @@ NEW_CONTROL = {"kind": "split", "roles": [], "deflection_min_deg": -25.0, "defle
 NEW_POD = {"diameter_m": 0.035, "flat_length_m": 0.02, "curve_length_m": 0.05, "profile": "elliptical"}
 NEW_MOTOR = {"manufacturer": "DYS", "name": "X2807-1300"}  # motorlib
 NEW_PROP = "APC E 7x5"  # motorlib
+# Rods for an aircraft without a preset to take them from: 4 x 2.5 mm carbon (the built M62 aircraft), touching the inner wall.
+NEW_ROD_PATTERN = {"type": "cf_rod", "material": "carbon_rod", "diameter_m": 0.0025, "polar_n": 4, "polar_offset_angle": 45.0, "polar_split": 0, "polar_split_angle": 0.0}
+NO_PRESET = "(none)"
+SECTION_COLUMNS = ("section mm", "cut mm", "solid", "empty g", "calc", "complete g", "items", "")
+SECTION_ENTRY_WIDTH = 5
 TYPE_FLAGS = ("tailsitter", "vtol", "powered")  # each implies the ones after it
 DRAG_KEYS = {"volume": ("volumes", "x_m"), "surface": ("surfaces", "x_root_le_m")}  # cuts drag the sections.cuts_m entry itself
 MIN_SECTION_LENGTH_M = 0.005
@@ -116,6 +123,9 @@ class ConfigurationMainView:
         self.view_metrics = None
         self.control_deflections: dict[int, float] = {}  # control number -> deg, drawn in the views; no UI yet
         self.stashed_propulsion: dict | None = None  # propulsion block removed by unticking powered, restored on ticking it
+        self.stashed_reinforcement: dict | None = None  # rods removed by unticking them, restored on ticking them
+        self.preset_status_var = tk.StringVar(value="")
+        self.section_vars: list[tuple[tk.StringVar, tk.StringVar, tk.StringVar]] = []  # per section: x range, computed empty, itemised complete
         self.motor_info: ttk.LabelFrame | None = None  # rebuilt after every recompute: it reads positions (wiring, hover)
         self.view_scroll_x = None
         self.view_scroll_y = None
@@ -335,24 +345,42 @@ class ConfigurationMainView:
         self.app.recompute()
         if rebuild:
             self.rebuild_editors()  # after recompute, so editors can show resolved values (control numbers)
-        elif self.motor_info is not None and self.motor_info.winfo_exists():
+            return
+        if self.motor_info is not None and self.motor_info.winfo_exists():
             self.build_motor_info(self.motor_info.master, int(self.motor_info.grid_info()["row"]))
+        self.refresh_fuselage_status()
+
+    def refresh_fuselage_status(self) -> None:
+        """Preset label and the computed section masses, after any edit."""
+        self.preset_status_var.set(preset_status(self.app.definition))
+        resolved = self.app.resolved
+        if resolved is None or len(resolved.sections) != len(self.section_vars):
+            return
+        for index, (section, (range_var, empty_var, itemised_var)) in enumerate(zip(resolved.sections, self.section_vars)):
+            range_var.set(f"S{index + 1} {section.x0_m * 1000:.0f}-{section.x1_m * 1000:.0f}")
+            empty_var.set("-" if section.empty_estimate_kg is None else f"{section.empty_estimate_kg * 1000:.1f}")
+            low, high = section.complete_itemised_kg
+            itemised_var.set(f"{low * 1000:.1f}" if low == high else f"{low * 1000:.1f}-{high * 1000:.1f}")
 
     def add_entry(self, frame, row: int, data, key, optional: bool = False, label: str | None = None, unit_key: str | None = None, blank_hint: str | None = None,
                   on_commit=None) -> None:
-        """Entry for one value of a dict (by key) or list (by index); commits on Return/focus-out only when the text changed.
-        unit_key names the field for units and label when key is a list index. on_commit(old, new) runs after a change
-        (e.g. to carry a rename to references), and the editors are then rebuilt."""
+        """Labelled entry row for one value of a dict (by key) or list (by index); see make_entry. unit_key names the
+        field for units and label when key is a list index."""
         unit_key = unit_key or key
         ttk.Label(frame, text=label or field_label(unit_key)).grid(row=row, column=0, sticky="w")
-        present = type(data) is list or key in data
-        initial = format_value(unit_key, data[key] if present else None)
-        variable = tk.StringVar(value=initial)
-        entry = ttk.Entry(frame, textvariable=variable)
-        entry.grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=1)
+        self.make_entry(frame, data, key, unit_key, optional, on_commit).grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=1)
         if optional:
             hint = blank_hint or ("blank = computed" if unit_key in GRAM_KEYS else "blank = none")
             ttk.Label(frame, text=hint).grid(row=row, column=2, sticky="w", padx=(6, 0))
+
+    def make_entry(self, frame, data, key, unit_key: str, optional: bool = False, on_commit=None, width: int | None = None) -> ttk.Entry:
+        """Entry (not gridded) for one value of a dict or list; commits on Return/focus-out only when the text changed.
+        Optional: blank removes the key (a list entry becomes None). on_commit(old, new) runs after a change (e.g. to carry
+        a rename to references), and the editors are then rebuilt."""
+        present = type(data) is list or key in data
+        initial = format_value(unit_key, data[key] if present else None)
+        variable = tk.StringVar(value=initial)
+        entry = ttk.Entry(frame, textvariable=variable) if width is None else ttk.Entry(frame, textvariable=variable, width=width)
         state = {"text": initial}
 
         def commit(_event=None) -> str:
@@ -383,6 +411,7 @@ class ConfigurationMainView:
 
         for sequence in ("<Return>", "<KP_Enter>", "<FocusOut>"):
             entry.bind(sequence, commit)
+        return entry
 
     def add_vector_entries(self, frame, row: int, data: dict, key: str, axis_labels: tuple[str, ...]) -> int:
         for index, axis_label in enumerate(axis_labels):
@@ -467,7 +496,7 @@ class ConfigurationMainView:
                 print_settings = definition["print"]
                 self.add_choice(group, 0, print_settings, "material", sorted(self.app.parts_data["material"]))
                 next_row = self.add_vector_entries(group, 1, print_settings, "printer_bed_m", ("x", "y", "z"))
-                self.add_entry(group, next_row, print_settings, "surface_bulk_density_kg_m3", optional=True)
+                self.add_entry(group, next_row, print_settings, "bulk_density_kg_m3", optional=True)
             else:
                 self.add_fields(group, definition[key])
 
@@ -510,8 +539,9 @@ class ConfigurationMainView:
 
     def build_fuselage_tab(self, parent) -> None:
         fuselage = self.app.definition["fuselage"]
+        self.build_preset_group(parent, 0)
         group = ttk.LabelFrame(parent, text="Fuselage", padding=6)
-        group.grid(row=0, column=0, sticky="ew", padx=4, pady=4)
+        group.grid(row=1, column=0, sticky="ew", padx=4, pady=4)
         group.columnconfigure(1, weight=1)
         self.add_entry(group, 0, fuselage, "length_m")
         row = 1
@@ -527,44 +557,148 @@ class ConfigurationMainView:
             else:
                 self.add_fields(sub, fuselage[key])
             row += 1
-        self.build_sections_group(parent, 1)
+        self.build_reinforcement_group(parent, 2)
+        self.build_sections_group(parent, 3)
+        self.refresh_fuselage_status()
 
-    def build_sections_group(self, parent, grid_row: int) -> None:
-        definition = self.app.definition
-        sections = definition["sections"]
-        cuts = sections["cuts_m"]
-        masses = sections.setdefault("mass_kg", [None] * (len(cuts) + 1))
-        group = ttk.LabelFrame(parent, text="Sections (cut lines; drag them in the side view)", padding=6)
+    def build_preset_group(self, parent, grid_row: int) -> None:
+        group = ttk.LabelFrame(parent, text="Size preset (data/specs.json)", padding=6)
         group.grid(row=grid_row, column=0, sticky="ew", padx=4, pady=4)
         group.columnconfigure(1, weight=1)
-        ttk.Button(group, text="Add cut", command=self.add_cut).grid(row=0, column=0, sticky="w", pady=(0, 4))
-        bounds = [0.0, *cuts, definition["fuselage"]["length_m"]]
-        row = 1
-        for index in range(len(masses)):
-            self.add_entry(group, row, masses, index, optional=True, unit_key="mass_kg",
-                           label=f"S{index + 1} {bounds[index] * 1000:.0f}-{bounds[index + 1] * 1000:.0f} mm, weighed (g)")
-            row += 1
+        ttk.Label(group, text="aircraft").grid(row=0, column=0, sticky="w")
+        ttk.Label(group, textvariable=self.preset_status_var).grid(row=0, column=1, sticky="w", padx=(8, 0))
+        ttk.Label(group, text="preset").grid(row=1, column=0, sticky="w")
+        chosen = tk.StringVar(value=self.app.definition.get("preset") or NO_PRESET)
+        ttk.Combobox(group, values=[NO_PRESET, *preset_names()], textvariable=chosen, state="readonly").grid(row=1, column=1, sticky="ew", padx=(8, 0), pady=1)
+        buttons = ttk.Frame(group)
+        buttons.grid(row=2, column=1, sticky="w", padx=(8, 0), pady=(4, 0))
+        ttk.Button(buttons, text="Load", command=lambda: self.load_preset(chosen.get())).grid(row=0, column=0, padx=(0, 6))
+        ttk.Button(buttons, text="Save", command=lambda: self.save_preset_as(chosen.get(), overwrite=True)).grid(row=0, column=1, padx=(0, 6))
+        ttk.Button(buttons, text="New", command=self.new_preset).grid(row=0, column=2)
+
+    def load_preset(self, name: str) -> None:
+        """Fill the section, joints and rods from the preset and label the aircraft with it; none clears the label."""
+        if name == NO_PRESET:
+            self.app.definition.pop("preset", None)
+        else:
+            apply_preset(self.app.definition, name)
+        self.changed(rebuild=True)
+
+    def save_preset_as(self, name: str, overwrite: bool) -> None:
+        if name == NO_PRESET:
+            self.app.recompute_status_var.set("Pick a preset to save over, or New")
+            return
+        if overwrite and not messagebox.askyesno(
+                "Save preset", f"Overwrite preset {name} in data/specs.json with this aircraft's section, joints and rods?\n"
+                f"Every aircraft labelled {name} then shows as modified where it differs. Limits and CAD data stay.", parent=self.frame):
+            return
+        try:
+            save_preset(name, self.app.definition, self.app.parts_data)
+        except AirframeError as error:
+            messagebox.showerror("Save preset", f"Not saved, data/specs.json unchanged:\n{error}", parent=self.frame)
+            return
+        self.app.definition["preset"] = name
+        self.changed(rebuild=True)
+
+    def new_preset(self) -> None:
+        name = simpledialog.askstring("New preset", "Preset name (e.g. M62):", parent=self.frame)
+        if not name:
+            return
+        if name in preset_names() or name == NO_PRESET:
+            messagebox.showerror("New preset", f"A preset named {name} already exists.", parent=self.frame)
+            return
+        self.save_preset_as(name, overwrite=False)
+
+    def build_reinforcement_group(self, parent, grid_row: int) -> None:
+        fuselage = self.app.definition["fuselage"]
+        group = ttk.LabelFrame(parent, text="Reinforcement (longitudinal rods)", padding=6)
+        group.grid(row=grid_row, column=0, sticky="ew", padx=4, pady=4)
+        group.columnconfigure(1, weight=1)
+        enabled = tk.BooleanVar(value="reinforcement" in fuselage)
+        ttk.Checkbutton(group, text="rods", variable=enabled, command=lambda: self.toggle_reinforcement(enabled)).grid(row=0, column=0, sticky="w")
+        if "reinforcement" not in fuselage:
+            return
+        rods = fuselage["reinforcement"]
+        self.add_choice(group, 1, rods, "type", list(REINFORCEMENT_TYPES))
+        self.add_choice(group, 2, rods, "material", sorted(self.app.parts_data["material"]))
+        for row, key in enumerate(("diameter_m", "radial_position_m", "polar_n", "polar_offset_angle", "polar_split", "polar_split_angle", "from_x_m", "to_x_m"), start=3):
+            self.add_entry(group, row, rods, key)
+        ttk.Label(group, text="one rod position per quadrant, polar_offset_angle (deg) up from the horizontal, mirrored left/right and top/bottom; "
+                                   "polar_split 2 = a pair at +/- polar_split_angle (deg), 0 = single; polar_n = all rods", wraplength=360, justify="left").grid(
+            row=11, column=0, columnspan=3, sticky="w")
+
+    def toggle_reinforcement(self, variable: tk.BooleanVar) -> None:
+        """Ticking restores the unticked rods, or takes the preset's pattern, or NEW_ROD_PATTERN against the inner wall."""
+        definition = self.app.definition
+        fuselage = definition["fuselage"]
+        if not variable.get():
+            self.stashed_reinforcement = fuselage.pop("reinforcement", None)
+        elif self.stashed_reinforcement is not None:
+            fuselage["reinforcement"] = self.stashed_reinforcement
+        else:
+            preset = read_specs()["presets"].get(definition.get("preset"), {})
+            if "reinforcement" in preset:
+                pattern = {key: preset["reinforcement"][key] for key in ROD_PATTERN_KEYS}
+            else:
+                section = fuselage["section"]
+                inner_radius = min(section["width_m"], section["height_m"]) / 2.0 - section["wall_radial_m"]
+                pattern = NEW_ROD_PATTERN | {"radial_position_m": round(inner_radius - NEW_ROD_PATTERN["diameter_m"] / 2.0, 6)}
+            fuselage["reinforcement"] = copy.deepcopy(pattern) | default_rod_extent(definition)
+        self.changed(rebuild=True)
+
+    def build_sections_group(self, parent, grid_row: int) -> None:
+        sections = self.app.definition["sections"]
+        cuts, rows = sections["cuts_m"], sections["per_section"]
+        group = ttk.LabelFrame(parent, text="Sections (cut lines; drag them in the side view)", padding=6)
+        group.grid(row=grid_row, column=0, sticky="ew", padx=4, pady=4)
+        ttk.Button(group, text="Add cut", command=self.add_cut).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
+        for column, title in enumerate(SECTION_COLUMNS):
+            ttk.Label(group, text=title).grid(row=1, column=column, sticky="w", padx=(0, 4))
+        self.section_vars = []
+        for index, row_data in enumerate(rows):
+            grid_row = index + 2
+            range_var, empty_var, itemised_var = tk.StringVar(), tk.StringVar(), tk.StringVar()
+            self.section_vars.append((range_var, empty_var, itemised_var))
+            ttk.Label(group, textvariable=range_var).grid(row=grid_row, column=0, sticky="w", padx=(0, 4))
             if index < len(cuts):
-                self.add_entry(group, row, cuts, index, unit_key="cuts_m", label=f"  cut {index + 1} (mm)")
-                ttk.Button(group, text="Delete cut", command=lambda i=index: self.delete_cut(i)).grid(row=row, column=2, sticky="e", padx=(6, 0))
-                row += 1
+                self.make_entry(group, cuts, index, "cuts_m", width=SECTION_ENTRY_WIDTH).grid(row=grid_row, column=1, sticky="w", padx=(0, 4), pady=1)
+            solid = tk.BooleanVar(value=row_data["solid"])
+            ttk.Checkbutton(group, variable=solid, command=lambda r=row_data, v=solid: self.set_solid(r, v)).grid(row=grid_row, column=2)
+            for column, key in ((3, "empty_mass_kg"), (5, "complete_mass_kg")):
+                self.make_entry(group, row_data, key, key, optional=True, width=SECTION_ENTRY_WIDTH).grid(row=grid_row, column=column, sticky="w", padx=(0, 4), pady=1)
+            ttk.Label(group, textvariable=empty_var).grid(row=grid_row, column=4, sticky="w", padx=(0, 4))
+            ttk.Label(group, textvariable=itemised_var).grid(row=grid_row, column=6, sticky="w", padx=(0, 4))
+            if index < len(cuts):
+                ttk.Button(group, text="Del", width=4, command=lambda i=index: self.delete_cut(i)).grid(row=grid_row, column=7, sticky="e")
+        ttk.Label(group, wraplength=360, justify="left",
+                  text="cut mm: the section's end. Blank empty = calc (hollow: shell wall; solid: less its volumes). Blank complete = items: "
+                       "everything attached in the section, which a weighed complete mass replaces.").grid(
+            row=len(rows) + 2, column=0, columnspan=len(SECTION_COLUMNS), sticky="w", pady=(4, 0))
+
+    def set_solid(self, row: dict, variable: tk.BooleanVar) -> None:
+        row["solid"] = variable.get()
+        self.changed()
 
     def add_cut(self) -> None:
+        """Split the longest section in two; both halves keep its solid flag and lose its weighed masses."""
         sections = self.app.definition["sections"]
-        cuts = sections["cuts_m"]
+        cuts, rows = sections["cuts_m"], sections["per_section"]
         bounds = [0.0, *cuts, self.app.definition["fuselage"]["length_m"]]
         longest = max(range(len(bounds) - 1), key=lambda i: bounds[i + 1] - bounds[i])
         cuts.insert(longest, round((bounds[longest] + bounds[longest + 1]) / 2.0, 4))
-        masses = sections["mass_kg"]
-        masses[longest:longest + 1] = [None, None]  # a split section's weighed mass no longer applies
+        rows[longest:longest + 1] = [{"solid": rows[longest]["solid"]}, {"solid": rows[longest]["solid"]}]
         self.changed(rebuild=True)
 
     def delete_cut(self, index: int) -> None:
+        """Merge the sections either side of a cut: the left one's solid flag, each weighed mass summed when both have one."""
         sections = self.app.definition["sections"]
         sections["cuts_m"].pop(index)
-        masses = sections["mass_kg"]
-        merged = None if masses[index] is None or masses[index + 1] is None else masses[index] + masses[index + 1]
-        masses[index:index + 2] = [merged]
+        left, right = sections["per_section"][index:index + 2]
+        merged = {"solid": left["solid"]}
+        for key in ("empty_mass_kg", "complete_mass_kg"):
+            if key in left and key in right:
+                merged[key] = left[key] + right[key]
+        sections["per_section"][index:index + 2] = [merged]
         self.changed(rebuild=True)
 
     def reset_profile_params(self, end: dict) -> None:

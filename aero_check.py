@@ -1,7 +1,7 @@
 """
 Usage:
 python aero_check.py
-python aero_check.py aircraft/m62v1.json --aoa 0 5 10 --airspeed 20
+python aero_check.py aircraft/m62v1 --aoa 0 5 10 --airspeed 20
 
 Checks the live aero's lifting line (libs/aero.py lifting_line_sweep, every AoA in one batch) against
 asb.LiftingLine solved per AoA on the same wings: they must agree to --tolerance (N, N m). Airframes with control
@@ -35,8 +35,9 @@ from libs.aero import (
 )
 from libs.airframe import PARTS_PATH, load_airframe
 from libs.geometry import resolve_airframe
+from libs.project import PROJECTS_DIR, open_project
 
-DEFAULT_AIRFRAMES = (Path("aircraft/m62v1.json"), Path("aircraft/m62v2.json"), Path("aircraft/quadlancer62.json"), Path("aircraft/simpleplane.json"))
+DEFAULT_PROJECTS = tuple(PROJECTS_DIR / name for name in ("m62v1", "m62v2", "quadlancer62", "simpleplane"))
 CHECK_DEFLECTION_DEG = 10.0
 VLM_SPANWISE_RESOLUTION = 12
 VLM_CHORDWISE_RESOLUTION = 8
@@ -106,7 +107,7 @@ def layout_label(surface_set) -> str:
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Check the batched lifting line against asb.LiftingLine; per-surface lift for information.")
-    parser.add_argument("airframes", type=Path, nargs="*", default=list(DEFAULT_AIRFRAMES), help="airframe/2 files")
+    parser.add_argument("projects", type=Path, nargs="*", default=list(DEFAULT_PROJECTS), help="aircraft project directories")
     parser.add_argument("--aoa", type=float, nargs="+", default=[0.0, 5.0, 10.0], help="AoA values in degrees")
     parser.add_argument("--airspeed", type=float, default=20.0, help="Airspeed in m/s")
     parser.add_argument("--tolerance", type=float, default=1e-9, help="Allowed difference in lift, drag (N) and pitch moment (N m)")
@@ -120,8 +121,8 @@ def main() -> None:
     header = f"{'airframe':<14} {'AoA':>5}  {'surface':<18} {'layout':<6} {'live N':>8} {'alone N':>8} {'VLM thru':>9} {'VLM exposed':>11}"
     print(header)
     print("-" * len(header))
-    for path in args.airframes:
-        airframe = load_airframe(path, parts_data)
+    for project in map(open_project, args.projects):
+        airframe = load_airframe(project.build_path, parts_data)
         operating_point = dataclasses.replace(airframe.operating_point, aoa_deg=float(aoa_values[0]), airspeed_m_s=args.airspeed, altitude_m=0.0)
         resolved, _problems = resolve_airframe(dataclasses.replace(airframe, operating_point=operating_point), parts_data)
         hybrid = build_hybrid_airplanes(resolved)
@@ -155,15 +156,15 @@ def main() -> None:
                 for label, difference in zip(("sides add up", "+/- = anti-sym"), side_split_differences(asb_airplane, wing_index, aoa_values, atmosphere, args.airspeed)):
                     status = "ok" if difference <= args.tolerance else "FAIL"
                     if status == "FAIL":
-                        failures.append((path.stem, f"C{own}/C{mirror} {label}", None, difference))
-                    print(f"{path.stem:<14} {'all':>5}  C{own}/C{mirror} {label:<16} AeroBuildup max diff {difference:.1e}  {status}")
+                        failures.append((project.name, f"C{own}/C{mirror} {label}", None, difference))
+                    print(f"{project.name:<14} {'all':>5}  C{own}/C{mirror} {label:<16} AeroBuildup max diff {difference:.1e}  {status}")
         for column, aoa_deg in enumerate(aoa_values):
             for label, plane, batched in (("(all wings)", wing_plane, live), *deflected_cases):
                 total, difference = lifting_line_difference(plane, batched, column, float(aoa_deg), atmosphere, args.airspeed)
                 status = "ok" if difference <= args.tolerance else "FAIL"
                 if status == "FAIL":
-                    failures.append((path.stem, label, float(aoa_deg), difference))
-                print(f"{path.stem:<14} {aoa_deg:5.1f}  {label:<18} {'':<6} {total:8.3f}  max diff to asb.LiftingLine {difference:.1e}  {status}")
+                    failures.append((project.name, label, float(aoa_deg), difference))
+                print(f"{project.name:<14} {aoa_deg:5.1f}  {label:<18} {'':<6} {total:8.3f}  max diff to asb.LiftingLine {difference:.1e}  {status}")
             for index, surface_set in enumerate(resolved.surfaces):
                 exposed_plane = build_asb_airplane(dataclasses.replace(resolved, surfaces=(surface_set,), motors=()))
                 exposed_plane.fuselages = []
@@ -173,7 +174,7 @@ def main() -> None:
                     through_plane.wings = [carried_through(wing) for wing in exposed_plane.wings]
                     through_text = f"{vlm_lift_n(through_plane, float(aoa_deg), args.airspeed):9.3f}"
                 print(
-                    f"{path.stem:<14} {aoa_deg:5.1f}  {surface_set.name:<18} {layout_label(surface_set):<6} "
+                    f"{project.name:<14} {aoa_deg:5.1f}  {surface_set.name:<18} {layout_label(surface_set):<6} "
                     f"{live.lift_n[index, column]:8.3f} {alone[index].lift_n[0, column]:8.3f} {through_text} "
                     f"{vlm_lift_n(exposed_plane, float(aoa_deg), args.airspeed):11.3f}"
                 )

@@ -1,7 +1,8 @@
 """
 Usage:
-from libs.jsbsim import export_jsbsim
-export = export_jsbsim(resolved, parts_data, Path("exports/jsbsim/m62v1"), "m62v1")
+from libs.jsbsim import export_jsbsim, reuse_or_export
+export = export_jsbsim(resolved, parts_data, project.jsbsim_dir, project.name)  # libs/project.py
+export, reused = reuse_or_export(resolved, parts_data, project.build_path, project.jsbsim_dir, project.name)  # skips an unchanged one
 
 JSBSim model of a resolved airframe (libs/geometry.py), for INAV SITL through inav-jsbsim-bench. INAV does the mixing;
 motor i is driven through fcs/throttle-cmd-norm[i], in resolved motor order. Writes:
@@ -44,13 +45,17 @@ Model choices (best estimates where no data exists):
 """
 
 import copy
+import hashlib
 import math
+import pickle
+import shutil
 import xml.etree.ElementTree as ElementTree
 from dataclasses import dataclass
 from pathlib import Path
 
 import aerosandbox as asb
 import jsbsim
+import neuralfoil
 import numpy as np
 
 from libs.aero import AERO_MODEL_SIZE, build_asb_airplane, build_hybrid_airplanes, with_side_deflections
@@ -58,6 +63,10 @@ from libs.airframe import INCH_M, Propulsion
 from libs.geometry import STANDARD_GRAVITY_M_S2, Inertia, ResolvedAirframe, Vec
 from libs.propulsion import MotorModel, motor_model, rpm_for_thrust, static_points
 
+REPO_DIR = Path(__file__).resolve().parent.parent
+EXPORT_INPUT_DIRS = (REPO_DIR / "libs", REPO_DIR / "data")  # the code and libraries an export depends on
+EXPORT_FINGERPRINT_FILE = "export.fingerprint"  # in the export directory, next to the export it describes
+EXPORT_CACHE_FILE = "export.pickle"  # the JSBSimExport of that export
 PROP_J_TABLE_POINTS = 25
 PROP_J_TABLE_END = 1.2  # of the zero-thrust advance ratio
 APC_REFERENCE_PROP = "DJI_9450"  # JSBSim's bundled APC 9x4.5E table, for the Ct(J) and Cp(J) shapes
@@ -116,7 +125,6 @@ class JSBSimExport:
     motor: MotorModel | None  # its constants are the JSBSim motor's (None when unpowered)
     pack_voltage_v: float | None  # JSBSim maxvolts: battery power is V = throttle-pos x pack_voltage_v, I = (V - rpm/Kv) / R
     servo_properties: tuple[str, ...]  # driven by INAV servo output 0, 1, ... (S1, S2, ...), -1..1
-    servo_notes: tuple[str, ...]  # control roles left out of the servo mix, and why
 
 
 @dataclass(frozen=True)
@@ -292,30 +300,26 @@ def control_tables(resolved: ResolvedAirframe) -> list[ControlTable]:
     return sorted(tables, key=lambda table: table.number)
 
 
-def servo_mix(resolved: ResolvedAirframe, tables: list[ControlTable]) -> tuple[list[tuple[int, str, int, str]], list[str]]:
-    """(servo, role, rate sign, controls) per mixed role, and notes on roles left out. Signs follow INAV's stabilized
-    frame (forward-left-up: + roll = right wing down, + pitch = nose down, + yaw = nose left), i.e. JSBSim body Cl, -Cm,
-    -Cn; flaps: + = more lift. A role whose moment is under CONTROL_ROLE_MIN_FRACTION of the control's largest (e.g. pitch
-    on a vertical fin) is left out."""
+def servo_mix(resolved: ResolvedAirframe, tables: list[ControlTable]) -> list[tuple[int, str, int, str]]:
+    """(servo, role, rate sign, controls) per mixed role. Signs follow INAV's stabilized frame (forward-left-up: + roll =
+    right wing down, + pitch = nose down, + yaw = nose left), i.e. JSBSim body Cl, -Cm, -Cn; flaps: + = more lift. A role
+    a control cannot produce (moment under CONTROL_ROLE_MIN_FRACTION of its largest, e.g. pitch on a vertical fin) is
+    simply not given to it."""
     reference = resolved.reference
     rules: dict[tuple[int, str], tuple[int, list[str]]] = {}
-    notes = []
     for table in tables:
         d = table.derivatives
         moments = {"roll": d["Cl"] * reference.span_m, "pitch": -d["Cm"] * reference.chord_m, "yaw": -d["Cn"] * reference.span_m}
-        if not table.roles:
-            notes.append(f"{table.label}: no role, not mixed")
         for role in table.roles:
             value, largest = (-d["CZ"], max(abs(d["CY"]), abs(d["CZ"]))) if role == "flaps" else (moments[role], max(abs(v) for v in moments.values()))
             if abs(value) < CONTROL_ROLE_MIN_FRACTION * largest:
-                notes.append(f"{table.label}: {role} not mixed, its {'lift' if role == 'flaps' else role + ' moment'} is {abs(value) / largest:.0%} of its largest")
                 continue
             sign = 1 if value > 0.0 else -1
             existing = rules.setdefault((table.servo, role), (sign, []))
             if existing[0] != sign:
                 raise ExportError(f"S{table.servo + 1} drives {', '.join(existing[1])} and {table.label} with opposite {role} effect")
             existing[1].append(table.label)
-    return [(servo, role, sign, ", ".join(labels)) for (servo, role), (sign, labels) in sorted(rules.items())], notes
+    return [(servo, role, sign, ", ".join(labels)) for (servo, role), (sign, labels) in sorted(rules.items())]
 
 
 def control_fcs_xml(tables: list[ControlTable]) -> str:
@@ -457,6 +461,34 @@ def write_engine_files(propulsion: Propulsion, model: MotorModel, engine_dir: Pa
     return motor_file, prop_file
 
 
+def export_fingerprint(build_path: Path, out_dir: Path, model_name: str, pack_voltage_v: float | None) -> str:
+    """Hash of everything an export depends on: the aircraft's build file, the code and data under EXPORT_INPUT_DIRS,
+    the AeroSandbox and NeuralFoil versions, the model name, the output directory and the pack voltage."""
+    digest = hashlib.sha256(repr((model_name, str(out_dir), pack_voltage_v, asb.__version__, neuralfoil.__version__)).encode())
+    inputs = sorted(path for root in EXPORT_INPUT_DIRS for path in root.rglob("*") if path.is_file() and "__pycache__" not in path.parts)
+    for path in (build_path, *inputs):
+        digest.update(str(path).encode())
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
+def reuse_or_export(resolved: ResolvedAirframe, parts_data: dict, build_path: Path, out_dir: Path, model_name: str,
+                    pack_voltage_v: float | None = None) -> tuple[JSBSimExport, bool]:
+    """(export, reused): the export already in out_dir when nothing it depends on changed (export_fingerprint), otherwise
+    a fresh one into an emptied out_dir."""
+    fingerprint = export_fingerprint(build_path, out_dir, model_name, pack_voltage_v)
+    fingerprint_path, cache_path = out_dir / EXPORT_FINGERPRINT_FILE, out_dir / EXPORT_CACHE_FILE
+    if fingerprint_path.is_file() and fingerprint_path.read_text() == fingerprint and cache_path.is_file():
+        with open(cache_path, "rb") as file:
+            return pickle.load(file), True
+    shutil.rmtree(out_dir, ignore_errors=True)  # nothing left over from an earlier model name
+    export = export_jsbsim(resolved, parts_data, out_dir, model_name, pack_voltage_v)
+    with open(cache_path, "wb") as file:
+        pickle.dump(export, file)
+    fingerprint_path.write_text(fingerprint)  # last: an export cut short leaves no fingerprint, so it is redone
+    return export, False
+
+
 def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, model_name: str, pack_voltage_v: float | None = None) -> JSBSimExport:
     """pack_voltage_v: battery voltage for the motors (default: nominal). The motor command is the duty, so a lower pack
     gives proportionally less motor voltage per command, as an ESC."""
@@ -492,7 +524,7 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
     </contact>""" for index, (x, y, z) in enumerate(contacts))
     tables, rates = aero_tables(resolved)
     controls = control_tables(resolved)
-    servo_rules, servo_notes = servo_mix(resolved, controls)
+    servo_rules = servo_mix(resolved, controls)
     forces = {"X": "CX", "Y": "CY", "Z": "CZ"}
     moments = {"ROLL": ("Cl", "metrics/bw-ft"), "PITCH": ("Cm", "metrics/cbarw-ft"), "YAW": ("Cn", "metrics/bw-ft")}
     dampers = {"ROLL": ("Clp", "metrics/bw-ft", "aero/bi2vel", "velocities/p-aero-rad_sec"),
@@ -562,7 +594,7 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
         for rule, (servo, role, sign, labels) in enumerate(servo_rules):
             source, frame_sign = HOVER_SERVO_INPUTS[role] if hover else (INAV_SERVO_INPUTS[role], 1)
             lines.append(f"smix {rule} {servo} {source} {sign * frame_sign * INAV_SMIX_RATE} 0 -1    # S{servo + 1} {role}: {labels}")
-        return lines + [f"# {note}" for note in servo_notes]
+        return lines
 
     cli_path = out_dir / "inav_aircraft.cli"
     cli_path.write_text("\n".join([
@@ -606,5 +638,4 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
         hover_motor_fraction=hover_fraction, hover_stick_us=hover_stick_us,
         stance_height_m=max(point[0] for point in contacts) - cg[0] if airframe.tailsitter else None, motor=model, pack_voltage_v=pack_voltage,
         servo_properties=tuple(SERVO_PROPERTY.format(index=index) for index in range(max((table.servo for table in controls), default=-1) + 1)),
-        servo_notes=tuple(servo_notes),
     )

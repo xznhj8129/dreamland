@@ -1,0 +1,173 @@
+{
+    "schema": "airframe/2",
+    "powered": true,
+    "vtol": true,
+    "tailsitter": true,
+    "name": "62mm Quad 7in v1",
+    "notes": "Pure dart: m62v2 without the horizontal main-wing section (section 3, 230-380 mm, and its main-wing removed; everything aft moved 150 mm forward). Section masses as in m62v2.",
+    "preset": "M62",
+    "operating_point": {
+        "aoa_deg": 5.0,
+        "airspeed_m_s": 20.0,
+        "altitude_m": 0.0
+    },
+    "print": {
+        "material": "elegoo_pla_plus",
+        "bulk_density_kg_m3": 318.3,
+        "printer_bed_m": [
+            0.24,
+            0.24,
+            0.25
+        ]
+    },
+    "fuselage": {
+        "length_m": 0.522,
+        "section": {
+            "width_m": 0.062,
+            "height_m": 0.062,
+            "shape": 2.0,
+            "wall_radial_m": 0.00125
+        },
+        "nose": {
+            "profile": "elliptical",
+            "length_m": 0.06,
+            "params": {}
+        },
+        "tail": {
+            "profile": "parabolic",
+            "length_m": 0.07,
+            "params": {
+                "k_prime": 1.0
+            }
+        },
+        "joints": {
+            "type": "radial_screws",
+            "count": 8,
+            "screw": "M3",
+            "insertion_depth_m": 0.01,
+            "coupler_mass_kg": 0.02136
+        },
+        "channels": []
+    },
+    "surfaces": [
+        {
+            "name": "qrwing-7in",
+            "x_root_le_m": 0.245,
+            "layout": "X",
+            "fin_position": "top",
+            "dihedral_deg": 45.0,
+            "root_offset": 0.0,
+            "root": "body",
+            "span_m": 0.1,
+            "chord_root_m": 0.12,
+            "chord_tip_m": 0.06,
+            "sweep_le_deg": 25.0,
+            "incidence_deg": 0.0,
+            "airfoil": "naca0008",
+            "mass_kg": 0.1
+        },
+        {
+            "name": "tailfin",
+            "x_root_le_m": 0.423,
+            "layout": "+",
+            "fin_position": "top",
+            "dihedral_deg": 0.0,
+            "root_offset": 0.0,
+            "root": "axis",
+            "span_m": 0.055,
+            "chord_root_m": 0.1,
+            "chord_tip_m": 0.005,
+            "sweep_le_deg": 60.0,
+            "incidence_deg": 0.0,
+            "airfoil": "naca0008",
+            "mass_kg": 0.004
+        }
+    ],
+    "propulsion": {
+        "motor": {
+            "manufacturer": "DYS",
+            "name": "X2807-1300"
+        },
+        "prop": "APC E 7x5",
+        "battery": "battery",
+        "esc": "ESC",
+        "mounts": [
+            {
+                "on": "surface",
+                "surface": "qrwing-7in",
+                "span_position_m": 0.1,
+                "x_offset_m": 0.12,
+                "direction": "pusher",
+                "spin": "out",
+                "thrust_axis_tilt_deg": 0.0,
+                "pod": {
+                    "diameter_m": 0.035,
+                    "flat_length_m": 0.02,
+                    "curve_length_m": 0.05,
+                    "profile": "elliptical"
+                }
+            }
+        ]
+    },
+    "volumes": [
+        {
+            "name": "battery",
+            "shape": "box",
+            "x_m": 0.135,
+            "size_m": [
+                0.11,
+                0.0355,
+                0.049
+            ]
+        },
+        {
+            "name": "ESC",
+            "shape": "bore",
+            "x_m": 0.416,
+            "length_m": 0.05
+        }
+    ],
+    "parts": [
+        {
+            "name": "battery",
+            "part": "battery:lipo-6S-2200",
+            "volume": "battery"
+        },
+        {
+            "name": "ESC",
+            "part": "esc:esc-4in1-60a",
+            "volume": "ESC",
+            "mass_kg": 0.0
+        }
+    ],
+    "sections": {
+        "cuts_m": [
+            0.06,
+            0.23,
+            0.38,
+            0.452
+        ],
+        "per_section": [
+            {
+                "solid": false,
+                "empty_mass_kg": 0.047
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.065
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.122
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.055
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.015
+            }
+        ]
+    }
+}

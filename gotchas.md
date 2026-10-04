@@ -13,3 +13,8 @@
 - numpy's OpenBLAS spins a thread per core on small matrix products (NeuralFoil): 6x the CPU for no speedup. libs/__init__.py limits BLAS to one thread; measure CPU time (user) as well as wall time.
 - Never derive, fit or adjust model constants from a real flight log to close a gap: the model leaves out countless real details. Report the gap; use published data (motorlib) as is.
 - A missing part's resistance is not 0 in motorlib: its current solve assumes series resistance, and at 0 thrust rises with added resistance. Work the wiring out from the design instead.
+- Grouping mass points by where they sit ignores how they are built: a part goes with what it is attached to (a prop with its motor), not with whichever section its own centroid falls in.
+- An approved multi-phase plan covers every phase: verify each and continue; never end a phase asking for a go-ahead.
+- Write a test by what it measures and run it on every aircraft that can physically do it; the airframe type belongs only where physics or the FC platform differ (how forward flight is entered and held), never in which tests exist.
+- A script pilot's limits and gains are harness limits: before reporting a slowest speed, a power or a failure as the aircraft's, check the pilot was not saturated or oscillating (25 deg pitch cap; a yaw rate term that limit-cycled and doubled the power).
+- Judge a stick-step response by its extreme during the step, not the value at its end: a strong yaw that swung back read as "wrong way".

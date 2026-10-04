@@ -8,26 +8,43 @@ It exists because OpenVSP is unusable for this: the interface is hostile and mos
 
 The original workflow was Lego-style: print tube sections, couplers, nosecones and endcaps in FreeCAD, then assemble aircraft from those parts. That is backwards. The intended way is to design the aircraft as a whole (tube, nose, tail, wings, motors, battery, payload) and then cut it into printable sections.
 
-The aircraft definition is now plane-first (schema `airframe/2`, `PLAN.md` section 1): the GUI, aero, drawing and CAD export read it. `aircraft/m62v2.json` and `aircraft/quadlancer62.json` are real aircraft, originally built the Lego way and re-entered plane-first. `aircraft/m62v1.json` is m62v2 without the horizontal main-wing section: a pure dart. The old module-stack model is retired.
+The aircraft definition is now plane-first (schema `airframe/2`, `PLAN.md` section 1): the GUI, aero, drawing and CAD export read it. `aircraft/m62v2` and `aircraft/quadlancer62` are real aircraft, originally built the Lego way and re-entered plane-first. `aircraft/m62v1` is m62v2 without the horizontal main-wing section: a pure dart. The old module-stack model is retired.
 
 ## Running it
 
 Dependencies (aerosandbox, neuralfoil, cadquery, pandas, numpy, threadpoolctl, Tk) live in the conda env `drone`.
 
 ```
-python guibuilder.py                                          # GUI, opens aircraft/m62v2.json
-python guibuilder.py aircraft/quadlancer62.json
-python analyze_airframe.py aircraft/m62v2.json                # same analysis, text report
-python analyze_airframe.py aircraft/m62v2.json --aoa 5 --airspeed 20 --sweep
-python analyze_airframe.py aircraft/m62v2.json --export-step out.step --step-mode fused --export-stl out.stl
+python guibuilder.py                                          # GUI, opens aircraft/m62v2
+python guibuilder.py aircraft/quadlancer62
+python analyze_airframe.py aircraft/m62v2                     # same analysis, text report
+python analyze_airframe.py aircraft/m62v2 --aoa 5 --airspeed 20 --sweep
+python analyze_airframe.py aircraft/m62v2 --export-step out.step --step-mode fused --export-stl out.stl
 python aero_check.py                                          # live lifting line vs asb.LiftingLine, per-surface info
-python sim_inav.py hover aircraft/m62v1.json --sitl <path>/inav/build_SITL/bin/SITL.elf     # hover in INAV SITL on JSBSim
-python sim_inav.py cruise aircraft/quadlancer62.json --sitl <SITL.elf>                     # takeoff, transition, cruise efficiency
-python sim_inav.py dash aircraft/m62v1.json --sitl <SITL.elf> --inav-config aircraft/inav/m62v1_2025-08-20.txt
-python sim_inav.py plane aircraft/simpleplane.json --sitl <SITL.elf>                       # fixed-wing: level flight, stick steps
+python sim_inav.py hover aircraft/m62v1                       # INAV SITL on JSBSim: hover (VTOL)
+python sim_inav.py efficiency aircraft/quadlancer62           # speed sweep: Wh/km, slowest level speed, range, endurance
+python sim_inav.py efficiency aircraft/m62v1 --start ground   # take off and transition first (VTOL)
+python sim_inav.py top-speed aircraft/m62v1 --inav-config aircraft/m62v1/inav/m62v1_2025-08-20.txt
+python sim_inav.py controls aircraft/simpleplane              # stick steps: each axis moves the commanded way
+python sim_inav.py glide aircraft/testglide                   # motors off: smallest sink rate and best glide
+python sim_inav.py glide aircraft/simpleplane --alt 600 --heading 90 --wind-from 270 --wind-speed 5   # set the start
+python sim_script.py aircraft/simpleplane level --duration 120   # fly a controller script from the project's controllers/
 ```
 
-Aircraft files are opened as an argument or with File → Load. STEP/STL export is also in the GUI's CAD view.
+Each aircraft is a project directory, opened as an argument or with File → Load; Save As copies the whole project under a new name:
+
+```
+aircraft/<project>/
+    aircraft.json   the definition (airframe/2)
+    inav/           real INAV CLI diffs
+    sitl/           SITL.elf (copied in from inav_development on the first run, then pinned), eeprom.bin, sitl.log
+    jsbsim/         JSBSim export
+    logs/           SITL and script flight logs and plots
+    cad/            STEP / STL / FreeCAD exports
+    controllers/    flight controller scripts: setup()/loop() against simulated hardware in raw units (libs/controller.py)
+```
+
+The GUI's SITL view runs the same simulations with a live plot of the flight log; STEP/STL export is in its CAD view. Tube size presets (M62, M75: section, joints, rods) are loaded, saved and created in the Fuselage tab.
 
 ## Reading the results
 
@@ -58,7 +75,7 @@ The Barrowman CP line is a rocket-style estimate shown as a cross-check; if it d
 
 ## How it calculates
 
-1. **Resolve.** The aircraft definition becomes geometry (body stations, wing panels, motors and pods) and point masses: every printed section, coupler, wing set, motor, prop and volume at its real position. That gives total mass, CG (a CG range when a volume's mass is a range) and the inertia tensor. Printed parts are estimated from geometry (fuselage: shell wall x material density; wings and fins: solid airfoil volume x a bulk density calibrated on a weighed printed segment) and the estimate is shown next to any weighed value.
+1. **Resolve.** The aircraft definition becomes geometry (body stations, wing panels, motors and pods) and point masses: every printed section, coupler, rod, wing set, motor, prop and volume at its real position. That gives total mass, CG (a CG range when a volume's mass is a range) and the inertia tensor. Printed parts are estimated from geometry (fuselage sections: hollow = shell wall x material density, solid = outer volume less the volumes inside it x the print bulk density; wings and fins: solid airfoil volume x that bulk density, calibrated on a weighed printed segment) and the estimate is shown next to any weighed value. A section can also take a weighed complete mass, which replaces it and everything attached in it.
 2. **Propulsion.** motorlib (`libs/motorlib`, the rcplanes.online calculator's motor and prop data and formulas, used as published) for the chosen motor, prop and battery, with the resistance from the cells to each motor worked out from the design (pack, wire runs from the parts' positions, plugs, ESC), gives static thrust, current, power, thrust/weight, hover point (VTOL) and flight time. Throttle is INAV's motor output, i.e. ESC duty.
 3. **Aerodynamics (live, ~1.5 s): lifting line + bodies.** AeroSandbox's lifting line for all wings and fins, with body-mounted panels carried through the body to the axis, plus AeroSandbox AeroBuildup for the fuselage, pods and motors. It includes downwash from front surfaces onto rear ones, lift carried across the body, airfoil camber and stall at the actual Reynolds number (NeuralFoil section polars). It is AeroSandbox's `LiftingLine` algorithm solved for the whole AoA sweep at once. The neutral point comes from a straight-line fit of pitch moment against lift over ±4° around the operating point.
 4. **JSBSim export (`libs/jsbsim.py`).** Mass, CG, inertia, contact points, motors with spin and thrust tilt, the same fitted motor and prop tables, full-range AeroBuildup aero tables over airspeed (see `TODO.md` F for the real m62v1 comparison), control surfaces driven by INAV servo outputs, plus INAV mixer profiles by aircraft type (tailsitter: hover and forward flight; fixed-wing or glider: AIRPLANE) with a servo mix whose signs come from each surface's computed moments. `sim_inav.py` flies it in INAV SITL on `inav-jsbsim-bench`; m62v1 hovers at the predicted motor command.

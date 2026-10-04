@@ -8,15 +8,12 @@ CAD view: STEP/STL solid export and FreeCAD varset (AirframeParams) export of th
 from __future__ import annotations
 
 import json
-import re
 import traceback
 import tkinter as tk
-from pathlib import Path
 from tkinter import filedialog, ttk
 
 from libs.cad import build_freecad_exports, export_step, export_stl
 
-STANDARDS_PATH = Path(__file__).resolve().parent.parent.parent / "data" / "specs.json"
 
 STEP_MODE_LABELS = {
     "assembly": "Component assembly (named parts, for CAD)",
@@ -63,9 +60,11 @@ class CADMainView:
             row=4, column=0, sticky="w", pady=(8, 0)
         )
 
-    def default_export_stem(self) -> str:
-        name = self.app.resolved.airframe.name or "airframe"
-        return re.sub(r"[^A-Za-z0-9._-]+", "_", name)
+    def export_dir(self) -> str:
+        """The project's cad/ directory, the default place for exports."""
+        cad_dir = self.app.project.cad_dir
+        cad_dir.mkdir(parents=True, exist_ok=True)
+        return str(cad_dir)
 
     def on_export_step(self) -> None:
         if self.app.resolved is None:
@@ -74,7 +73,8 @@ class CADMainView:
         path = filedialog.asksaveasfilename(
             title="Export STEP",
             defaultextension=".step",
-            initialfile=f"{self.default_export_stem()}.step",
+            initialdir=self.export_dir(),
+            initialfile=f"{self.app.project.name}.step",
             filetypes=[("STEP files", "*.step *.stp"), ("All files", "*.*")],
         )
         if not path:
@@ -100,7 +100,8 @@ class CADMainView:
         path = filedialog.asksaveasfilename(
             title="Export STL",
             defaultextension=".stl",
-            initialfile=f"{self.default_export_stem()}.stl",
+            initialdir=self.export_dir(),
+            initialfile=f"{self.app.project.name}.stl",
             filetypes=[("STL files", "*.stl"), ("All files", "*.*")],
         )
         if not path:
@@ -123,13 +124,12 @@ class CADMainView:
         path = filedialog.asksaveasfilename(
             title="Export FreeCAD params",
             defaultextension=".json",
-            initialfile=f"{self.default_export_stem()}_freecad.json",
+            initialdir=self.export_dir(),
+            initialfile=f"{self.app.project.name}_freecad.json",
             filetypes=[("JSON", "*.json"), ("All files", "*.*")],
         )
         if not path:
             return
-        with open(STANDARDS_PATH, "r") as file:
-            standards_data = json.load(file)
         with open(path, "w") as file:
-            json.dump(build_freecad_exports(self.app.resolved, standards_data), file, indent=4)
+            json.dump(build_freecad_exports(self.app.resolved), file, indent=4)
         self.status_var.set(f"FreeCAD params written: {path}")

@@ -23,6 +23,8 @@ PART_COLOR = "#ff9966"
 WIRE_COLOR = "#ffff00"
 WIRE_DASH = (2, 3)  # dotted
 CUT_COLOR = "#33ccff"
+ROD_COLOR = "#ff66aa"
+ROD_DASH = (8, 4)
 CUT_OVERHANG_PX = 14
 CONTROL_COLOR = "#cc66ff"
 CONTROL_LABEL_OFFSET_PX = 10
@@ -237,16 +239,24 @@ def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, 
             points = [value for x, y, z in route for value in (x_to_screen(x), transverse_to_screen(longitudinal_transverse(y, z, roll_rad)))]
             canvas.create_line(points, fill=WIRE_COLOR, width=2, dash=WIRE_DASH)
 
+    reinforcement = resolved.airframe.fuselage.reinforcement
+    if reinforcement is not None:
+        pattern = reinforcement.pattern
+        for y, z in pattern.positions_m():
+            t_screen = transverse_to_screen(longitudinal_transverse(y, z, roll_rad))
+            canvas.create_line(x_to_screen(reinforcement.from_x_m), t_screen, x_to_screen(reinforcement.to_x_m), t_screen, fill=ROD_COLOR, width=1, dash=ROD_DASH)
+
     sections = resolved.airframe.sections
-    bounds = [0.0, *sections.cuts_m, body.length_m]
-    section_points = [point for point in resolved.mass_points if point.name.startswith("section ")]
     for index, cut in enumerate(sections.cuts_m):
         half_w, half_h = body_half_extents(body, cut)
         half = section_projected_half(half_w, half_h, body.shape, roll_rad) * scale + CUT_OVERHANG_PX
         canvas.create_line(x_to_screen(cut), center_y - half, x_to_screen(cut), center_y + half, fill=CUT_COLOR, width=3, dash=(6, 3), tags=("drag", f"cut:{index}"))
-    for index, (x0, x1) in enumerate(zip(bounds, bounds[1:])):
-        mass_g = section_points[index].mass_kg[0] * 1000.0
-        label = f"S{index + 1} {mass_g:.0f} g{'*' if section_points[index].computed else ''}\n{(x1 - x0) * 1000.0:.0f} mm"
+    for index, section in enumerate(resolved.sections):
+        x0, x1 = section.x0_m, section.x1_m
+        computed = "*" if sections.per_section[index].empty_mass_kg is None else ""
+        label = f"S{index + 1} {section.empty_kg * 1000.0:.0f} g{computed}\n{(x1 - x0) * 1000.0:.0f} mm{' solid' if section.solid else ''}"
+        if section.complete_kg is not None:
+            label += f"\n{section.complete_kg * 1000.0:.0f} g all"
         canvas.create_text(x_to_screen((x0 + x1) / 2.0), transverse_to_screen(0.0) + section_projected_half(*body_half_extents(body, (x0 + x1) / 2.0), body.shape, roll_rad) * scale + 4,
                            anchor="n", text=label, fill=CUT_COLOR, font=("TkDefaultFont", 8), justify="center")
 
@@ -338,6 +348,14 @@ def draw_front_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, ui_draw
         else:
             canvas.create_rectangle(x_screen - half_y * scale, y_screen - half_z * scale, x_screen + half_y * scale, y_screen + half_z * scale,
                                     outline=VOLUME_COLOR, fill="", width=1, dash=(4, 2))
+    reinforcement = resolved.airframe.fuselage.reinforcement
+    if reinforcement is not None:
+        pattern = reinforcement.pattern
+        rod_radius = pattern.diameter_m / 2.0 * scale
+        for y, z in pattern.positions_m():
+            x_screen = center_x + y * scale
+            y_screen = center_y - z * scale
+            canvas.create_oval(x_screen - rod_radius, y_screen - rod_radius, x_screen + rod_radius, y_screen + rod_radius, outline=ROD_COLOR, width=1)
     for part in resolved.airframe.parts:
         _x, y, z = part.position_m
         x_screen, y_screen = center_x + y * scale, center_y - z * scale
