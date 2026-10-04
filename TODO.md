@@ -1,3 +1,10 @@
+User added TODOs (do not remove/change unless done)
+- 1% change mouse wheel scroll over value field
+- changing xyz positions entry from abs mm to relative frac to allow scaling without one-by-one mm adjustment
+
+---
+Agent added TODOs, freeform, remove done ones
+
 - Motors need a template as physical objects with the following physical modeling characteristics:
         mount_height (the part that is bolted onto a drone, this is the motor's x=0, height adds to it)
         mount_diameter 
@@ -35,7 +42,7 @@
         - End-cap motor at mid-module: bell pokes through cone, prop disc cuts cone (V: motor_cap).
 
 - C. Physics (mass, propulsion):
-        - 4 LiPo batteries mass 0.0 in parts.json (GNB 5300/4000, Tattu 6000/4500): a part using one needs mass_kg.
+        - Li-ion batteries have no mass in data/parts/battery.json: a part using one needs mass_kg.
         - Multiple battery bays: mass per bay, Wh for one pack only (V).
         - Pack voltage nominal (3.7 V/cell LiPo, 3.6 Li-ion) less its internal resistance; hover/full-throttle time use 100% Wh, no avionics load.
         - No check of total motor current vs the pack's C rating; motorlib only warns on motor max current.

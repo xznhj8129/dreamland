@@ -1,21 +1,30 @@
 """
 Usage:
-from libs.report import build_report_text
-text = build_report_text(resolved, aero, problems, parts_data, sweep=True)
+from libs.report import build_report_lines, build_report_text
+text = build_report_text(resolved, aero, problems, propulsion_summary(resolved, parts_data), sweep=True)  # propulsion None when unpowered
+lines = build_report_lines(resolved, aero, problems, propulsion, sweep=True)  # ReportLine (libs/reportline.py): warnings, problems marked
 
-Plain-text reports of a resolved airframe and its aero results, shared by analyze_airframe.py and the GUI.
+Text reports of a resolved airframe and its aero results, shared by analyze_airframe.py and the GUI.
 """
 
 import math
 
 from libs.aero import AeroResult, stability_verdict
 from libs.geometry import GRAMS_FORCE_PER_NEWTON, STANDARD_GRAVITY_M_S2, ResolvedAirframe
-from libs.propulsion import propulsion_summary, summary_lines
+from libs.propulsion import PropulsionSummary, summary_lines
+from libs.reportline import ReportLine
+
+VERDICT_LEVELS = {"stable": "info", "marginal": "warning", "unstable": "problem"}  # libs.aero.stability_verdict
 
 
-def build_report_text(resolved: ResolvedAirframe, aero: AeroResult, problems: list[str], parts_data: dict, sweep: bool) -> str:
+def build_report_text(resolved: ResolvedAirframe, aero: AeroResult, problems: list[str], propulsion: PropulsionSummary | None, sweep: bool) -> str:
+    return "\n".join(line.text for line in build_report_lines(resolved, aero, problems, propulsion, sweep))
+
+
+def build_report_lines(resolved: ResolvedAirframe, aero: AeroResult, problems: list[str], propulsion: PropulsionSummary | None, sweep: bool) -> list[ReportLine]:
+    """The report; plain strings are info, warnings and problems are ReportLines."""
     airframe = resolved.airframe
-    lines = []
+    lines: list[str | ReportLine] = []
     reference = resolved.reference
     mass_low, mass_high = resolved.mass_kg
     weight_n = (mass_low + mass_high) / 2.0 * STANDARD_GRAVITY_M_S2
@@ -66,14 +75,15 @@ def build_report_text(resolved: ResolvedAirframe, aero: AeroResult, problems: li
         motor = airframe.propulsion.motor
         lines.append(f"  Motors           : {len(resolved.motors)} x {motor.manufacturer} {motor.name}, {airframe.propulsion.prop} (motorlib)")
         lines.append("  Prop spin        : seen from where the thrust points: " + ", ".join(f"{placement.name} {placement.spin}" for placement in resolved.motors))
+    if propulsion is not None:
         lines.append("")
         lines.append("Propulsion (static, motorlib; throttle = INAV motor output)")
-        lines.extend(f"  {line}" for line in summary_lines(propulsion_summary(resolved, parts_data)))
+        lines.extend(ReportLine(f"  {line.text}", line.level) for line in summary_lines(propulsion))
     if problems:
         lines.append("")
-        lines.append("Layout problems")
+        lines.append(ReportLine("Layout problems", "problem"))
         for problem in problems:
-            lines.append(f"  - {problem}")
+            lines.append(ReportLine(f"  - {problem}", "problem"))
     lines.append("")
     lines.append("Aero (lifting-line wings + AeroBuildup bodies)")
     lines.append(f"  Operating point  : AoA {aero.aoa_deg:.1f} deg  V {aero.airspeed_m_s:.1f} m/s  alt {aero.altitude_m:.0f} m  q {aero.dynamic_pressure_pa:.1f} Pa")
@@ -89,11 +99,12 @@ def build_report_text(resolved: ResolvedAirframe, aero: AeroResult, problems: li
     margins = [(label, aero.x_np_m - cg_x) for label, cg_x in (("nominal CG", resolved.cg_m[0]), ("aft CG", resolved.cg_x_range_m[1]), ("forward CG", resolved.cg_x_range_m[0]))]
     lines.append(f"  Neutral point    : {aero.x_np_m:.4f} m")
     for label, margin in margins[: 1 if resolved.cg_x_range_m[0] == resolved.cg_x_range_m[1] else 3]:
-        lines.append(f"  Margin, {label:<9}: {margin * 1000:6.1f} mm  {margin / reference.chord_m * 100.0:5.1f} % c_ref  {stability_verdict(margin, reference.chord_m)}")
+        verdict = stability_verdict(margin, reference.chord_m)
+        lines.append(ReportLine(f"  Margin, {label:<9}: {margin * 1000:6.1f} mm  {margin / reference.chord_m * 100.0:5.1f} % c_ref  {verdict}", VERDICT_LEVELS[verdict]))
     lines.append(f"  Barrowman CP     : {aero.barrowman_cp_m:.4f} m (rocket-style cross-check)")
     if sweep:
         lines.append("")
         lines.append(f"  {'AoA':>5} {'CL':>8} {'CD':>8} {'Cm':>8} {'Lift N':>8} {'Weight %':>9} {'NP m':>8}  Pitch")
         for row in aero.sweep:
             lines.append(f"  {row.aoa_deg:5.0f} {row.cl:8.4f} {row.cd:8.4f} {row.cm:8.4f} {row.lift_n:8.3f} {row.lift_n / weight_n * 100.0:9.1f} {row.x_np_m:8.4f}  {row.pitch}")
-    return "\n".join(lines)
+    return [line if isinstance(line, ReportLine) else ReportLine(line) for line in lines]

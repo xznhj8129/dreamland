@@ -15,16 +15,20 @@ import argparse
 import json
 import queue
 import threading
+import time
 import traceback
 import tkinter as tk
 from pathlib import Path
-from tkinter import filedialog, messagebox, simpledialog, ttk
+from tkinter import filedialog, simpledialog, ttk
 
 from libs.aero import OperatingPointError, analyze_aero, build_asb_airplane
-from libs.airframe import PARTS_PATH, SCHEMA, AirframeError, parse_airframe
+from libs.airframe import SCHEMA, AirframeError, load_parts_data, parse_airframe
 from libs.geometry import resolve_airframe
+from libs.motorlib import MotorStalled
 from libs.project import BUILD_FILE, PROJECTS_DIR, Project, ProjectError, copy_project, open_project
-from libs.report import build_report_text
+from libs.propulsion import propulsion_summary
+from libs.report import build_report_lines
+from libs.reportline import ReportLine
 from libs.views.aero_analysis_view import AeroAnalysisMainView
 from libs.views.cad_view import CADMainView
 from libs.views.configuration_view import ConfigurationMainView
@@ -32,21 +36,18 @@ from libs.views.part_editor_view import PartEditorMainView
 from libs.views.sitl_view import SITLMainView
 from libs.views.vlm_view import VLMMainView
 
-DEFAULT_PROJECT = PROJECTS_DIR / "m62v2"
+DEFAULT_PROJECT = PROJECTS_DIR / "example"
 VIEW_OPTIONS = ["Longitudinal", "Front"]
 UI_BG = "#000000"
 UI_PANEL = "#031a03"
 UI_BORDER = "#0a5f0a"
 UI_FG = "#67ff67"
+UI_DIM = "#2a7a2a"  # disabled fields
+UI_LEVEL_COLORS = {"info": "#67ff67", "warning": "#ffd23f", "problem": "#ff4d4d"}  # libs/reportline.py LEVELS
 UI_ACCENT = "#19ff19"
 UI_CANVAS = "#001000"
 UI_DRAW = "#2aff2a"
 AERO_QUEUE_POLL_MS = 100
-
-
-def load_parts_data() -> dict:
-    with open(PARTS_PATH, "r") as file:
-        return json.load(file)
 
 
 class BuilderApp:
@@ -60,6 +61,7 @@ class BuilderApp:
         self.ui_border = UI_BORDER
         self.ui_fg = UI_FG
         self.ui_accent = UI_ACCENT
+        self.ui_level_colors = UI_LEVEL_COLORS
         self.ui_canvas = UI_CANVAS
         self.ui_draw = UI_DRAW
         self.view_options = VIEW_OPTIONS
@@ -69,6 +71,7 @@ class BuilderApp:
             self.definition = json.load(file)
         self.resolved = None
         self.problems: list[str] = []
+        self.propulsion = None  # PropulsionSummary of the last valid powered airframe whose motor turns its prop
         self.aero = None
         self.asb_airplane = None
         self.aero_generation = 0
@@ -99,7 +102,6 @@ class BuilderApp:
         self.main_view_host = None
         self.part_editor_main_view = None
         self.active_main_view = "Configuration"
-        self.error_dialog: tk.Toplevel | None = None
         self.setup_theme()
         self.build_menu()
         self.build_layout()
@@ -120,11 +122,16 @@ class BuilderApp:
             airframe = parse_airframe(self.definition, self.parts_data, path=f"{self.project.name}/{BUILD_FILE}")
             resolved, problems = resolve_airframe(airframe, self.parts_data)
         except AirframeError as error:
-            self.recompute_status_var.set("Definition error")
-            self.write_summary(f"Definition error:\n\n{error}\n\nThe drawing shows the last valid airframe.")
+            self.log_error("Definition error", f"{error}\nThe drawing shows the last valid airframe.")
             return
         self.resolved = resolved
         self.problems = problems
+        self.propulsion = None
+        if airframe.propulsion is not None:
+            try:
+                self.propulsion = propulsion_summary(resolved, self.parts_data)
+            except MotorStalled as error:
+                self.log_error("Propulsion", str(error))
         self.aero = None
         self.vlm_main_view.mark_stale()
         self.configuration_main_view.draw_active_view()
@@ -139,7 +146,7 @@ class BuilderApp:
             self.aero_queue.put((generation, analyze_aero(resolved), None, None))
         except OperatingPointError as error:  # show the reason, not a traceback
             self.aero_queue.put((generation, None, str(error), None))
-        except Exception:  # thread boundary: hand the traceback to the Tk thread for the error dialog
+        except Exception:  # thread boundary: hand the traceback to the Tk thread for the summary
             self.aero_queue.put((generation, None, None, traceback.format_exc()))
 
     def poll_aero_queue(self) -> None:
@@ -148,14 +155,12 @@ class BuilderApp:
             if generation != self.aero_generation:
                 continue
             if invalid_text is not None:
-                self.recompute_status_var.set("Aero not computed")
-                self.write_summary(f"Aero not computed: {invalid_text}")
+                self.log_error("Aero not computed", invalid_text)
             elif error_text is not None:
-                self.recompute_status_var.set("Aero failed")
-                self.show_error_dialog(error_text)
+                self.log_error("Aero failed", error_text)
             else:
                 self.aero = aero
-                self.write_summary(build_report_text(self.resolved, aero, self.problems, self.parts_data, sweep=True))
+                self.write_summary(build_report_lines(self.resolved, aero, self.problems, self.propulsion, sweep=True))
                 self.recompute_status_var.set("Up to date")
                 self.configuration_main_view.draw_active_view()
         self.poll_after_id = self.root.after(AERO_QUEUE_POLL_MS, self.poll_aero_queue)
@@ -165,9 +170,18 @@ class BuilderApp:
         self.sitl_main_view.shutdown()
         self.root.destroy()
 
-    def write_summary(self, text: str) -> None:
+    def write_summary(self, lines: list[ReportLine]) -> None:
+        """The report, each line coloured by its level."""
         self.summary_text.delete("1.0", tk.END)
-        self.summary_text.insert("1.0", text)
+        for line in lines:
+            self.summary_text.insert(tk.END, line.text + "\n", line.level)
+
+    def log_error(self, title: str, text: str) -> None:
+        """Errors go to the Log tab, never a window or the panels."""
+        self.recompute_status_var.set(f"{title} (see Log)")
+        self.log_text.insert(tk.END, f"{time.strftime('%H:%M:%S')}  {title}\n{text}\n\n", "problem")
+        self.log_text.see(tk.END)
+        self.left_notebook.select(self.log_tab)
 
     def on_manual_recompute(self, _event=None) -> str:
         """F5 recomputes whatever the active view shows."""
@@ -193,51 +207,7 @@ class BuilderApp:
     def handle_callback_exception(self, exc_type, exc_value, exc_traceback) -> None:
         traceback_text = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
         traceback.print_exception(exc_type, exc_value, exc_traceback)
-        self.show_error_dialog(traceback_text)
-
-    def show_error_dialog(self, traceback_text: str) -> None:
-        if self.error_dialog is not None and self.error_dialog.winfo_exists():
-            self.error_dialog.destroy()
-        dialog = tk.Toplevel(self.root, background=UI_BG)
-        dialog.title("Error")
-        dialog.geometry("980x560")
-        dialog.transient(self.root)
-        dialog.columnconfigure(0, weight=1)
-        dialog.rowconfigure(1, weight=1)
-        dialog.bind("<Escape>", lambda event: dialog.destroy())
-        dialog.protocol("WM_DELETE_WINDOW", dialog.destroy)
-        ttk.Label(dialog, text="Traceback").grid(row=0, column=0, sticky="w", padx=8, pady=(8, 4))
-        text_frame = ttk.Frame(dialog, padding=(8, 0, 8, 8))
-        text_frame.grid(row=1, column=0, sticky="nsew")
-        text_frame.columnconfigure(0, weight=1)
-        text_frame.rowconfigure(0, weight=1)
-        text = tk.Text(
-            text_frame,
-            wrap="none",
-            font=("TkFixedFont", 10),
-            background=UI_PANEL,
-            foreground=UI_FG,
-            insertbackground=UI_FG,
-            selectbackground=UI_BORDER,
-            selectforeground=UI_ACCENT,
-            highlightthickness=1,
-            highlightbackground=UI_BORDER,
-            highlightcolor=UI_ACCENT,
-            relief="flat",
-        )
-        scroll_y = ttk.Scrollbar(text_frame, orient="vertical", command=text.yview)
-        scroll_x = ttk.Scrollbar(text_frame, orient="horizontal", command=text.xview)
-        text.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
-        text.grid(row=0, column=0, sticky="nsew")
-        scroll_y.grid(row=0, column=1, sticky="ns")
-        scroll_x.grid(row=1, column=0, sticky="ew")
-        text.insert("1.0", traceback_text)
-        text.configure(state="disabled")
-        button_frame = ttk.Frame(dialog, padding=(8, 0, 8, 8))
-        button_frame.grid(row=2, column=0, sticky="e")
-        ttk.Button(button_frame, text="Close", command=dialog.destroy).pack(side="right")
-        dialog.focus_set()
-        self.error_dialog = dialog
+        self.log_error("Error", traceback_text)
 
     def setup_theme(self) -> None:
         style = ttk.Style()
@@ -264,6 +234,7 @@ class BuilderApp:
             lightcolor=UI_BORDER,
             darkcolor=UI_BORDER,
         )
+        style.map("TEntry", foreground=[("disabled", UI_DIM)])
         style.configure(
             "TCombobox",
             fieldbackground=UI_PANEL,
@@ -275,9 +246,10 @@ class BuilderApp:
         style.map(
             "TCombobox",
             fieldbackground=[("readonly", UI_PANEL)],
-            foreground=[("readonly", UI_FG)],
+            foreground=[("disabled", UI_DIM), ("readonly", UI_FG)],
             selectbackground=[("readonly", UI_PANEL)],
-            selectforeground=[("readonly", UI_FG)],
+            selectforeground=[("disabled", UI_DIM), ("readonly", UI_FG)],
+            arrowcolor=[("disabled", UI_DIM)],
         )
         style.configure("TButton", background=UI_PANEL, foreground=UI_FG, bordercolor=UI_BORDER, lightcolor=UI_BORDER, darkcolor=UI_BORDER)
         style.map("TButton", background=[("active", UI_BORDER)], foreground=[("active", UI_ACCENT)])
@@ -376,12 +348,12 @@ class BuilderApp:
         if not name:
             return
         if Path(name).name != name:
-            messagebox.showerror("Save Project As", f"'{name}' is not a plain directory name.", parent=self.root)
+            self.log_error("Save Project As", f"'{name}' is not a plain directory name.")
             return
         try:
             project = copy_project(self.project, PROJECTS_DIR / name)
         except ProjectError as error:
-            messagebox.showerror("Save Project As", str(error), parent=self.root)
+            self.log_error("Save Project As", str(error))
             return
         self.project = project
         self.save_project()
@@ -394,12 +366,12 @@ class BuilderApp:
         try:
             project = open_project(Path(path))
         except ProjectError as error:
-            messagebox.showerror("Load Project", str(error), parent=self.root)
+            self.log_error("Load Project", str(error))
             return
         with open(project.build_path, "r") as file:
             data = json.load(file)
         if data.get("schema") != SCHEMA:
-            messagebox.showerror("Load Project", f"{project.build_path} is not an {SCHEMA} file (old module-stack configs are not supported).", parent=self.root)
+            self.log_error("Load Project", f"{project.build_path} is not an {SCHEMA} file (old module-stack configs are not supported).")
             return
         self.definition = data
         self.project = project

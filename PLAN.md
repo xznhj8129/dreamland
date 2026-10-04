@@ -21,11 +21,12 @@ Status: draft spec, awaiting approval. Supersedes the Lego module-stack model as
 - CadQuery generates the bigger sections and volumes; final fine adjustments may be done in FreeCAD. Not every facet and cut is defined in spec files.
 - Old part sums are approximately accurate (m62v2 ~1.1 kg real).
 - 2026-10-03: Goal: a do-it-all design framework for new-generation drone designs: quadcopter, plane, quadplane, rocket boosted, any mix. JSBSim simulates all of it. Next propulsion type: rocket motors, with staging (OpenRocket logic).
+- 2026-10-04: Right pane split into Design (the airframe) and Build (parts, wiring, electronics), towards a full design export per aircraft. Wiring is per aircraft (Build > Wiring: each auto-routed run's gauge and connectors); data/specs.json was an early sketch, not authoritative. Parts need not sit in volumes (volumes are a CAD pointer).
 - 2026-10-03: Flight controller scripts: Python for now (later ArduPilot/PX4/Arduino-level code). One `Controller` class defines the API; scripts in `aircraft/<project>/controllers/`; setup()/loop() at a chosen rate, lockstep simulated time; hardware units as an Arduino gets them (SPI IMU counts, Pa, NAV-PVT GPS, PWM us). Same flight log and plots as an INAV run.
 
 ## 1. Aircraft definition (saved file, schema "airframe/2")
 
-Implemented in `libs/airframe.py` (`python -m libs.airframe aircraft/m62v2/aircraft.json`). Saved as `aircraft/<project>/aircraft.json` (`libs/project.py`). SI units (m, kg); angles in degrees; x from the nose tip. Library parts are referenced as `<category>:<name>` from `data/parts.json`. Loading fails on any missing required field, unknown field, bad value or unresolved reference.
+Implemented in `libs/airframe.py` (`python -m libs.airframe aircraft/m62v2/aircraft.json`). Saved as `aircraft/<project>/aircraft.json` (`libs/project.py`). SI units (m, kg); angles in degrees; x from the nose tip. Library parts are referenced as `<category>:<name>` from `data/parts/<category>.json`. Loading fails on any missing required field, unknown field, bad value or unresolved reference.
 
 ```
 schema              "airframe/2"
@@ -37,7 +38,7 @@ preset              optional: a data/specs.json preset name (M62, M75). Loading 
                     and the reinforcement pattern (not from_x_m/to_x_m); values are always written out in full, and the
                     fuselage is checked against the preset's limits
 operating_point     aoa_deg, airspeed_m_s, altitude_m
-print               material (parts.json material), printer_bed_m [x, y, z],
+print               material (data/parts/material.json), printer_bed_m [x, y, z],
                     bulk_density_kg_m3 (printed mass per solid volume; required only if a surface has no mass_kg or a solid
                     section no empty_mass_kg; 318.3 = single-wall 5 % infill PLA, from a weighed 77 g NACA2408 105 x 400 mm segment)
 fuselage
@@ -45,7 +46,7 @@ fuselage
   section           width_m, height_m, shape (superellipse exponent; 2 = circle), wall_radial_m
   nose, tail        profile (pointed_shapes name), length_m, params (exactly the profile's keys)
   joints            type radial_screws, count, screw, insertion_depth_m, coupler_mass_kg (optional, one per cut)
-  reinforcement     optional longitudinal rods: type cf_rod, material (parts.json), diameter_m, radial_position_m (rod centre
+  reinforcement     optional longitudinal rods: type cf_rod, material (data/parts/material.json), diameter_m, radial_position_m (rod centre
                     from the axis), polar_n (all rods), polar_offset_angle (deg from the horizontal, one position per quadrant,
                     mirrored left/right and top/bottom), polar_split (0 = one rod per position, 2 = a pair at
                     polar_offset_angle +/- polar_split_angle), polar_split_angle (deg), from_x_m, to_x_m;
@@ -55,7 +56,9 @@ surfaces[]          name, x_root_le_m (must be on the body; chords may overhang 
                     layout (H X + 1 3), fin_position (top/bottom), dihedral_deg, root_offset (-1..1),
                     root (body: span from the body surface at the root LE; axis: span from the fuselage axis,
                     panels meet in the centre, e.g. delta tail fins), span_m (per panel, along the panel),
-                    chord_root_m, chord_tip_m, sweep_le_deg, incidence_deg, airfoil (AeroSandbox name),
+                    chord_root_m, chord_tip_m, sweep_le_deg, incidence_deg, incidence_mode (symmetric: XZ-mirror
+                    panels pitched alike, lift like AoA; cant: every panel turned the same way about the body axis,
+                    roll / spin; + = anticlockwise seen from behind), airfoil (AeroSandbox name),
                     mass_kg (whole set; optional, absent = computed)
                     control (optional, absent = fixed; applies to every panel of the set):
                       kind split: chord_start (hinge, chord fraction from LE, 0..1 exclusive),
@@ -63,13 +66,24 @@ surfaces[]          name, x_root_le_m (must be on the body; chords may overhang 
                       kind all_moving: pivot (chord fraction from LE)
                       roles [pitch yaw roll flaps] (reference only), deflection_min_deg, deflection_max_deg
                       (positive = TE away from the panel normal, down on a wing), rate_deg_s (placeholder),
-                      servos (S1..S12, one per panel in panel order, may be shared)
+                      servos (S1..S12, one per panel in panel order, may be shared: a panel opposite to the others on its servo is exported reversed, a Y-cable reverser)
                     control surfaces are numbered C1.. front to back, then clockwise from the top seen from behind
 propulsion          required when powered, absent when not
   motor             manufacturer, name (motorlib, libs/motorlib/data/motordatav2.csv; needs a stator size; mass from it)
   prop              motorlib propeller name (libs/motorlib/data/propellers.csv)
-  battery, esc      names of placed parts (battery:<name>, esc:<name>); wires run battery -> ESC -> each motor along
-                    the axes, gauges and plugs from data/specs.json wire_paths; their resistance enters the motor model
+  battery           the pack, placed like a part (volume with x/y/z_offset_m, or its own x_m, y_m, z_m); model:
+                      commercial: part (data/parts/battery.json: type, s, p, mah, mass, dimensions, connector, optional
+                        ir_mohm_per_cell, lead_awg + lead_length_mm), mass_kg (optional, weighed)
+                      custom_liion: s, p, cell (libs/motorlib/data/cells.csv, with a CELL_FORMATS format in its name, e.g.
+                        21700), connector, cell_axis (x | y | z: the cells' length along it), stacking [x, y, z] (cells along
+                        each axis; x * y * z = s * p), lead_awg, lead_length_m; size per axis = count * (cell size + 2 mm),
+                        mass, capacity, resistance and voltage from the cell
+                    its connector is the first plug of the battery run; its leads add to the shared resistance
+  esc               name of a placed esc part; wires run battery -> ESC -> each motor along the axes
+  wiring            battery (the battery -> ESC run), motors[] (ESC -> each motor, one per motor in motor order); a run:
+                    gauge_awg (motorlib wire gauge), conductors (wires in the cable), plugs[] (data/parts/connector.json
+                    names along the run, in order); each motor's run and the shared battery run set its resistance in
+                    the motor model (one model per motor)
   mounts[]          on (nose | tail | surface); for surface: surface, span_position_m (from panel root),
                     x_offset_m (from root LE); direction (tractor | pusher);
                     spin, seen from where the thrust points: surface out | in (2+ motors alternating cw/ccw round the
@@ -83,9 +97,9 @@ volumes[]           internal space: name, x_m (centre), y_m and z_m (default 0),
                       bore: length_m (fills the internal section)
                       point
                     mass_kg optional: its own mass, number or [min, max] (> 0), e.g. ballast; absent = space only
-parts[]             library components: name, part (<category>:<name> from data/parts.json, category battery | esc),
-                    volume (the one it sits in), x_offset_m, y_offset_m, z_offset_m (from the volume centre,
-                    default 0), mass_kg optional (number >= 0 or [min, max]; absent = library mass, required when the
+parts[]             library components: name, part (<category>:<name> from data/parts/<category>.json, category battery | esc),
+                    volume (optional, the one it sits in) with x_offset_m, y_offset_m, z_offset_m (from the volume
+                    centre, default 0), or without a volume its own x_m, y_m, z_m (y, z default 0), mass_kg optional (number >= 0 or [min, max]; absent = library mass, required when the
                     library has none; 0 = counted elsewhere, e.g. a weighed section); box = library dimensions
                     (x = l, y = w, z = h), a point without them; must fit its volume, must not overlap other parts
 sections
@@ -94,6 +108,8 @@ sections
                     false: hollow shell wall), empty_mass_kg (optional: weighed printed mass), complete_mass_kg (optional:
                     weighed printed mass + everything attached in the section, which it replaces: points by position,
                     props with their motor, motors with their mount, surface sets at their root LE)
+  cut_joints[]      one per cut: coupler (separate coupler into both sections; fuselage.joints.coupler_mass_kg at the
+                    cut), front_male or rear_male (the section ahead of / behind the cut carries the male end, no coupler)
 ```
 
 Body-rooted panels keep the true root edge on the body (follows nose/tail cones) and use an equivalent aero root at the mean body radius under the root chord. Axis-rooted panels start on the axis; Barrowman uses their exposed part.
@@ -102,7 +118,7 @@ Converted examples: `aircraft/m62v2/` and `aircraft/quadlancer62/` reproduce the
 
 ## 2. Libraries (data/)
 
-- `parts.json`: batteries (mass required, > 0), ESCs, FCs, cameras, payloads, props (mass), materials.
+- `data/parts/`, one file per category: batteries (mass required, > 0; connector: the battery's own plug, first on the battery run), ESCs, FCs, cameras, payloads, props (mass; linear between listed diameters, outside them the nearest scaled by diameter^3), materials, connectors (contact_resistance_ohm).
 - Motors and props: motorlib (`libs/motorlib`, copied from `dronebuildcalc`), used as published.
 - `specs.json`: size presets (`presets`: section, joints, reinforcement pattern in the aircraft's own form, limits checked
   against the aircraft, CAD data), fasteners, openings, printer bed, wiring. Presets are created and saved from the

@@ -13,14 +13,13 @@ model, what the script's hardware read and the script's log() columns; the plots
 
 import argparse
 import csv
-import json
 import time
 from pathlib import Path
 
 from inavbench.bench import LOG_HZ
 from inavbench.vehicles import Plant
 
-from libs.airframe import PARTS_PATH, load_airframe
+from libs.airframe import load_airframe, load_parts_data
 from libs.controller import load_controller
 from libs.geometry import resolve_airframe
 from libs.jsbsim import reuse_or_export
@@ -48,8 +47,7 @@ def main() -> None:
 
     project = open_project(args.project)
     controller_class = load_controller(project.controllers_dir, args.controller)
-    with open(PARTS_PATH, "r") as file:
-        parts_data = json.load(file)
+    parts_data = load_parts_data()
     resolved, _problems = resolve_airframe(load_airframe(project.build_path, parts_data), parts_data)
     airframe = resolved.airframe
     start = args.start or "air"
@@ -115,7 +113,7 @@ def log_row(plant: Plant, controller, export, motor_count: int, time_us: int, es
     """Truth, outputs, electrical model, the script's hardware readings and its log() values, as one row."""
     row = {"t": time_us / 1e6, "armed": 1} | plant.truth()
     row |= {f"motor{index + 1}": value for index, value in enumerate(esc_us)} | {f"servo{index}": value for index, value in enumerate(servo_us)}
-    if export.motor is not None:
+    if export.motors:
         row |= electrical_columns(plant.fdm, export, motor_count)
     return row | controller._sensor_columns() | controller._logged
 

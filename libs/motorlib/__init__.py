@@ -1,3 +1,3 @@
-from .rcplanes_multirotor import DataRepo, MotorSim
+from .rcplanes_multirotor import DataRepo, MotorSim, MotorStalled
 
-__all__ = ["DataRepo", "MotorSim"]
+__all__ = ["DataRepo", "MotorSim", "MotorStalled"]

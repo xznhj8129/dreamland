@@ -8,8 +8,10 @@ frame vectors, motors, props and pods, volumes, mass points, CG and aero referen
 Every consumer (aero, drawing, CAD, JSBSim) reads this and does not re-derive geometry.
 
 Frame: x aft from the nose tip, y right, z up; metres and kilograms.
-Panel normal convention: (0, -dir_z, dir_y), sign-flipped on left-hand panels so XZ-mirror pairs share it
-(points up on H and X wings); every vertical fin uses (0, -1, 0), so fin incidence makes side force, not roll.
+Panel normal convention: incidence_mode symmetric: (0, -dir_z, dir_y), sign-flipped on left-hand panels so XZ-mirror
+pairs share it (points up on H and X wings); every vertical fin uses (0, -1, 0), so fin incidence makes side force, not
+roll. incidence_mode cant: (0, -dir_z, dir_y) on every panel, the same turn about the body axis, so incidence makes roll;
+its panels have no XZ mirror.
 Positive incidence rotates the chord leading-edge-up about the leading edge, towards the normal.
 """
 
@@ -339,7 +341,8 @@ def build_surface(surface: Surface, body: Body) -> SurfaceSet:
     for spec in layout:
         dir_y, dir_z = spec["dir_y"], spec["dir_z"]
         angle = math.atan2(dir_z, dir_y) if on_axis else math.atan2(spec["root_z"], spec["root_y"])
-        normal = panel_normal(dir_y, dir_z)
+        cant = surface.incidence_mode == "cant"
+        normal = (0.0, -dir_z, dir_y) if cant else panel_normal(dir_y, dir_z)
         radii = [body_surface_point(body, surface.x_root_le_m + chord_root * (k + 0.5) / ROOT_CHORD_SAMPLES, angle)[1] for k in range(ROOT_CHORD_SAMPLES)]
         mean_radius = sum(radii) / len(radii)
         mean_radii.append(mean_radius)
@@ -357,7 +360,7 @@ def build_surface(surface: Surface, body: Body) -> SurfaceSet:
         tip_te = tuple(le + surface.chord_tip_m * ((math.cos(incidence) if axis == 0 else 0.0) - math.sin(incidence) * n)
                        for axis, (le, n) in enumerate(zip(tip_le, normal)))
         panels.append(Panel(
-            surface=surface.name, index=spec["index"], xz_mirror=spec["xz_mirror"],
+            surface=surface.name, index=spec["index"], xz_mirror=None if cant else spec["xz_mirror"],
             attach_le=attach_le, attach_te=attach_te, root_le=root_le, tip_le=tip_le, tip_te=tip_te,
             span_dir=(0.0, dir_y, dir_z), normal=normal,
             chord_root_m=chord_root, chord_tip_m=surface.chord_tip_m,
@@ -571,7 +574,9 @@ def structure_mass_points(airframe: Airframe, body: Body, density_kg_m3: float) 
                                 row.empty_mass_kg is None, estimate, inertia))
     coupler_mass = airframe.fuselage.joints.coupler_mass_kg
     if coupler_mass is not None:
-        for index, cut in enumerate(sections.cuts_m):
+        for index, (cut, joint) in enumerate(zip(sections.cuts_m, sections.cut_joints)):
+            if joint != "coupler":
+                continue
             half_w, half_h = body_half_extents(body, cut)
             points.append(MassPoint(f"coupler {index + 1}", "structure", (cut, 0.0, 0.0), (coupler_mass, coupler_mass), False, None, ring_inertia(half_w - wall, half_h - wall)))
     return points
@@ -685,7 +690,7 @@ def build_wires(airframe: Airframe, motors: tuple[MotorPlacement, ...]) -> WireR
     if airframe.propulsion is None:
         return None
     parts = {part.name: part for part in airframe.parts}
-    battery, esc = parts[airframe.propulsion.battery].position_m, parts[airframe.propulsion.esc].position_m
+    battery, esc = airframe.propulsion.battery.placed.position_m, parts[airframe.propulsion.esc].position_m
     return WireRoutes(battery=right_angle_route(battery, esc), motors=tuple(right_angle_route(esc, motor.position) for motor in motors))
 
 
@@ -819,7 +824,7 @@ def part_overhang_m(part: PlacedPart, volume: Volume, body: Body, wall_m: float)
 def part_checks(airframe: Airframe, body: Body) -> list[str]:
     volumes = {volume.name: volume for volume in airframe.volumes}
     problems = []
-    for part in airframe.parts:
+    for part in (part for part in airframe.parts if part.volume is not None):
         overhang = part_overhang_m(part, volumes[part.volume], body, airframe.fuselage.section.wall_radial_m)
         if overhang > 1e-9:
             reach = "outside the fuselage interior" if math.isinf(overhang) else f"{overhang * 1000.0:.1f} mm outside it"

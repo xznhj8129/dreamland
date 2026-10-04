@@ -23,7 +23,6 @@ Exit code 1 if the batched lifting line and asb.LiftingLine, or the side split, 
 import argparse
 import copy
 import dataclasses
-import json
 from pathlib import Path
 
 import aerosandbox as asb
@@ -33,7 +32,7 @@ from libs.aero import (
     AERO_MODEL_SIZE, LIFTING_LINE_CORE_RADIUS_M, LIFTING_LINE_SPANWISE_RESOLUTION, build_asb_airplane, build_hybrid_airplanes,
     build_lifting_line_mesh, lifting_line_sweep, with_side_deflections,
 )
-from libs.airframe import PARTS_PATH, load_airframe
+from libs.airframe import load_airframe, load_parts_data
 from libs.geometry import resolve_airframe
 from libs.project import PROJECTS_DIR, open_project
 
@@ -113,8 +112,7 @@ def main() -> None:
     parser.add_argument("--tolerance", type=float, default=1e-9, help="Allowed difference in lift, drag (N) and pitch moment (N m)")
     args = parser.parse_args()
 
-    with open(PARTS_PATH, "r") as file:
-        parts_data = json.load(file)
+    parts_data = load_parts_data()
     atmosphere = asb.Atmosphere(altitude=0.0)
     aoa_values = np.array(args.aoa, dtype=float)
     failures = []

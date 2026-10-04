@@ -9,12 +9,10 @@ import copy
 import json
 import re
 import tkinter as tk
-from pathlib import Path
 from tkinter import messagebox, ttk
 
-SCRIPT_DIR = Path(__file__).resolve().parent
-DATA_DIR = SCRIPT_DIR.parent / "data"
-PARTS_PATH = DATA_DIR / "parts.json"
+from libs.airframe import load_parts_data, save_parts_category
+
 
 UI_BG = "#000000"
 UI_PANEL = "#031a03"
@@ -47,6 +45,11 @@ PART_LIBRARY_FIELD_ORDER = [
     "cell",
     "dimensions",
 ]
+# Fields an entry may leave out (shown blank, written when filled, removed when blanked), with their type.
+OPTIONAL_LIBRARY_FIELDS = {
+    "battery": {"connector": str, "ir_mohm_per_cell": float, "lead_awg": int, "lead_length_mm": float},
+    "esc": {"mosfet_rds_on_ohm": float},
+}
 NEW_PART_LIBRARY_DEFAULTS = {
     "battery": {
         "type": "lipo",
@@ -55,6 +58,7 @@ NEW_PART_LIBRARY_DEFAULTS = {
         "p": 1,
         "mah": 0,
         "c": 0,
+        "connector": "",
         "dimensions": {"l": 0, "h": 0, "w": 0},
     },
     "esc": {
@@ -64,17 +68,10 @@ NEW_PART_LIBRARY_DEFAULTS = {
         "min_s": 0,
         "max_s": 0,
     },
+    "prop": {"diameter_in": 0, "mass": 0.0},
+    "material": {"density_kg_m3": 0.0},
+    "connector": {"contact_resistance_ohm": 0.0},
 }
-
-
-def load_json_file(path: Path) -> dict:
-    with open(path, "r") as file:
-        return json.load(file)
-
-
-def save_json_file(path: Path, data: dict) -> None:
-    with open(path, "w") as file:
-        json.dump(data, file, indent=4)
 
 
 def ordered_keys(data: dict, preferred_keys: list[str]) -> list[str]:
@@ -222,7 +219,7 @@ class PartEditorFrame(ttk.Frame):
 
     def refresh_from_disk(self) -> None:
         selected = (self.current_category, self.current_name)
-        self.data = load_json_file(PARTS_PATH)
+        self.data = load_parts_data()
         self.refresh_list()
         if selected in self.list_items():
             self.current_category, self.current_name = selected
@@ -276,7 +273,16 @@ class PartEditorFrame(ttk.Frame):
         fields_frame = ttk.LabelFrame(self.editor_container, text="Properties", padding=8)
         fields_frame.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
         fields_frame.columnconfigure(1, weight=1)
-        self.build_field_rows(fields_frame, item_data, PART_LIBRARY_FIELD_ORDER, ())
+        row = self.build_field_rows(fields_frame, item_data, PART_LIBRARY_FIELD_ORDER, ())
+        for key, kind in OPTIONAL_LIBRARY_FIELDS.get(self.current_category, {}).items():
+            if key in item_data:
+                continue
+            ttk.Label(fields_frame, text=field_label(key)).grid(row=row, column=0, sticky="w")
+            variable = tk.StringVar(value="")
+            ttk.Entry(fields_frame, textvariable=variable).grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=2)
+            ttk.Label(fields_frame, text="blank = left out").grid(row=row, column=2, sticky="w", padx=(6, 0))
+            self.field_bindings.append(((key,), variable, kind()))
+            row += 1
 
     def build_field_rows(self, parent, data: dict, preferred_order: list[str], prefix: tuple[str, ...]) -> int:
         row_index = 0
@@ -311,16 +317,25 @@ class PartEditorFrame(ttk.Frame):
         if self.current_category is None or self.current_name is None:
             return
         updated = copy.deepcopy(self.data[self.current_category][self.current_name])
+        optional = OPTIONAL_LIBRARY_FIELDS.get(self.current_category, {})
         for path, variable, existing_value in self.field_bindings:
-            set_nested_value(updated, path, parse_field_value(path[-1], str(variable.get()), existing_value))
+            text = str(variable.get())
+            if len(path) == 1 and path[0] in optional and not text.strip():
+                updated.pop(path[0], None)
+                continue
+            set_nested_value(updated, path, parse_field_value(path[-1], text, existing_value))
         new_category = self.category_var.get()
         new_name = self.name_var.get()
-        del self.data[self.current_category][self.current_name]
-        self.data.setdefault(new_category, {})
-        self.data[new_category][new_name] = updated
+        if new_category == self.current_category:  # in place, so the file keeps its order
+            self.data[new_category] = {new_name if key == self.current_name else key: updated if key == self.current_name else value
+                                       for key, value in self.data[new_category].items()}
+        else:
+            del self.data[self.current_category][self.current_name]
+            self.data.setdefault(new_category, {})[new_name] = updated
+        for category in dict.fromkeys((self.current_category, new_category)):
+            save_parts_category(category, self.data[category])
         self.current_category = new_category
         self.current_name = new_name
-        save_json_file(PARTS_PATH, self.data)
         self.refresh_from_disk()
         if self.on_save is not None:
             self.on_save()
@@ -345,9 +360,9 @@ class PartEditorFrame(ttk.Frame):
         if not messagebox.askyesno("Delete Part", f"Delete part '{self.current_name}'?", parent=self.winfo_toplevel()):
             return
         del self.data[self.current_category][self.current_name]
+        save_parts_category(self.current_category, self.data[self.current_category])
         self.current_category = None
         self.current_name = None
-        save_json_file(PARTS_PATH, self.data)
         self.refresh_from_disk()
         if self.on_save is not None:
             self.on_save()

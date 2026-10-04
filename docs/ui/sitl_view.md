@@ -11,8 +11,9 @@ SITLView [fill, split:h]
         SITLRunPanel
         SummaryPanel
 
-    * MiddlePane
-        FlightLogPlot
+    * MiddlePane [ui:tabs]
+        Plots     FlightLogPlot
+        3D View   FlightPath3D
 
     * RightPane
         XAxisPanel
@@ -43,8 +44,6 @@ SITLRunPanel [arrange:column]
             top-speed    powered: full-throttle level speed
             controls     any: roll, pitch and yaw stick steps, each checked to move the commanded way
             glide        any: motors off from 1000 m, airspeeds fast to slow until the ground; smallest sink rate, best glide
-    - Unavailable [ui:text]
-        the scenarios missing for this aircraft and why (e.g. "hover: needs a VTOL")
 
     - Start [ui:dropdown, readonly]
         air      held level at 150 m: a fixed-wing at its operating airspeed, a tailsitter from rest (forward-flight scenarios)
@@ -59,8 +58,12 @@ SITLRunPanel [arrange:column]
         a value that is not a number stops Run and says which
 
     - FC settings [ui:dropdown, readonly]
-        values = "generated from the design", then "real FC diff: <file>" for every .txt diff in the project's inav/
+        values = "generated from the design", then for every .txt diff in the project's inav/:
+            "real FC diff: <file>"   a real FC's dump (it has INAV's version banner)
+            "SITL diff: <file>"      any other diff, flown as written
         default = generated from the design
+        "generated" and a real FC diff are written to inav/generated/ (rewritten on every such run), and that file flies;
+        to edit one, copy it into inav/ and pick it as a SITL diff
 
     - Duration (s) [ui:textbox, script only]
         simulated seconds the script flies; default 60
@@ -72,9 +75,6 @@ SITLRunPanel [arrange:column]
 
     - StatusText [ui:text]
         Idle | No valid airframe | Running <scenario>... | Running script: <name>... | Finished (exit code N)
-
-    - SITL [ui:text]
-        the project's sitl/SITL.elf, or the shared build that the first run copies in there
 ```
 
 ### Run behavior
@@ -94,7 +94,7 @@ Run
 ## SummaryPanel
 
 ```text
-SummaryPanel [scrollable, copyable, readonly]
+SummaryPanel [scrollable, copyable, readonly, word-wrapped]
 
     - first line: the equivalent command line
     - then the simulation's output as it runs: per-second reports, tables, the final result, or the error traceback
@@ -109,6 +109,23 @@ FlightLogPlot [fill]
     - updates about twice a second while a run is going
     - redraws at once when the X axis or a Y value changes
     - the last run stays shown until the next Run
+    - mouse wheel over a subplot: zoom the X range in (up) or out (down) around the cursor
+    - drag across a subplot: the stretch is shaded; on release, zoom to it (a very short drag is a click)
+    - double-click: the whole run again; a new X axis or a new Run does the same
+    - while zoomed, each Y axis fits the data shown, and live updates keep the zoom
+```
+
+## FlightPath3D
+
+```text
+FlightPath3D [fill]
+
+    - the flight path in 3D: east, north (m from home) and height above ground (m), from the log's
+      east_m, north_m, agl_m; start marked green, end red
+    - the box fits the path: east and north span exactly the path, height runs from 0 (the ground) to its top
+      (a path below the ground is clipped); each axis scaled to its own range
+    - drag to rotate; the angle is kept across live updates and runs
+    - drawn when shown, then updated live like the plots
 ```
 
 ## XAxisPanel

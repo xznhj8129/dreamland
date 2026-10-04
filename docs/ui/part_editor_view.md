@@ -18,7 +18,7 @@ PartEditorView [fill]
 Header [arrange:row]
 
     - Save
-        on:click -> write current part set to data/parts.json
+        on:click -> write the part's category file, data/parts/<category>.json
 
     - New
         on:click -> create a new part in the current category
@@ -49,6 +49,8 @@ PropertyEditor [fill]
     * Properties
         - flat scalar fields
         - nested dict groups become nested labeled sections
+        - optional fields the entry leaves out, blank ("blank = left out"): battery connector, ir_mohm_per_cell,
+          lead_awg, lead_length_mm; esc mosfet_rds_on_ohm
 ```
 
 ### Field behavior
@@ -60,10 +62,11 @@ Formatting
 
 Save behavior
     - values are parsed back into the existing field type
-    - save may move a part to a different category
+    - a blank optional field is removed from the entry
+    - the entry keeps its place in its file; save may move a part to a different category
     - save triggers the main app to reload library data
 
 New behavior
     - new battery parts use the battery defaults
-    - new esc parts use the esc defaults
+    - new esc parts use the esc defaults; prop, material and connector parts likewise
 ```

@@ -1,0 +1,14 @@
+{
+    "7in": {
+        "diameter_in": 7,
+        "mass": 0.005
+    },
+    "9in": {
+        "diameter_in": 9,
+        "mass": 0.014
+    },
+    "10in": {
+        "diameter_in": 10,
+        "mass": 0.022
+    }
+}

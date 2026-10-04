@@ -67,18 +67,18 @@ MenuBar [docked:top]
 ### Load / Save behavior
 
 ```text
-Project = aircraft/<project>/ with aircraft.json (the airframe/2 definition), inav/, sitl/, jsbsim/, logs/, cad/
+Project = aircraft/<project>/ with aircraft.json (the airframe/2 definition), inav/, sitl/, jsbsim/, logs/, cad/, controllers/
 
 Load
-    - a directory without aircraft.json -> error dialog, nothing changes
-    - aircraft.json not airframe/2 -> error dialog, nothing changes
+    - a directory without aircraft.json -> error in the Log, nothing changes
+    - aircraft.json not airframe/2 -> error in the Log, nothing changes
     - otherwise everything is recomputed from the definition
 
 Save
     - writes the definition only; nothing computed is saved
 
 Save As
-    - a name that is not a plain directory name, or an existing project -> error dialog, nothing changes
+    - a name that is not a plain directory name, or an existing project -> error in the Log, nothing changes
     - cancel -> nothing changes
     - the old project stays as it was last saved
 ```
@@ -137,15 +137,14 @@ CAD
     - raises the CAD view
 
 Part Editor
-    - refreshes data/parts.json from disk
+    - refreshes the part library (data/parts/) from disk
     - raises the part-library editor view
 ```
 
 ## Error handling
 
 ```text
-Unhandled Tk callback errors
-    - are printed with full traceback
-    - open an Error dialog with scrollable traceback text
-    - dialog can be closed with the Close button or Escape
+Errors (unhandled callback errors with their traceback, aero failures, load / save / preset errors)
+    - are appended to the Configuration view's Log tab; the status bar says "<what> (see Log)"
+    - never open a window
 ```

@@ -201,49 +201,7 @@
         "vtx_5800": {},
         "lora_915": {}
     },
-    "connectors": {
-        "XT60_panel": {},
-        "USB_C_panel": {},
-        "XT60": {
-            "contact_resistance_ohm": 0.0005
-        },
-        "MR60": {
-            "contact_resistance_ohm": 0.0006
-        }
-    },
     "wire_paths": {
-        "batt_to_esc": {
-            "start": "batt",
-            "end": "esc",
-            "wires_n": 2,
-            "wires_ga": 14,
-            "wires_list": {
-                "V_BATT": "red",
-                "G_BATT": "black"
-            },
-            "plug_start": "XT60",
-            "plug_mid": "XT60",
-            "plug_breaker": "XT60",
-            "plug_end": "soldered",
-            "shielded": false,
-            "high_current": true
-        },
-        "esc_to_motor": {
-            "start": "esc",
-            "end": "motor",
-            "wires_n": 3,
-            "wires_ga": 18,
-            "wires_list": {
-                "A": "black",
-                "B": "black",
-                "C": "black"
-            },
-            "plug_start": "soldered",
-            "plug_mid": "MR60",
-            "plug_end": "soldered",
-            "shielded": false,
-            "high_current": true
-        },
         "fc_to_esc": {
             "start": "fc",
             "end": "esc",

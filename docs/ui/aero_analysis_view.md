@@ -93,7 +93,7 @@ AirfoilSelectionPanel [editable]
 ## SummaryPanel
 
 ```text
-SummaryPanel [fill, scrollable, copyable]
+SummaryPanel [fill, scrollable, copyable, word-wrapped]
 
     * SummaryText [ui:fixed-width text]
         machine-friendly dense report for each selected airfoil

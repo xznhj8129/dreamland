@@ -141,7 +141,7 @@ class VLMMainView:
         aero_results_frame.rowconfigure(0, weight=1)
         self.results_text = tk.Text(
             aero_results_frame,
-            wrap="none",
+            wrap="word",
             font=("TkFixedFont", 10),
             background=app.ui_panel,
             foreground=app.ui_fg,
@@ -154,11 +154,9 @@ class VLMMainView:
             relief="flat",
         )
         aero_scroll_y = ttk.Scrollbar(aero_results_frame, orient="vertical", command=self.results_text.yview)
-        aero_scroll_x = ttk.Scrollbar(aero_results_frame, orient="horizontal", command=self.results_text.xview)
-        self.results_text.configure(yscrollcommand=aero_scroll_y.set, xscrollcommand=aero_scroll_x.set)
+        self.results_text.configure(yscrollcommand=aero_scroll_y.set)
         self.results_text.grid(row=0, column=0, sticky="nsew")
         aero_scroll_y.grid(row=0, column=1, sticky="ns")
-        aero_scroll_x.grid(row=1, column=0, sticky="ew")
 
         aero_display_frame = ttk.LabelFrame(aero_right_frame, text="Display", padding=6)
         aero_display_frame.grid(row=0, column=0, sticky="nsew")
@@ -385,7 +383,8 @@ class VLMMainView:
                 self.results_text.insert("1.0", message[2])
             else:
                 self.status_var.set("Error")
-                self.app.show_error_dialog(message[2])
+                self.results_text.delete("1.0", tk.END)
+                self.results_text.insert("1.0", message[2])
         if not finished:
             self.app.root.after(QUEUE_POLL_MS, self.poll_queue)
 

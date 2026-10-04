@@ -18,13 +18,14 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 from libs.airframe import (
-    AXES, CONTROL_KINDS, CONTROL_ROLES, FIN_POSITIONS, JOINT_TYPES, LAYOUT_PANEL_COUNTS, LAYOUTS, MOUNT_TARGETS, REINFORCEMENT_TYPES,
+    AXES, BATTERY_PART_NAME, CONTROL_KINDS, CONTROL_ROLES, CUT_JOINTS, FIN_POSITIONS, INCIDENCE_MODES, JOINT_TYPES, LAYOUT_PANEL_COUNTS, LAYOUTS, MOUNT_TARGETS, REINFORCEMENT_TYPES,
     SERVO_OUTPUTS, PART_CATEGORIES, SINGLE_PROP_SPINS, SURFACE_PROP_SPINS, SURFACE_ROOTS, THRUST_DIRECTIONS, VOLUME_SHAPES, AirframeError,
-    motor_repo,
+    cell_format, motor_count, motor_repo,
 )
+from libs.geometry import route_length_m
 from libs.graphics import draw_canvas_view
 from libs.presets import ROD_PATTERN_KEYS, apply_preset, default_rod_extent, preset_names, preset_status, read_specs, save_preset
-from libs.propulsion import propulsion_summary, summary_lines
+from libs.propulsion import summary_lines
 from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS
 
 # AeroSandbox's matplotlib draw needs a pyplot figure. With pyplot on Agg those figures get no Tk window of their
@@ -34,7 +35,7 @@ plt.switch_backend("Agg")
 MM_KEYS = {
     "length_m", "width_m", "height_m", "wall_radial_m", "insertion_depth_m", "diameter_m", "radial_position_m",
     "from_x_m", "to_x_m", "x_root_le_m", "span_m", "chord_root_m", "chord_tip_m", "span_position_m",
-    "x_offset_m", "y_offset_m", "z_offset_m", "x_m", "y_m", "z_m", "flat_length_m", "curve_length_m", "nose_radius", "size_m", "printer_bed_m", "cuts_m",
+    "x_offset_m", "y_offset_m", "z_offset_m", "x_m", "y_m", "z_m", "lead_length_m", "flat_length_m", "curve_length_m", "nose_radius", "size_m", "printer_bed_m", "cuts_m",
 }
 GRAM_KEYS = {"mass_kg", "coupler_mass_kg", "empty_mass_kg", "complete_mass_kg"}
 UNIT_SUFFIXES = ("_kg_m3", "_m_s", "_deg_s", "_deg", "_kg", "_m")
@@ -42,6 +43,7 @@ CHOICES = {
     "layout": list(LAYOUTS),
     "fin_position": list(FIN_POSITIONS),
     "root": list(SURFACE_ROOTS),
+    "incidence_mode": list(INCIDENCE_MODES),
     "axis": list(AXES),
     "on": list(MOUNT_TARGETS),
     "direction": list(THRUST_DIRECTIONS),
@@ -58,7 +60,7 @@ VOLUME_SHAPE_FIELDS = {
 }
 NEW_SURFACE = {
     "name": "wing", "x_root_le_m": 0.2, "layout": "H", "fin_position": "top", "dihedral_deg": 0.0, "root_offset": 0.0,
-    "root": "body", "span_m": 0.12, "chord_root_m": 0.1, "chord_tip_m": 0.07, "sweep_le_deg": 10.0, "incidence_deg": 0.0, "airfoil": "naca2412",
+    "root": "body", "span_m": 0.12, "chord_root_m": 0.1, "chord_tip_m": 0.07, "sweep_le_deg": 10.0, "incidence_deg": 0.0, "incidence_mode": "symmetric", "airfoil": "naca2412",
 }
 CONTROL_KIND_FIELDS = {"split": {"chord_start": 0.75, "span_start": 0.0, "span_end": 1.0}, "all_moving": {"pivot": 0.25}}
 NEW_CONTROL = {"kind": "split", "roles": [], "deflection_min_deg": -25.0, "deflection_max_deg": 25.0, "rate_deg_s": 300.0}  # + kind fields, servos
@@ -68,7 +70,22 @@ NEW_PROP = "APC E 7x5"  # motorlib
 # Rods for an aircraft without a preset to take them from: 4 x 2.5 mm carbon (the built M62 aircraft), touching the inner wall.
 NEW_ROD_PATTERN = {"type": "cf_rod", "material": "carbon_rod", "diameter_m": 0.0025, "polar_n": 4, "polar_offset_angle": 45.0, "polar_split": 0, "polar_split_angle": 0.0}
 NO_PRESET = "(none)"
-SECTION_COLUMNS = ("section mm", "cut mm", "solid", "empty g", "calc", "complete g", "items", "")
+NO_VOLUME = "(none)"  # a part placed at its own x, y, z
+EDITOR_TABS = {"Design": ("Airframe", "Fuselage", "Sections", "Surfaces", "Volumes", "Motor mounts"), "Build": ("Propulsion", "Parts", "Wiring")}
+WIRING_COLUMNS = ("run", "length mm", "AWG", "wires", "plugs, along the run")
+# Wire runs for a newly powered aircraft and for added motors without one to copy: the values data/specs.json held before
+# wiring became per aircraft.
+NEW_BATTERY_RUN = {"gauge_awg": 14, "conductors": 2, "plugs": ["XT60", "XT60"]}  # after the battery's own connector
+NEW_MOTOR_RUN = {"gauge_awg": 18, "conductors": 3, "plugs": ["MR60"]}
+BATTERY_MODEL_LABELS = {"commercial": "Commercial", "custom_liion": "Custom Li-Ion"}  # libs/airframe.py BATTERY_MODELS
+# A custom pack as first picked (then edited): 4S1P of the first stackable motorlib Li-ion cell, lying along x.
+NEW_CUSTOM_PACK = {"model": "custom_liion", "s": 4, "p": 1, "cell": "Molicel INR21700-P45B 7/10C", "connector": "XT60", "cell_axis": "x",
+                   "stacking": [4, 1, 1], "lead_awg": 14, "lead_length_m": 0.1}
+PLACEMENT_KEYS = ("volume", "x_offset_m", "y_offset_m", "z_offset_m", "x_m", "y_m", "z_m")
+REMOVE_PLUG = "(remove)"
+ADD_PLUG = "+"
+SECTION_COLUMNS = ("section mm", "cut mm", "joint", "solid", "empty g", "calc", "complete g", "items", "")
+NEW_CUT_JOINT = "coupler"
 SECTION_ENTRY_WIDTH = 5
 TYPE_FLAGS = ("tailsitter", "vtol", "powered")  # each implies the ones after it
 DRAG_KEYS = {"volume": ("volumes", "x_m"), "surface": ("surfaces", "x_root_le_m")}  # cuts drag the sections.cuts_m entry itself
@@ -123,6 +140,7 @@ class ConfigurationMainView:
         self.view_metrics = None
         self.control_deflections: dict[int, float] = {}  # control number -> deg, drawn in the views; no UI yet
         self.stashed_propulsion: dict | None = None  # propulsion block removed by unticking powered, restored on ticking it
+        self.stashed_batteries: dict[str, dict] = {}  # per battery model, its fields when another model was picked
         self.stashed_reinforcement: dict | None = None  # rods removed by unticking them, restored on ticking them
         self.preset_status_var = tk.StringVar(value="")
         self.section_vars: list[tuple[tk.StringVar, tk.StringVar, tk.StringVar]] = []  # per section: x range, computed empty, itemised complete
@@ -161,35 +179,9 @@ class ConfigurationMainView:
 
         left_notebook = ttk.Notebook(left_frame)
         left_notebook.grid(row=1, column=0, sticky="nsew")
-        summary_tab = ttk.Frame(left_notebook, padding=4)
-        summary_tab.columnconfigure(0, weight=1)
-        summary_tab.rowconfigure(0, weight=1)
-        left_notebook.add(summary_tab, text="Summary")
-
-        summary_frame = ttk.LabelFrame(summary_tab, text="Summary", padding=4)
-        summary_frame.grid(row=0, column=0, sticky="nsew")
-        summary_frame.columnconfigure(0, weight=1)
-        summary_frame.rowconfigure(0, weight=1)
-        app.summary_text = tk.Text(
-            summary_frame,
-            wrap="none",
-            font=("TkFixedFont", 10),
-            background=app.ui_panel,
-            foreground=app.ui_fg,
-            insertbackground=app.ui_fg,
-            selectbackground=app.ui_border,
-            selectforeground=app.ui_accent,
-            highlightthickness=1,
-            highlightbackground=app.ui_border,
-            highlightcolor=app.ui_accent,
-            relief="flat",
-        )
-        summary_scroll_y = ttk.Scrollbar(summary_frame, orient="vertical", command=app.summary_text.yview)
-        summary_scroll_x = ttk.Scrollbar(summary_frame, orient="horizontal", command=app.summary_text.xview)
-        app.summary_text.configure(yscrollcommand=summary_scroll_y.set, xscrollcommand=summary_scroll_x.set)
-        app.summary_text.grid(row=0, column=0, sticky="nsew")
-        summary_scroll_y.grid(row=0, column=1, sticky="ns")
-        summary_scroll_x.grid(row=1, column=0, sticky="ew")
+        app.summary_text = self.text_tab(left_notebook, "Summary")
+        app.log_text = self.text_tab(left_notebook, "Log")
+        app.left_notebook, app.log_tab = left_notebook, left_notebook.tabs()[-1]
 
         center_notebook = ttk.Notebook(center_frame)
         center_notebook.grid(row=0, column=0, sticky="nsew")
@@ -261,14 +253,21 @@ class ConfigurationMainView:
         asb_controls.grid(row=0, column=0, sticky="ew", pady=(0, 6))
         ttk.Button(asb_controls, text="Update View", command=app.update_asb_view).pack(side="left")
 
-        notebook = ttk.Notebook(right_frame)
-        notebook.grid(row=0, column=0, rowspan=2, sticky="nsew")
-        for tab_name in ("Airframe", "Fuselage", "Surfaces", "Propulsion", "Volumes", "Parts"):
-            tab = ttk.Frame(notebook, padding=4)
-            tab.columnconfigure(0, weight=1)
-            tab.rowconfigure(0, weight=1)
-            notebook.add(tab, text=tab_name)
-            self.editor_frames[tab_name] = self.make_scroll_area(tab)
+        top = ttk.Notebook(right_frame)
+        top.grid(row=0, column=0, rowspan=2, sticky="nsew")
+        for group_name, tab_names in EDITOR_TABS.items():
+            group = ttk.Frame(top, padding=(0, 4, 0, 0))
+            group.columnconfigure(0, weight=1)
+            group.rowconfigure(0, weight=1)
+            top.add(group, text=group_name)
+            notebook = ttk.Notebook(group)
+            notebook.grid(row=0, column=0, sticky="nsew")
+            for tab_name in tab_names:
+                tab = ttk.Frame(notebook, padding=4)
+                tab.columnconfigure(0, weight=1)
+                tab.rowconfigure(0, weight=1)
+                notebook.add(tab, text=tab_name)
+                self.editor_frames[tab_name] = self.make_scroll_area(tab)
 
 
     def make_scroll_area(self, tab: ttk.Frame) -> ttk.Frame:
@@ -283,6 +282,39 @@ class ConfigurationMainView:
         scroll_y.grid(row=0, column=1, sticky="ns")
         canvas.bind("<Configure>", lambda event: canvas.itemconfigure(window_id, width=event.width))
         return inner
+
+    def text_tab(self, notebook: ttk.Notebook, title: str) -> tk.Text:
+        """A notebook tab holding one scrollable, word-wrapped text box."""
+        app = self.app
+        tab = ttk.Frame(notebook, padding=4)
+        tab.columnconfigure(0, weight=1)
+        tab.rowconfigure(0, weight=1)
+        notebook.add(tab, text=title)
+        frame = ttk.LabelFrame(tab, text=title, padding=4)
+        frame.grid(row=0, column=0, sticky="nsew")
+        frame.columnconfigure(0, weight=1)
+        frame.rowconfigure(0, weight=1)
+        text = tk.Text(
+            frame,
+            wrap="word",
+            font=("TkFixedFont", 10),
+            background=app.ui_panel,
+            foreground=app.ui_fg,
+            insertbackground=app.ui_fg,
+            selectbackground=app.ui_border,
+            selectforeground=app.ui_accent,
+            highlightthickness=1,
+            highlightbackground=app.ui_border,
+            highlightcolor=app.ui_accent,
+            relief="flat",
+        )
+        scroll_y = ttk.Scrollbar(frame, orient="vertical", command=text.yview)
+        text.configure(yscrollcommand=scroll_y.set)
+        for level, color in app.ui_level_colors.items():
+            text.tag_configure(level, foreground=color)
+        text.grid(row=0, column=0, sticky="nsew")
+        scroll_y.grid(row=0, column=1, sticky="ns")
+        return text
 
     def draw_active_view(self) -> None:
         app = self.app
@@ -342,6 +374,7 @@ class ConfigurationMainView:
             self.rebuild_editors()
 
     def changed(self, rebuild: bool = False) -> None:
+        self.sync_motor_runs()
         self.app.recompute()
         if rebuild:
             self.rebuild_editors()  # after recompute, so editors can show resolved values (control numbers)
@@ -399,7 +432,7 @@ class ConfigurationMainView:
                     data[key] = parse_value(unit_key, text, existing)
                 except ValueError:
                     variable.set(state["text"])
-                    self.app.recompute_status_var.set(f"Not a valid value for {field_label(unit_key)}: {text!r}")
+                    self.app.log_error("Not a valid value", f"{field_label(unit_key)}: {text!r}")
                     return "break"
             state["text"] = text
             if on_commit is None:
@@ -418,20 +451,26 @@ class ConfigurationMainView:
             self.add_entry(frame, row + index, data[key], index, label=f"{field_label(key)} {axis_label}", unit_key=key)
         return row + len(axis_labels)
 
-    def add_choice(self, frame, row: int, data, key, options: list[str], on_change=None, label: str | None = None) -> None:
-        """Combobox for one value of a dict (by key) or list (by index, with a label)."""
+    def add_choice(self, frame, row: int, data, key, options: list[str], on_change=None, label: str | None = None, convert=str) -> None:
+        """Labelled combobox row for one value of a dict (by key) or list (by index, with a label); see make_choice."""
         ttk.Label(frame, text=label or field_label(key)).grid(row=row, column=0, sticky="w")
+        self.make_choice(frame, data, key, options, on_change, convert=convert).grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=1)
+
+    def make_choice(self, frame, data, key, options: list[str], on_change=None, width: int | None = None, convert=str) -> ttk.Combobox:
+        """Combobox (not gridded) for one value of a dict or list; a pick stores it (through convert) and rebuilds the editors."""
         variable = tk.StringVar(value=str(data[key] if type(data) is list else data.get(key, "")))
         box = ttk.Combobox(frame, values=options, textvariable=variable, state="readonly")
-        box.grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=1)
+        if width is not None:
+            box.configure(width=width)
 
         def select(_event=None) -> None:
-            data[key] = variable.get()
+            data[key] = convert(variable.get())
             if on_change is not None:
                 on_change()
             self.changed(rebuild=True)
 
         box.bind("<<ComboboxSelected>>", select)
+        return box
 
     def add_fields(self, frame, data: dict, start_row: int = 0, skip: set[str] = frozenset(), on_change: dict | None = None) -> int:
         """Generic rows for every field of a definition dict, in stored order; on_change maps a choice key to a callback."""
@@ -470,10 +509,14 @@ class ConfigurationMainView:
                 child.destroy()
         self.build_airframe_tab(self.editor_frames["Airframe"])
         self.build_fuselage_tab(self.editor_frames["Fuselage"])
+        self.build_sections_group(self.editor_frames["Sections"], 0)
+        self.refresh_fuselage_status()
         self.build_surfaces_tab(self.editor_frames["Surfaces"])
-        self.build_propulsion_tab(self.editor_frames["Propulsion"])
         self.build_volumes_tab(self.editor_frames["Volumes"])
+        self.build_mounts_tab(self.editor_frames["Motor mounts"])
+        self.build_propulsion_tab(self.editor_frames["Propulsion"])
         self.build_parts_tab(self.editor_frames["Parts"])
+        self.build_wiring_tab(self.editor_frames["Wiring"])
 
     def build_airframe_tab(self, parent) -> None:
         definition = self.app.definition
@@ -512,12 +555,7 @@ class ConfigurationMainView:
             for dependent in TYPE_FLAGS[:TYPE_FLAGS.index(key)]:
                 chosen[dependent] = False
         if chosen["powered"] and "propulsion" not in definition:
-            propulsion = self.stashed_propulsion or self.new_propulsion()
-            if propulsion is None:
-                self.app.recompute_status_var.set("Powered needs a battery part and an ESC part (Parts tab)")
-                self.rebuild_editors()
-                return
-            definition["propulsion"] = propulsion
+            definition["propulsion"] = self.stashed_propulsion or self.new_propulsion()
         elif not chosen["powered"] and "propulsion" in definition:
             self.stashed_propulsion = definition.pop("propulsion")
         definition.update(chosen)
@@ -527,15 +565,90 @@ class ConfigurationMainView:
         """Names of the placed parts of one library category."""
         return [part["name"] for part in self.app.definition["parts"] if part["part"].partition(":")[0] == category]
 
-    def new_propulsion(self) -> dict | None:
-        """NEW_MOTOR, NEW_PROP, the first battery and ESC parts, one nose tractor; None without those parts."""
-        batteries, escs = self.parts_of("battery"), self.parts_of("esc")
-        if not batteries or not escs:
-            return None
+    def new_propulsion(self) -> dict:
+        """NEW_MOTOR, NEW_PROP, the first library pack (in the first volume, else at mid-fuselage), the first ESC part
+        (empty until placed and picked), one nose tractor."""
+        definition = self.app.definition
+        place = {"volume": definition["volumes"][0]["name"]} if definition["volumes"] else {"x_m": round(definition["fuselage"]["length_m"] / 2.0, 4)}
+        battery = {"model": "commercial", "part": sorted(self.app.parts_data["battery"])[0], **place}
         return {
-            "motor": dict(NEW_MOTOR), "prop": NEW_PROP, "battery": batteries[0], "esc": escs[0],
+            "motor": dict(NEW_MOTOR), "prop": NEW_PROP, "battery": battery, "esc": next(iter(self.parts_of("esc")), ""),
             "mounts": [{"on": "nose", "direction": "tractor", "spin": SINGLE_PROP_SPINS[0], "thrust_axis_tilt_deg": 0.0}],
+            "wiring": {"battery": copy.deepcopy(NEW_BATTERY_RUN), "motors": [copy.deepcopy(NEW_MOTOR_RUN)]},
         }
+
+    def sync_motor_runs(self) -> None:
+        """propulsion.wiring.motors follows the motor count: an added motor gets a copy of the last run, a removed one
+        loses its own. Left alone while a mount names a surface that does not exist (a definition error says so)."""
+        propulsion = self.app.definition.get("propulsion")
+        if propulsion is None:
+            return
+        layouts = {surface["name"]: surface["layout"] for surface in self.app.definition["surfaces"]}
+        mounts = [(mount["on"], mount.get("surface")) for mount in propulsion["mounts"]]
+        if any(on == "surface" and surface not in layouts for on, surface in mounts):
+            return
+        count = motor_count(mounts, layouts)
+        runs = propulsion["wiring"]["motors"]
+        while len(runs) < count:
+            runs.append(copy.deepcopy(runs[-1] if runs else NEW_MOTOR_RUN))
+        del runs[count:]
+
+    def build_wiring_tab(self, parent) -> None:
+        definition = self.app.definition
+        if "propulsion" not in definition:
+            ttk.Label(parent, text="Not powered (type on the Airframe tab).").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+            return
+        wiring = definition["propulsion"]["wiring"]
+        resolved = self.app.resolved
+        current = resolved is not None and resolved.wires is not None and len(resolved.wires.motors) == len(wiring["motors"])
+        names = [motor.name for motor in resolved.motors] if current else [f"motor {index + 1}" for index in range(len(wiring["motors"]))]
+        routes = [resolved.wires.battery, *resolved.wires.motors] if current else [None] * (len(wiring["motors"]) + 1)
+        runs = [("battery -> ESC", wiring["battery"]), *((f"ESC -> {name}", run) for name, run in zip(names, wiring["motors"]))]
+        group = ttk.LabelFrame(parent, text="Wire runs (auto-routed along the axes; drawn in the side view)", padding=6)
+        group.grid(row=0, column=0, sticky="ew", padx=4, pady=4)
+        for column, title in enumerate(WIRING_COLUMNS):
+            ttk.Label(group, text=title).grid(row=0, column=column, sticky="w", padx=(0, 6))
+        gauges = [str(gauge) for gauge in sorted(wire.gauge for wire in motor_repo().wires)]
+        connectors = sorted(name for name, connector in self.app.parts_data["connector"].items() if "contact_resistance_ohm" in connector)
+        for row, ((label, run), route) in enumerate(zip(runs, routes), start=1):
+            ttk.Label(group, text=label).grid(row=row, column=0, sticky="w", padx=(0, 6))
+            ttk.Label(group, text="-" if route is None else f"{route_length_m(route) * 1000:.0f}").grid(row=row, column=1, sticky="w", padx=(0, 6))
+            self.make_choice(group, run, "gauge_awg", gauges, width=4, convert=int).grid(row=row, column=2, sticky="w", padx=(0, 6), pady=1)
+            self.make_entry(group, run, "conductors", "conductors", width=3).grid(row=row, column=3, sticky="w", padx=(0, 6), pady=1)
+            plugs = ttk.Frame(group)
+            plugs.grid(row=row, column=4, sticky="w")
+            first = 0
+            if run is wiring["battery"]:  # the battery's own connector comes first, set in its part library entry
+                ttk.Label(plugs, text=self.battery_connector()).grid(row=0, column=0, padx=(0, 6))
+                first = 1
+            for index in range(len(run["plugs"])):
+                self.plug_box(plugs, run["plugs"], index, [*connectors, REMOVE_PLUG]).grid(row=0, column=first + index, padx=(0, 2))
+            self.plug_box(plugs, run["plugs"], None, connectors).grid(row=0, column=first + len(run["plugs"]))
+
+    def battery_connector(self) -> str:
+        """The propulsion battery's own connector: its library entry's, or the custom pack's ("?" while it has none)."""
+        battery = self.app.definition["propulsion"]["battery"]
+        if battery["model"] == "commercial":
+            return self.app.parts_data["battery"].get(battery.get("part"), {}).get("connector", "?")
+        return battery.get("connector", "?")
+
+    def plug_box(self, frame, plugs: list[str], index: int | None, options: list[str]) -> ttk.Combobox:
+        """A plug on a run (REMOVE_PLUG takes it off), or with index None the ADD_PLUG box that appends one."""
+        variable = tk.StringVar(value=ADD_PLUG if index is None else plugs[index])
+        box = ttk.Combobox(frame, values=options, textvariable=variable, state="readonly", width=max(len(option) for option in [ADD_PLUG, *options]))
+
+        def select(_event=None) -> None:
+            choice = variable.get()
+            if index is None:
+                plugs.append(choice)
+            elif choice == REMOVE_PLUG:
+                del plugs[index]
+            else:
+                plugs[index] = choice
+            self.changed(rebuild=True)
+
+        box.bind("<<ComboboxSelected>>", select)
+        return box
 
     def build_fuselage_tab(self, parent) -> None:
         fuselage = self.app.definition["fuselage"]
@@ -558,8 +671,6 @@ class ConfigurationMainView:
                 self.add_fields(sub, fuselage[key])
             row += 1
         self.build_reinforcement_group(parent, 2)
-        self.build_sections_group(parent, 3)
-        self.refresh_fuselage_status()
 
     def build_preset_group(self, parent, grid_row: int) -> None:
         group = ttk.LabelFrame(parent, text="Size preset (data/specs.json)", padding=6)
@@ -595,7 +706,7 @@ class ConfigurationMainView:
         try:
             save_preset(name, self.app.definition, self.app.parts_data)
         except AirframeError as error:
-            messagebox.showerror("Save preset", f"Not saved, data/specs.json unchanged:\n{error}", parent=self.frame)
+            self.app.log_error("Save preset", f"Not saved, data/specs.json unchanged:\n{error}")
             return
         self.app.definition["preset"] = name
         self.changed(rebuild=True)
@@ -605,7 +716,7 @@ class ConfigurationMainView:
         if not name:
             return
         if name in preset_names() or name == NO_PRESET:
-            messagebox.showerror("New preset", f"A preset named {name} already exists.", parent=self.frame)
+            self.app.log_error("New preset", f"A preset named {name} already exists.")
             return
         self.save_preset_as(name, overwrite=False)
 
@@ -648,7 +759,7 @@ class ConfigurationMainView:
 
     def build_sections_group(self, parent, grid_row: int) -> None:
         sections = self.app.definition["sections"]
-        cuts, rows = sections["cuts_m"], sections["per_section"]
+        cuts, rows, joints = sections["cuts_m"], sections["per_section"], sections["cut_joints"]
         group = ttk.LabelFrame(parent, text="Sections (cut lines; drag them in the side view)", padding=6)
         group.grid(row=grid_row, column=0, sticky="ew", padx=4, pady=4)
         ttk.Button(group, text="Add cut", command=self.add_cut).grid(row=0, column=0, columnspan=2, sticky="w", pady=(0, 4))
@@ -662,14 +773,15 @@ class ConfigurationMainView:
             ttk.Label(group, textvariable=range_var).grid(row=grid_row, column=0, sticky="w", padx=(0, 4))
             if index < len(cuts):
                 self.make_entry(group, cuts, index, "cuts_m", width=SECTION_ENTRY_WIDTH).grid(row=grid_row, column=1, sticky="w", padx=(0, 4), pady=1)
+                self.make_choice(group, joints, index, list(CUT_JOINTS), width=10).grid(row=grid_row, column=2, sticky="w", padx=(0, 4), pady=1)
             solid = tk.BooleanVar(value=row_data["solid"])
-            ttk.Checkbutton(group, variable=solid, command=lambda r=row_data, v=solid: self.set_solid(r, v)).grid(row=grid_row, column=2)
-            for column, key in ((3, "empty_mass_kg"), (5, "complete_mass_kg")):
+            ttk.Checkbutton(group, variable=solid, command=lambda r=row_data, v=solid: self.set_solid(r, v)).grid(row=grid_row, column=3)
+            for column, key in ((4, "empty_mass_kg"), (6, "complete_mass_kg")):
                 self.make_entry(group, row_data, key, key, optional=True, width=SECTION_ENTRY_WIDTH).grid(row=grid_row, column=column, sticky="w", padx=(0, 4), pady=1)
-            ttk.Label(group, textvariable=empty_var).grid(row=grid_row, column=4, sticky="w", padx=(0, 4))
-            ttk.Label(group, textvariable=itemised_var).grid(row=grid_row, column=6, sticky="w", padx=(0, 4))
+            ttk.Label(group, textvariable=empty_var).grid(row=grid_row, column=5, sticky="w", padx=(0, 4))
+            ttk.Label(group, textvariable=itemised_var).grid(row=grid_row, column=7, sticky="w", padx=(0, 4))
             if index < len(cuts):
-                ttk.Button(group, text="Del", width=4, command=lambda i=index: self.delete_cut(i)).grid(row=grid_row, column=7, sticky="e")
+                ttk.Button(group, text="Del", width=4, command=lambda i=index: self.delete_cut(i)).grid(row=grid_row, column=8, sticky="e")
         ttk.Label(group, wraplength=360, justify="left",
                   text="cut mm: the section's end. Blank empty = calc (hollow: shell wall; solid: less its volumes). Blank complete = items: "
                        "everything attached in the section, which a weighed complete mass replaces.").grid(
@@ -686,6 +798,7 @@ class ConfigurationMainView:
         bounds = [0.0, *cuts, self.app.definition["fuselage"]["length_m"]]
         longest = max(range(len(bounds) - 1), key=lambda i: bounds[i + 1] - bounds[i])
         cuts.insert(longest, round((bounds[longest] + bounds[longest + 1]) / 2.0, 4))
+        sections["cut_joints"].insert(longest, NEW_CUT_JOINT)
         rows[longest:longest + 1] = [{"solid": rows[longest]["solid"]}, {"solid": rows[longest]["solid"]}]
         self.changed(rebuild=True)
 
@@ -693,6 +806,7 @@ class ConfigurationMainView:
         """Merge the sections either side of a cut: the left one's solid flag, each weighed mass summed when both have one."""
         sections = self.app.definition["sections"]
         sections["cuts_m"].pop(index)
+        sections["cut_joints"].pop(index)
         left, right = sections["per_section"][index:index + 2]
         merged = {"solid": left["solid"]}
         for key in ("empty_mass_kg", "complete_mass_kg"):
@@ -798,10 +912,10 @@ class ConfigurationMainView:
             return
         propulsion = definition["propulsion"]
         motor = propulsion["motor"]
+        self.build_battery_group(parent, 0, propulsion)
         group = ttk.LabelFrame(parent, text="Motor, prop and ESC (motorlib)", padding=6)
-        group.grid(row=0, column=0, sticky="ew", padx=4, pady=4)
+        group.grid(row=1, column=0, sticky="ew", padx=4, pady=4)
         group.columnconfigure(1, weight=1)
-        self.add_choice(group, 0, propulsion, "battery", self.parts_of("battery"))
         repo = motor_repo()
         motors_by_manufacturer = {}  # motors with a stator size (the drawing and mass model need it)
         for code, name in repo.manufacturer_by_idx.items():
@@ -813,10 +927,70 @@ class ConfigurationMainView:
         self.add_choice(group, 2, motor, "name", motors_by_manufacturer.get(motor["manufacturer"], []), label="motor")
         self.add_choice(group, 3, propulsion, "prop", sorted(repo.prop_by_name, key=str.lower))
         self.add_choice(group, 4, propulsion, "esc", self.parts_of("esc"), label="ESC")
-        ttk.Button(parent, text="Add motor mount", command=self.add_mount).grid(row=1, column=0, sticky="w", padx=4, pady=4)
+        if self.app.propulsion is not None:
+            self.build_motor_info(parent, 2)
+
+    def build_battery_group(self, parent, grid_row: int, propulsion: dict) -> None:
+        """The pack: a commercial one from data/parts/battery.json, or a custom stack of motorlib cells; where it sits."""
+        battery = propulsion["battery"]
+        group = ttk.LabelFrame(parent, text="Battery", padding=6)
+        group.grid(row=grid_row, column=0, sticky="ew", padx=4, pady=4)
+        group.columnconfigure(1, weight=1)
+        ttk.Label(group, text="Battery model").grid(row=0, column=0, sticky="w")
+        model_var = tk.StringVar(value=BATTERY_MODEL_LABELS[battery["model"]])
+        model_box = ttk.Combobox(group, values=list(BATTERY_MODEL_LABELS.values()), textvariable=model_var, state="readonly")
+        model_box.grid(row=0, column=1, sticky="ew", padx=(8, 0), pady=1)
+        model_box.bind("<<ComboboxSelected>>", lambda _event: self.set_battery_model(
+            propulsion, next(model for model, label in BATTERY_MODEL_LABELS.items() if label == model_var.get())))
+        if battery["model"] == "commercial":
+            self.add_choice(group, 1, battery, "part", sorted(self.app.parts_data["battery"]), label="pack")
+            self.add_entry(group, 2, battery, "mass_kg", optional=True, blank_hint="blank = library")
+            row = 3
+        else:
+            cells = sorted(name for name in motor_repo().cell_by_name if cell_format(name) is not None)
+            connectors = sorted(name for name, connector in self.app.parts_data["connector"].items() if "contact_resistance_ohm" in connector)
+            gauges = [str(gauge) for gauge in sorted(wire.gauge for wire in motor_repo().wires)]
+            self.add_entry(group, 1, battery, "s", label="S (cells in series)")
+            self.add_entry(group, 2, battery, "p", label="P (in parallel)")
+            self.add_choice(group, 3, battery, "cell", cells, label="cell (motorlib)")
+            self.add_choice(group, 4, battery, "connector", connectors)
+            self.add_choice(group, 5, battery, "cell_axis", list(AXES), label="cell length along")
+            for index, axis in enumerate(AXES):
+                self.add_entry(group, 6 + index, battery["stacking"], index, label=f"cells along {axis}", unit_key="stacking")
+            self.add_choice(group, 9, battery, "lead_awg", gauges, label="lead AWG", convert=int)
+            self.add_entry(group, 10, battery, "lead_length_m", label="lead length (mm)")
+            row = 11
+        row = self.add_placement(group, row, battery, BATTERY_PART_NAME)
+        resolved = self.app.resolved
+        if resolved is not None and resolved.airframe.propulsion is not None:
+            pack = resolved.airframe.propulsion.battery
+            size = "no size" if pack.placed.size_m is None else " x ".join(f"{value * 1000:.0f}" for value in pack.placed.size_m) + " mm"
+            ttk.Label(group, text=f"{pack.label}: {size}, {pack.placed.mass_kg[0] * 1000:.0f} g, {pack.capacity_mah:.0f} mAh", wraplength=400).grid(
+                row=row, column=0, columnspan=3, sticky="w", pady=(4, 0))
+
+    def set_battery_model(self, propulsion: dict, model: str) -> None:
+        """Another battery model keeps the placement; its other fields come back as they were when it was last left
+        (NEW_CUSTOM_PACK, or the first library pack, the first time)."""
+        battery = propulsion["battery"]
+        if model == battery["model"]:
+            return
+        self.stashed_batteries[battery["model"]] = {key: value for key, value in battery.items() if key not in PLACEMENT_KEYS}
+        placement = {key: value for key, value in battery.items() if key in PLACEMENT_KEYS}
+        fields = self.stashed_batteries.get(model) or (copy.deepcopy(NEW_CUSTOM_PACK) if model == "custom_liion" else
+                                                         {"model": "commercial", "part": sorted(self.app.parts_data["battery"])[0]})
+        propulsion["battery"] = {**fields, **placement}
+        self.changed(rebuild=True)
+
+    def build_mounts_tab(self, parent) -> None:
+        definition = self.app.definition
+        if "propulsion" not in definition:
+            ttk.Label(parent, text="Not powered (type on the Airframe tab).").grid(row=0, column=0, sticky="w", padx=4, pady=4)
+            return
+        propulsion = definition["propulsion"]
+        ttk.Button(parent, text="Add motor mount", command=self.add_mount).grid(row=0, column=0, sticky="w", padx=4, pady=4)
         surface_names = [surface["name"] for surface in definition["surfaces"]]
         for index, mount in enumerate(propulsion["mounts"]):
-            frame = self.card(parent, index + 2, f"mount {index + 1}", lambda i=index: self.delete_mount(i))
+            frame = self.card(parent, index + 1, f"mount {index + 1}", lambda i=index: self.delete_mount(i))
             self.add_choice(frame, 1, mount, "on", CHOICES["on"], on_change=lambda m=mount: self.normalize_mount(m))
             row = 2
             if mount["on"] == "surface":
@@ -835,19 +1009,17 @@ class ConfigurationMainView:
                 pod.grid(row=row + 2, column=0, columnspan=3, sticky="ew")
                 pod.columnconfigure(1, weight=1)
                 self.add_fields(pod, mount["pod"])
-        if self.app.resolved is not None:
-            self.build_motor_info(parent, len(propulsion["mounts"]) + 2)
 
     def build_motor_info(self, parent, grid_row: int) -> None:
-        """Static propulsion of the last valid airframe: motorlib's model against INAV motor output (duty)."""
+        """Static propulsion of the last valid airframe (app.propulsion): motorlib's model against INAV motor output (duty)."""
         app = self.app
-        summary = propulsion_summary(app.resolved, app.parts_data)
         if self.motor_info is not None and self.motor_info.winfo_exists():
             self.motor_info.destroy()
         group = ttk.LabelFrame(parent, text="Motor info (motorlib, static)", padding=6)
         self.motor_info = group
         group.grid(row=grid_row, column=0, sticky="ew", padx=4, pady=4)
         group.columnconfigure(0, weight=1)
+        summary = app.propulsion
         figure = Figure(figsize=(4.6, 3.4), dpi=100, facecolor=app.ui_bg)
         axis = figure.add_subplot()
         curve = summary.curve
@@ -867,7 +1039,7 @@ class ConfigurationMainView:
         canvas = FigureCanvasTkAgg(figure, master=group)
         canvas.draw()
         canvas.get_tk_widget().grid(row=0, column=0, sticky="ew")
-        ttk.Label(group, text="\n".join(summary_lines(summary)), font=("TkFixedFont", 9), justify="left", wraplength=440).grid(row=1, column=0, sticky="w", pady=(6, 0))
+        ttk.Label(group, text="\n".join(line.text for line in summary_lines(summary)), font=("TkFixedFont", 9), justify="left", wraplength=440).grid(row=1, column=0, sticky="w", pady=(6, 0))
 
     def normalize_mount(self, mount: dict) -> None:
         surfaces = self.app.definition["surfaces"]
@@ -906,7 +1078,7 @@ class ConfigurationMainView:
                                "Drag volumes along the body in the side view (their parts move with them).").grid(row=0, column=0, sticky="w", padx=4)
         ttk.Button(parent, text="Add volume", command=self.add_volume).grid(row=1, column=0, sticky="w", padx=4, pady=4)
         for index, volume in enumerate(volumes):
-            frame = self.card(parent, index + 2, volume["name"], lambda i=index: self.delete_volume(i))
+            frame = self.card(parent, index + 2, volume["name"], lambda i=index: self.delete_item("volumes", i))
             self.add_entry(frame, 1, volume, "name", on_commit=self.rename_volume)
             self.add_choice(frame, 2, volume, "shape", list(VOLUME_SHAPES), on_change=lambda v=volume: self.reset_volume_shape(v))
             row = 3
@@ -924,64 +1096,72 @@ class ConfigurationMainView:
                     row += 1
             self.add_entry(frame, row, volume, "mass_kg", optional=True, blank_hint="blank = space only")
             row += 1
-            contents = [part["name"] for part in self.app.definition["parts"] if part["volume"] == volume["name"]]
+            contents = [part["name"] for part in self.app.definition["parts"] if part.get("volume") == volume["name"]]
             ttk.Label(frame, text=f"parts: {', '.join(contents) if contents else 'none'}").grid(row=row, column=0, columnspan=3, sticky="w")
 
     def rename_volume(self, old: str, new: str) -> None:
         for part in self.app.definition["parts"]:
-            if part["volume"] == old:
+            if part.get("volume") == old:
                 part["volume"] = new
-
-    def delete_volume(self, index: int) -> None:
-        name = self.app.definition["volumes"][index]["name"]
-        contents = [part["name"] for part in self.app.definition["parts"] if part["volume"] == name]
-        if contents:
-            self.app.recompute_status_var.set(f"Volume {name!r} holds parts {contents}: move or delete them first (Parts tab)")
-            return
-        self.delete_item("volumes", index)
 
     def build_parts_tab(self, parent) -> None:
         definition = self.app.definition
-        ttk.Label(parent, text="Library components (data/parts.json), each sitting in a volume, offset from its centre.\n"
+        ttk.Label(parent, text="Library components (data/parts/), in a volume (offset from its centre) or at their own x, y, z.\n"
                                "Mass: grams, or a range like 10-30; 0 = counted elsewhere (e.g. a weighed section).").grid(row=0, column=0, sticky="w", padx=4)
         ttk.Button(parent, text="Add part", command=self.add_part).grid(row=1, column=0, sticky="w", padx=4, pady=4)
         library = [f"{category}:{name}" for category in PART_CATEGORIES for name in sorted(self.app.parts_data[category])]
-        volume_names = [volume["name"] for volume in definition["volumes"]]
         for index, part in enumerate(definition["parts"]):
-            frame = self.card(parent, index + 2, part["name"], lambda i=index: self.delete_part(i))
+            frame = self.card(parent, index + 2, part["name"], lambda i=index: self.delete_item("parts", i))
             self.add_entry(frame, 1, part, "name", on_commit=self.rename_part)
             self.add_choice(frame, 2, part, "part", library)
-            self.add_choice(frame, 3, part, "volume", volume_names)
-            for row, key in enumerate(("x_offset_m", "y_offset_m", "z_offset_m"), start=4):
-                self.add_entry(frame, row, part, key, optional=True, blank_hint="blank = 0")
+            self.add_placement(frame, 3, part, part["name"])
             category, _, name = part["part"].partition(":")
             library_mass = self.app.parts_data[category][name].get("mass") if name in self.app.parts_data.get(category, {}) else None
             hint = "blank = library" if library_mass else "required (none in library)"
             self.add_entry(frame, 7, part, "mass_kg", optional=True, blank_hint=hint)
 
+    def add_placement(self, frame, row: int, item: dict, placed_name: str) -> int:
+        """Volume dropdown (NO_VOLUME first) and the offsets in it, or the item's own x, y, z; returns the next row.
+        placed_name: the item among the resolved parts."""
+        ttk.Label(frame, text="volume").grid(row=row, column=0, sticky="w")
+        volume_var = tk.StringVar(value=item.get("volume", NO_VOLUME))
+        volume_box = ttk.Combobox(frame, values=[NO_VOLUME, *(volume["name"] for volume in self.app.definition["volumes"])], textvariable=volume_var, state="readonly")
+        volume_box.grid(row=row, column=1, sticky="ew", padx=(8, 0), pady=1)
+        volume_box.bind("<<ComboboxSelected>>", lambda _event: self.set_part_volume(item, volume_var.get(), placed_name))
+        if "volume" in item:
+            for offset, key in enumerate(("x_offset_m", "y_offset_m", "z_offset_m"), start=1):
+                self.add_entry(frame, row + offset, item, key, optional=True, blank_hint="blank = 0")
+        else:
+            self.add_entry(frame, row + 1, item, "x_m")
+            for offset, key in enumerate(("y_m", "z_m"), start=2):
+                self.add_entry(frame, row + offset, item, key, optional=True, blank_hint="blank = 0")
+        return row + 4
+
+    def set_part_volume(self, part: dict, volume: str, placed_name: str) -> None:
+        """Into a volume: at its centre (offsets cleared). Out of one (NO_VOLUME): stays where it is, at its own x, y, z."""
+        resolved = self.app.resolved
+        placed = None if resolved is None else next((item for item in resolved.airframe.parts if item.name == placed_name), None)
+        for key in ("volume", "x_offset_m", "y_offset_m", "z_offset_m", "x_m", "y_m", "z_m"):
+            part.pop(key, None)
+        if volume != NO_VOLUME:
+            part["volume"] = volume
+        else:
+            position = placed.position_m if placed is not None else (round(self.app.definition["fuselage"]["length_m"] / 2.0, 4), 0.0, 0.0)
+            part.update(x_m=round(position[0], 4), y_m=round(position[1], 4), z_m=round(position[2], 4))
+        self.changed(rebuild=True)
+
     def rename_part(self, old: str, new: str) -> None:
         propulsion = self.app.definition.get("propulsion")
-        for key in ("battery", "esc"):
-            if propulsion is not None and propulsion[key] == old:
-                propulsion[key] = new
-
-    def delete_part(self, index: int) -> None:
-        name = self.app.definition["parts"][index]["name"]
-        propulsion = self.app.definition.get("propulsion")
-        if propulsion is not None and name in (propulsion["battery"], propulsion["esc"]):
-            self.app.recompute_status_var.set(f"Part {name!r} is the propulsion battery or ESC: pick another there first")
-            return
-        self.delete_item("parts", index)
+        if propulsion is not None and propulsion["esc"] == old:
+            propulsion["esc"] = new
 
     def add_part(self) -> None:
         definition = self.app.definition
-        if not definition["volumes"]:
-            self.app.recompute_status_var.set("Add a volume first: parts sit in volumes")
-            return
         names = {part["name"] for part in definition["parts"]}
         name = next(f"part {n}" for n in range(1, len(names) + 2) if f"part {n}" not in names)
         library = [f"{category}:{entry}" for category in PART_CATEGORIES for entry, data in sorted(self.app.parts_data[category].items()) if data.get("mass")]
-        definition["parts"].append({"name": name, "part": library[0], "volume": definition["volumes"][0]["name"]})
+        place = {"volume": definition["volumes"][0]["name"]} if definition["volumes"] else {"x_m": round(definition["fuselage"]["length_m"] / 2.0, 4)}
+        definition["parts"].append({"name": name, "part": library[0], **place})
         self.changed(rebuild=True)
 
     def reset_volume_shape(self, volume: dict) -> None:

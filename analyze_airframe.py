@@ -12,14 +12,16 @@ point.
 
 import argparse
 import dataclasses
-import json
+import sys
 from pathlib import Path
 
 from libs.aero import analyze_aero
-from libs.airframe import PARTS_PATH, load_airframe
+from libs.airframe import load_airframe, load_parts_data
 from libs.cad import export_step, export_stl
 from libs.geometry import resolve_airframe
+from libs.motorlib import MotorStalled
 from libs.project import open_project
+from libs.propulsion import propulsion_summary
 from libs.report import build_report_text
 
 
@@ -36,8 +38,7 @@ def main() -> None:
     parser.add_argument("--export-prop-discs", action="store_true", help="Include thin propeller discs in CAD exports (actuator-disc CFD)")
     args = parser.parse_args()
 
-    with open(PARTS_PATH, "r") as file:
-        parts_data = json.load(file)
+    parts_data = load_parts_data()
     project = open_project(args.project)
     airframe = load_airframe(project.build_path, parts_data)
     overrides = {key: value for key, value in (("aoa_deg", args.aoa), ("airspeed_m_s", args.airspeed), ("altitude_m", args.altitude)) if value is not None}
@@ -47,7 +48,13 @@ def main() -> None:
     resolved, problems = resolve_airframe(airframe, parts_data)
     aero = analyze_aero(resolved)
     print(f"Source: {project.build_path}")
-    print(build_report_text(resolved, aero, problems, parts_data, args.sweep))
+    propulsion = None
+    if airframe.propulsion is not None:
+        try:
+            propulsion = propulsion_summary(resolved, parts_data)
+        except MotorStalled as error:
+            print(f"Propulsion: {error}", file=sys.stderr)
+    print(build_report_text(resolved, aero, problems, propulsion, args.sweep))
     if args.export_step is not None:
         written_mode = export_step(resolved, args.export_step, mode=args.step_mode, include_prop_discs=args.export_prop_discs)
         print(f"STEP written ({written_mode}): {args.export_step}")

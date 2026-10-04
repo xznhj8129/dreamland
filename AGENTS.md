@@ -11,10 +11,10 @@ Primary files:
 - `libs/presets.py`: size presets (`data/specs.json` presets) applied to, compared with and saved from a definition
 - `libs/geometry.py`: `resolve_airframe`: shared geometry, mass points, CG, checks; every consumer reads it
 - `libs/aero.py`: aero (lifting-line wings + AeroBuildup bodies), Barrowman cross-check, VLM sweep
-- `libs/report.py`: plain-text report shared by the GUI and `analyze_airframe.py`
+- `libs/report.py`: report shared by the GUI and `analyze_airframe.py`; lines carry a level (`libs/reportline.py`: info, warning, problem) the GUI colours
 - `libs/cad.py`: CAD export: FreeCAD-style varsets plus CadQuery solid geometry (STEP/STL, built in mm)
 - `libs/graphics.py`: orthographic drawing on Tk canvas
-- `libs/library_editors.py`: main-window editor panel for `data/parts.json`
+- `libs/library_editors.py`: main-window editor panel for the part library `data/parts/`
 - `libs/airfoil_analysis.py`: NeuralFoil 2D airfoil comparison and DAT import
 - `libs/views/configuration_view.py`: configuration main-view layout and definition editors
 - `libs/views/aero_analysis_view.py`: Aero Analysis main-view layout and NeuralFoil airfoil comparison
@@ -34,19 +34,21 @@ Primary files:
 - `libs/controller.py`: `Controller` script API: simulated SPI IMU, baro, mag, GPS, pitot, rangefinder in raw hardware units; ESC/servo pulses in us
 - `libs/simrun.py`: shared by both runners: start conditions, vehicle build, ground rule, electrical model, plots
 - `airfoil_analysis_example.py`: simple non-GUI example of the airfoil comparison
-- `aircraft/<project>/`: one aircraft project: `aircraft.json` (airframe/2 definition), `inav/` (real INAV CLI diffs), `sitl/` (pinned SITL.elf, eeprom.bin, sitl.log), `jsbsim/` (export), `logs/` (SITL and script flight logs and plots), `cad/` (exports), `controllers/` (flight controller scripts)
-- `data/parts.json`: part library data
+- `aircraft/<project>/`: one aircraft project (`aircraft/` is gitignored except `aircraft/example`, a copy of simpleplane): `aircraft.json` (airframe/2 definition), `inav/` (real FC diffs, SITL diffs; `generated/`: the diff written for each generated or real-FC run), `sitl/` (pinned SITL.elf, eeprom.bin, sitl.log), `jsbsim/` (export), `logs/` (SITL and script flight logs and plots), `cad/` (exports), `controllers/` (flight controller scripts)
+- `data/parts/`: part library, one `<category>.json` per category (battery, esc, prop, material, connector)
 - `data/airfoils.json`: imported airfoil coordinates
-- `data/specs.json`: size presets (M62, M75), fasteners, openings, wiring
+- `data/inav/`: INAV settings templates (`sitl.txt` bench hardware, `plane.txt`, `tailsitter.txt` switches and modes) for generated SITL diffs
+- `data/specs.json`: size presets (M62, M75), fasteners, openings, signal wire paths (an early sketch, not authoritative)
 
 ## Rules
 
 - Do not silently invent missing aircraft data at runtime.
-- If a field is required, put it in the airframe/2 schema (`libs/airframe.py`, `PLAN.md` section 1) or `data/parts.json` and then use it directly.
+- If a field is required, put it in the airframe/2 schema (`libs/airframe.py`, `PLAN.md` section 1) or the part library `data/parts/` and then use it directly.
 - If required data is missing, let it fail visibly.
 - Keep UI behavior documented in `docs/ui/ui_layout.md`, do not detail implementation there, only visible UI.
 - Keep README about design philosophy and analysis staging, not widget details.
 - Keep analysis usable without Tk.
+- INAV always flies a diff file the owner can read and edit. Never compose FC settings from strings in code: templates live in `data/inav/`, the composed diff is written to the project's `inav/generated/`.
 - Keep drawing code in `libs/graphics.py`, not mixed back into `guibuilder.py`.
 - Keep library editor UI in `libs/library_editors.py`, mounted into the main window from `guibuilder.py`.
 

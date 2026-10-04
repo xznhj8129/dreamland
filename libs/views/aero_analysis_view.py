@@ -203,7 +203,7 @@ class AeroAnalysisMainView:
         frame.rowconfigure(0, weight=1)
         self.summary_text = tk.Text(
             frame,
-            wrap="none",
+            wrap="word",
             font=("TkFixedFont", 10),
             background=self.app.ui_panel,
             foreground=self.app.ui_fg,
@@ -216,11 +216,9 @@ class AeroAnalysisMainView:
             relief="flat",
         )
         scroll_y = ttk.Scrollbar(frame, orient="vertical", command=self.summary_text.yview)
-        scroll_x = ttk.Scrollbar(frame, orient="horizontal", command=self.summary_text.xview)
-        self.summary_text.configure(yscrollcommand=scroll_y.set, xscrollcommand=scroll_x.set)
+        self.summary_text.configure(yscrollcommand=scroll_y.set)
         self.summary_text.grid(row=0, column=0, sticky="nsew")
         scroll_y.grid(row=0, column=1, sticky="ns")
-        scroll_x.grid(row=1, column=0, sticky="ew")
 
     def build_plot_panel(self, parent) -> None:
         frame = ttk.LabelFrame(parent, text="NeuralFoil Plots", padding=6)

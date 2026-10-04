@@ -15,7 +15,7 @@ The aircraft definition is now plane-first (schema `airframe/2`, `PLAN.md` secti
 Dependencies (aerosandbox, neuralfoil, cadquery, pandas, numpy, threadpoolctl, Tk) live in the conda env `drone`.
 
 ```
-python guibuilder.py                                          # GUI, opens aircraft/m62v2
+python guibuilder.py                                          # GUI, opens aircraft/example
 python guibuilder.py aircraft/quadlancer62
 python analyze_airframe.py aircraft/m62v2                     # same analysis, text report
 python analyze_airframe.py aircraft/m62v2 --aoa 5 --airspeed 20 --sweep
@@ -31,12 +31,13 @@ python sim_inav.py glide aircraft/simpleplane --alt 600 --heading 90 --wind-from
 python sim_script.py aircraft/simpleplane level --duration 120   # fly a controller script from the project's controllers/
 ```
 
-Each aircraft is a project directory, opened as an argument or with File → Load; Save As copies the whole project under a new name:
+Each aircraft is a project directory, opened as an argument or with File → Load; Save As copies the whole project under a new name. `aircraft/` is gitignored except `aircraft/example` (a copy of simpleplane); the other names above are local projects:
 
 ```
 aircraft/<project>/
     aircraft.json   the definition (airframe/2)
-    inav/           real INAV CLI diffs
+    inav/           INAV diffs: real FC dumps, and SITL diffs flown as written
+      generated/    the diff a run flies, written from the design or a real FC dump (templates in data/inav/); copy into inav/ to edit
     sitl/           SITL.elf (copied in from inav_development on the first run, then pinned), eeprom.bin, sitl.log
     jsbsim/         JSBSim export
     logs/           SITL and script flight logs and plots

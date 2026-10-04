@@ -84,7 +84,7 @@ Numeric entries
 ```text
 BottomPanel [fill]
 
-    * ResultsText [ui:fixed-width text, scrollable, copyable]
+    * ResultsText [ui:fixed-width text, scrollable, copyable, word-wrapped]
         displays VLM sweep report text
 ```
 
@@ -127,7 +127,7 @@ Run behavior
     - the Tk window remains responsive
     - progress updates are delivered through a queue polled on the Tk thread
     - results update the text report and selector ranges when complete
-    - errors are surfaced through the traceback dialog
+    - errors (with traceback) go to the text report
     - solved VLM objects are kept transiently in memory for fast display switching
     - transient VLM cache is not saved to disk
 

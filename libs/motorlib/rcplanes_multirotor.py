@@ -39,6 +39,10 @@ TEMP_COEFF = 0.00382
 JS_MAGIC_FACTOR = (12.0 ** -5) * 1e-9
 
 
+class MotorStalled(RuntimeError):
+    """The motor cannot turn the prop: its resistance drop eats the whole supply (overloaded)."""
+
+
 def _read_csv(path: Path):
     with path.open(encoding="utf-8-sig", newline="") as handle:
         reader = csv.DictReader(handle)
@@ -396,7 +400,7 @@ class MotorSim:
         v_bemf = volts_to_motor - volt_drop_int
         motor_rpm = motor_kv_timed * v_bemf if motor_kv_timed > 0 and v_bemf > 0 else 0.0
         if motor_rpm <= 0.0:
-            raise RuntimeError(f"Motor RPM collapsed (kv={motor_kv_timed}, Vbemf={v_bemf}, pack_v={pack_v}, current={motor_current})")
+            raise MotorStalled(f"motor overloaded, cannot turn the prop: {motor_current:.0f} A would drop the {pack_v:.1f} V supply to {v_bemf:.1f} V back-EMF (kv {motor_kv_timed:g})")
 
         fe_loss = volts_to_motor * motor_io_eff
         cu_loss_factor = empirical_factor / self.motor.krpm if self.motor.krpm else 1.0

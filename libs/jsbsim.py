@@ -10,7 +10,8 @@ motor i is driven through fcs/throttle-cmd-norm[i], in resolved motor order. Wri
 - <out>/engine/<model>_motor.xml, <model>_prop.xml
 - <out>/inav_aircraft.cli: INAV mixer settings: a tailsitter gets its hover and forward-flight mixer profiles, a
   fixed-wing (not VTOL) an AIRPLANE profile with the motors on throttle (none when unpowered). Control surfaces get a
-  servo mix (smix) from their roles, with each rule's sign from the control's own computed moments (servo_mix). VTOL
+  servo mix (smix) from their roles, with each rule's sign from the control's own computed moments (servo_mix); a
+  control opposite to the others on its shared servo is wired reversed (a Y-cable reverser) and marked so. VTOL
   types other than tailsitter are not exported yet (ExportError).
 
 Frames: JSBSim's structural frame is the geometry frame (x aft from the nose, y right, z up, metres). Body x is the nose
@@ -44,6 +45,7 @@ Model choices (best estimates where no data exists):
   (it may lean onto wingtips that end short of the tail); a fixed-wing also gets the nose tip. Springs sized for CONTACT_SUPPORTING_POINTS carrying the weight. Start standing at stance_height_m: JSBSim's ground trim (do_simple_trim) crashes on a nose-up model.
 """
 
+import ast
 import copy
 import hashlib
 import math
@@ -61,10 +63,11 @@ import numpy as np
 from libs.aero import AERO_MODEL_SIZE, build_asb_airplane, build_hybrid_airplanes, with_side_deflections
 from libs.airframe import INCH_M, Propulsion
 from libs.geometry import STANDARD_GRAVITY_M_S2, Inertia, ResolvedAirframe, Vec
-from libs.propulsion import MotorModel, motor_model, rpm_for_thrust, static_points
+from libs.propulsion import MotorModel, motor_models, rpm_for_thrust, static_points
 
 REPO_DIR = Path(__file__).resolve().parent.parent
-EXPORT_INPUT_DIRS = (REPO_DIR / "libs", REPO_DIR / "data")  # the code and libraries an export depends on
+LIBS_DIR = REPO_DIR / "libs"
+DATA_DIR = REPO_DIR / "data"  # everything in it is an export input (part library, presets, airfoils)
 EXPORT_FINGERPRINT_FILE = "export.fingerprint"  # in the export directory, next to the export it describes
 EXPORT_CACHE_FILE = "export.pickle"  # the JSBSimExport of that export
 PROP_J_TABLE_POINTS = 25
@@ -122,7 +125,7 @@ class JSBSimExport:
     hover_motor_fraction: float | None  # predicted motor command in hover (VTOL)
     hover_stick_us: int | None  # nav_mc_hover_thr (VTOL)
     stance_height_m: float | None  # tailsitter: CG height standing on the contact points, nose up (start here; JSBSim's ground trim crashes on it)
-    motor: MotorModel | None  # its constants are the JSBSim motor's (None when unpowered)
+    motors: tuple[MotorModel, ...]  # per motor in motor order (JSBSim engine order), their constants the JSBSim motors'; () when unpowered
     pack_voltage_v: float | None  # JSBSim maxvolts: battery power is V = throttle-pos x pack_voltage_v, I = (V - rpm/Kv) / R
     servo_properties: tuple[str, ...]  # driven by INAV servo output 0, 1, ... (S1, S2, ...), -1..1
 
@@ -140,6 +143,12 @@ class ControlTable:
     deflection_deg: np.ndarray
     increments: dict[str, np.ndarray]  # CONTROL_COEFFICIENTS (body axes) over the undeflected aircraft: (AERO_SPEEDS_M_S, AERO_ALPHA_DEG, deflection_deg)
     derivatives: dict[str, float]  # per degree of deflection near neutral, mean over the airspeeds and AoA within CONTROL_DERIVATIVE_AOA_DEG of zero
+
+
+@dataclass(frozen=True)
+class ServoMix:
+    rules: tuple[tuple[int, str, int, str], ...]  # (servo, role, rate sign, controls) per mixed role
+    reversed: frozenset[int]  # control numbers wired reversed on their shared servo (Y-cable reverser)
 
 
 def inav_motor_order(resolved: ResolvedAirframe) -> tuple[int, ...]:
@@ -300,29 +309,41 @@ def control_tables(resolved: ResolvedAirframe) -> list[ControlTable]:
     return sorted(tables, key=lambda table: table.number)
 
 
-def servo_mix(resolved: ResolvedAirframe, tables: list[ControlTable]) -> list[tuple[int, str, int, str]]:
-    """(servo, role, rate sign, controls) per mixed role. Signs follow INAV's stabilized frame (forward-left-up: + roll =
-    right wing down, + pitch = nose down, + yaw = nose left), i.e. JSBSim body Cl, -Cm, -Cn; flaps: + = more lift. A role
-    a control cannot produce (moment under CONTROL_ROLE_MIN_FRACTION of its largest, e.g. pitch on a vertical fin) is
-    simply not given to it."""
+def servo_mix(resolved: ResolvedAirframe, tables: list[ControlTable]) -> ServoMix:
+    """Rule signs follow INAV's stabilized frame (forward-left-up: + roll = right wing down, + pitch = nose down, + yaw =
+    nose left), i.e. JSBSim body Cl, -Cm, -Cn; flaps: + = more lift. A role a control cannot produce (moment under
+    CONTROL_ROLE_MIN_FRACTION of its largest, e.g. pitch on a vertical fin) is simply not given to it. On a shared servo
+    the first control sets each role's sign; a control opposite to it in every shared role is wired reversed."""
     reference = resolved.reference
-    rules: dict[tuple[int, str], tuple[int, list[str]]] = {}
+    servo_signs: dict[int, dict[str, int]] = {}
+    labels: dict[tuple[int, str], list[str]] = {}
+    reversed_controls = set()
     for table in tables:
         d = table.derivatives
         moments = {"roll": d["Cl"] * reference.span_m, "pitch": -d["Cm"] * reference.chord_m, "yaw": -d["Cn"] * reference.span_m}
+        signs = {}
         for role in table.roles:
             value, largest = (-d["CZ"], max(abs(d["CY"]), abs(d["CZ"]))) if role == "flaps" else (moments[role], max(abs(v) for v in moments.values()))
-            if abs(value) < CONTROL_ROLE_MIN_FRACTION * largest:
-                continue
-            sign = 1 if value > 0.0 else -1
-            existing = rules.setdefault((table.servo, role), (sign, []))
-            if existing[0] != sign:
-                raise ExportError(f"S{table.servo + 1} drives {', '.join(existing[1])} and {table.label} with opposite {role} effect")
-            existing[1].append(table.label)
-    return [(servo, role, sign, ", ".join(labels)) for (servo, role), (sign, labels) in sorted(rules.items())]
+            if abs(value) >= CONTROL_ROLE_MIN_FRACTION * largest:
+                signs[role] = 1 if value > 0.0 else -1
+        servo = servo_signs.setdefault(table.servo, {})
+        opposite = [role for role in signs if role in servo and signs[role] != servo[role]]
+        same = [role for role in signs if role in servo and signs[role] == servo[role]]
+        if opposite and same:
+            raise ExportError(f"S{table.servo + 1}: {table.label} is opposite to the other controls on it in {', '.join(opposite)} "
+                              f"but not in {', '.join(same)}; a reverser cannot wire that")
+        reverse = bool(opposite)
+        if reverse:
+            reversed_controls.add(table.number)
+        for role, sign in signs.items():
+            servo.setdefault(role, -sign if reverse else sign)
+            labels.setdefault((table.servo, role), []).append(f"{table.label}{' (reversed)' if reverse else ''}")
+    rules = tuple((servo, role, servo_signs[servo][role], ", ".join(names)) for (servo, role), names in sorted(labels.items()))
+    return ServoMix(rules=rules, reversed=frozenset(reversed_controls))
 
 
-def control_fcs_xml(tables: list[ControlTable]) -> str:
+def control_fcs_xml(tables: list[ControlTable], reversed_controls: frozenset[int]) -> str:
+    """Each control follows its servo, the other way round when reversed (servo_mix)."""
     if not tables:
         return ""
     declared = "".join(f"""
@@ -333,9 +354,9 @@ def control_fcs_xml(tables: list[ControlTable]) -> str:
           <table>
             <independentVar>{SERVO_PROPERTY.format(index=table.servo)}</independentVar>
             <tableData>
-              -1  {table.deflection_min_deg:g}
+              -1  {table.deflection_max_deg if table.number in reversed_controls else table.deflection_min_deg:g}
                0  0
-               1  {table.deflection_max_deg:g}
+               1  {table.deflection_min_deg if table.number in reversed_controls else table.deflection_max_deg:g}
             </tableData>
           </table>
         </function>
@@ -400,7 +421,8 @@ def aero_axis_xml(coefficient: str, table: np.ndarray, factors: str) -> str:
                            table_xml(ALPHA_RAD_ROWS, ("aero/beta-rad", np.radians(AERO_BETA_DEG)), table, AIRSPEED_FPS))
 
 
-def engine_xml(resolved: ResolvedAirframe, motor_file: str, prop_file: str) -> str:
+def engine_xml(resolved: ResolvedAirframe, files: list[tuple[str, str]]) -> str:
+    """One engine per motor, in motor order; files: (motor file, prop file) per motor."""
     return "".join(f"""
     <engine file="{motor_file}" name="{placement.name}">
       <thruster file="{prop_file}">
@@ -409,11 +431,11 @@ def engine_xml(resolved: ResolvedAirframe, motor_file: str, prop_file: str) -> s
         <sense> {1.0 if placement.spin == 'ccw' else -1.0} </sense>
         <p_factor> 0.0 </p_factor>
       </thruster>
-    </engine>""" for placement in resolved.motors)
+    </engine>""" for placement, (motor_file, prop_file) in zip(resolved.motors, files, strict=True))
 
 
-def write_engine_files(propulsion: Propulsion, model: MotorModel, engine_dir: Path, model_name: str, pack_voltage_v: float | None) -> tuple[str, str]:
-    """The JSBSim motor and propeller files; returns their names. pack_voltage_v as for export_jsbsim."""
+def write_engine_files(propulsion: Propulsion, model: MotorModel, engine_dir: Path, file_stem: str, pack_voltage_v: float | None) -> tuple[str, str]:
+    """The JSBSim motor and propeller files of one motor model; returns their names. pack_voltage_v as for export_jsbsim."""
     diameter_m = model.diameter_m
     pack_voltage = model.pack_voltage_v if pack_voltage_v is None else pack_voltage_v
     ct0, cp0 = model.ct0, model.cp0
@@ -425,10 +447,10 @@ def write_engine_files(propulsion: Propulsion, model: MotorModel, engine_dir: Pa
     cp_table = cp0 * extended(apc_j, shapes["C_POWER"])
     prop_ixx = propulsion.prop_mass_kg * (diameter_m / 2.0) ** 2 / 3.0
     engine_dir.mkdir(parents=True, exist_ok=True)
-    motor_file, prop_file = f"{model_name}_motor", f"{model_name}_prop"
+    motor_file, prop_file = f"{file_stem}_motor", f"{file_stem}_prop"
     (engine_dir / f"{motor_file}.xml").write_text(f"""<?xml version="1.0"?>
 <!-- quadrocketbuilder: {model.label}, {model.prop}, {model.cells}S: motorlib's full-throttle static point ({model.full_rpm:.0f} RPM,
-     {model.full_current_a:.1f} A) at {model.pack_voltage_v:.1f} V nominal; resistance = wiring {model.wiring.per_motor_ohm * 1000.0:.1f} mOhm per motor
+     {model.full_current_a:.1f} A) at {model.pack_voltage_v:.1f} V nominal; resistance = wiring {model.wiring.per_motor_ohm * 1000.0:.1f} mOhm (this motor's)
      (see libs/propulsion.py) + loaded winding; maxvolts = {'nominal pack voltage' if pack_voltage_v is None else 'set for this export'}. -->
 <brushless_dc_motor name="{model.label}">
   <velocityconstant> {model.kv_rpm_v:.1f} </velocityconstant>
@@ -461,11 +483,48 @@ def write_engine_files(propulsion: Propulsion, model: MotorModel, engine_dir: Pa
     return motor_file, prop_file
 
 
+def imported_libs_files(start: Path) -> set[Path]:
+    """start and every libs module it imports, transitively (absolute "libs." and relative imports, anywhere in the
+    code): the Python an export runs."""
+    found, pending = set(), [start.resolve()]
+    while pending:
+        path = pending.pop()
+        if path in found:
+            continue
+        found.add(path)
+        package = path.parent
+        for node in ast.walk(ast.parse(path.read_text())):
+            if isinstance(node, ast.Import):
+                names = [alias.name for alias in node.names]
+            elif isinstance(node, ast.ImportFrom):
+                base = REPO_DIR if node.level == 0 else package.parents[node.level - 2] if node.level > 1 else package
+                module = (node.module or "").split(".")
+                names = [".".join(part for part in (*module, alias.name) if part) for alias in node.names] + [node.module or ""]
+                if node.level:
+                    names = [str((base / name.replace(".", "/")).relative_to(REPO_DIR)).replace("/", ".") for name in names]
+            else:
+                continue
+            for name in names:
+                if not name.startswith("libs"):
+                    continue
+                candidate = REPO_DIR / name.replace(".", "/")
+                packages = [parent / "__init__.py" for parent in candidate.parents if parent != REPO_DIR and REPO_DIR in parent.parents]
+                for file in (candidate.with_suffix(".py"), candidate / "__init__.py", *packages):
+                    if file.is_file():
+                        pending.append(file.resolve())
+    return found
+
+
 def export_fingerprint(build_path: Path, out_dir: Path, model_name: str, pack_voltage_v: float | None) -> str:
-    """Hash of everything an export depends on: the aircraft's build file, the code and data under EXPORT_INPUT_DIRS,
-    the AeroSandbox and NeuralFoil versions, the model name, the output directory and the pack voltage."""
+    """Hash of everything an export depends on: the aircraft's build file, the Python it runs (imported_libs_files of
+    this module), the non-Python files under libs/ (motorlib's tables), everything under data/, the AeroSandbox and
+    NeuralFoil versions, the model name, the output directory and the pack voltage. Other code (the GUI, the sim
+    runners) does not count."""
     digest = hashlib.sha256(repr((model_name, str(out_dir), pack_voltage_v, asb.__version__, neuralfoil.__version__)).encode())
-    inputs = sorted(path for root in EXPORT_INPUT_DIRS for path in root.rglob("*") if path.is_file() and "__pycache__" not in path.parts)
+    code = imported_libs_files(Path(__file__))
+    tables = {path.resolve() for path in LIBS_DIR.rglob("*") if path.is_file() and path.suffix != ".py" and "__pycache__" not in path.parts}
+    data = {path.resolve() for path in DATA_DIR.rglob("*") if path.is_file()}
+    inputs = sorted(code | tables | data)
     for path in (build_path, *inputs):
         digest.update(str(path).encode())
         digest.update(path.read_bytes())
@@ -498,15 +557,17 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
     weight_n = sum(resolved.mass_kg) / 2.0 * STANDARD_GRAVITY_M_S2
     aircraft_dir = out_dir / "aircraft" / model_name
     aircraft_dir.mkdir(parents=True, exist_ok=True)
-    model = pack_voltage = hover_fraction = hover_stick_us = None
+    models: tuple[MotorModel, ...] = ()
+    pack_voltage = hover_fraction = hover_stick_us = None
     engines_xml = ""
     if airframe.propulsion is not None:
-        model = motor_model(resolved, parts_data)
-        pack_voltage = model.pack_voltage_v if pack_voltage_v is None else pack_voltage_v
-        motor_file, prop_file = write_engine_files(airframe.propulsion, model, out_dir / "engine", model_name, pack_voltage_v)
-        engines_xml = engine_xml(resolved, motor_file, prop_file)
-        if airframe.vtol:  # hover: weight shared by the motors; the duty that holds that thrust's static RPM
-            hover_fraction = float(static_points(model, rpm_for_thrust(model, weight_n / len(resolved.motors)), pack_voltage).duty)
+        models = motor_models(resolved, parts_data)
+        pack_voltage = models[0].pack_voltage_v if pack_voltage_v is None else pack_voltage_v
+        distinct = list(dict.fromkeys(models))  # motors wired alike share their files
+        written = [write_engine_files(airframe.propulsion, model, out_dir / "engine", f"{model_name}_{index + 1}", pack_voltage_v) for index, model in enumerate(distinct)]
+        engines_xml = engine_xml(resolved, [written[distinct.index(model)] for model in models])
+        if airframe.vtol:  # hover: weight shared by the motors; the mean of the duties that hold that thrust's static RPM
+            hover_fraction = float(np.mean([static_points(model, rpm_for_thrust(model, weight_n / len(models)), pack_voltage).duty for model in models]))
             idle = INAV_THROTTLE_IDLE_PCT / 100.0
             hover_stick_us = int(round(1000.0 + 1000.0 * (hover_fraction - idle) / (1.0 - idle)))
     cg = resolved.cg_m
@@ -524,7 +585,7 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
     </contact>""" for index, (x, y, z) in enumerate(contacts))
     tables, rates = aero_tables(resolved)
     controls = control_tables(resolved)
-    servo_rules = servo_mix(resolved, controls)
+    servos = servo_mix(resolved, controls)
     forces = {"X": "CX", "Y": "CY", "Z": "CZ"}
     moments = {"ROLL": ("Cl", "metrics/bw-ft"), "PITCH": ("Cm", "metrics/cbarw-ft"), "YAW": ("Cn", "metrics/bw-ft")}
     dampers = {"ROLL": ("Clp", "metrics/bw-ft", "aero/bi2vel", "velocities/p-aero-rad_sec"),
@@ -573,7 +634,7 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
   <ground_reactions>{contacts_xml}
   </ground_reactions>
   <propulsion>{engines_xml}
-  </propulsion>{control_fcs_xml(controls)}
+  </propulsion>{control_fcs_xml(controls, servos.reversed)}
   <aerodynamics>{axes_xml}
   </aerodynamics>
 </fdm_config>
@@ -591,7 +652,7 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
         if not controls:
             return []
         lines = ["smix reset"]
-        for rule, (servo, role, sign, labels) in enumerate(servo_rules):
+        for rule, (servo, role, sign, labels) in enumerate(servos.rules):
             source, frame_sign = HOVER_SERVO_INPUTS[role] if hover else (INAV_SERVO_INPUTS[role], 1)
             lines.append(f"smix {rule} {servo} {source} {sign * frame_sign * INAV_SMIX_RATE} 0 -1    # S{servo + 1} {role}: {labels}")
         return lines
@@ -636,6 +697,6 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
         model_name=model_name, model_dir=out_dir, inav_cli_path=cli_path,
         motor_properties=tuple(MOTOR_THROTTLE_PROPERTY.format(index=index) for index in order), inav_mixers=mixers,
         hover_motor_fraction=hover_fraction, hover_stick_us=hover_stick_us,
-        stance_height_m=max(point[0] for point in contacts) - cg[0] if airframe.tailsitter else None, motor=model, pack_voltage_v=pack_voltage,
+        stance_height_m=max(point[0] for point in contacts) - cg[0] if airframe.tailsitter else None, motors=models, pack_voltage_v=pack_voltage,
         servo_properties=tuple(SERVO_PROPERTY.format(index=index) for index in range(max((table.servo for table in controls), default=-1) + 1)),
     )

@@ -25,17 +25,27 @@ from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS, check_profile, normali
 
 SCHEMA = "airframe/2"
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
-PARTS_PATH = DATA_DIR / "parts.json"
+PARTS_DIR = DATA_DIR / "parts"  # the part library: one <category>.json per category
 SPECS_PATH = DATA_DIR / "specs.json"
-PARTS_DIMENSION_UNIT_M = 0.001  # parts.json battery dimensions are in mm
+PARTS_DIMENSION_UNIT_M = 0.001  # part library battery dimensions are in mm
 INCH_M = 0.0254
+PROP_MASS_SCALING_EXPONENT = 3.0  # a prop outside data/parts/prop.json's listed sizes: geometrically similar blades, mass ~ diameter^3
 
 LAYOUT_PANEL_COUNTS = {"H": 2, "X": 4, "+": 4, "1": 1, "3": 3}
 LAYOUTS = tuple(LAYOUT_PANEL_COUNTS)
 FIN_POSITIONS = ("top", "bottom")
+INCIDENCE_MODES = ("symmetric", "cant")  # incidence pitches XZ-mirror panels alike (lift, like AoA), or turns every panel the same way about the body axis (roll)
 SURFACE_ROOTS = ("body", "axis")  # span measured from the body surface at the root LE, or from the fuselage axis (fins joined at the centre)
 VOLUME_SHAPES = ("box", "cylinder", "bore", "point")
-PART_CATEGORIES = ("battery", "esc")  # data/parts.json categories that can be placed (others are materials, prop masses)
+BATTERY_MODELS = ("commercial", "custom_liion")  # a data/parts/battery.json pack, or one built from motorlib cells
+BATTERY_PART_NAME = "battery"  # the propulsion battery among the placed parts (the parts list must not use the name)
+CELL_FORMATS = {  # cylindrical cell formats in motorlib cell names: (diameter, length) in m
+    "18650": (0.018, 0.065), "21700": (0.021, 0.070), "26650": (0.026, 0.065),
+    "38120": (0.038, 0.120), "40146": (0.040, 0.146), "40152": (0.040, 0.152), "40160": (0.040, 0.160),
+}
+CELL_SPACING_M = 0.002  # custom pack: added to each cell's size along every axis (wrap, strip, gaps)
+NOMINAL_CELL_V = {"lipo": 3.7, "liion": 3.6}  # commercial packs, by type
+PART_CATEGORIES = ("battery", "esc")  # part library categories that can be placed (others are materials, prop masses, connectors)
 AXES = ("x", "y", "z")
 MOUNT_TARGETS = ("nose", "tail", "surface")
 THRUST_DIRECTIONS = ("tractor", "pusher")
@@ -44,6 +54,7 @@ THRUST_DIRECTIONS = ("tractor", "pusher")
 SURFACE_PROP_SPINS = ("out", "in")
 SINGLE_PROP_SPINS = ("cw", "ccw")
 JOINT_TYPES = ("radial_screws",)
+CUT_JOINTS = ("coupler", "front_male", "rear_male")  # at a cut: a separate coupler into both sections, or the section ahead / behind carries the male end
 REINFORCEMENT_TYPES = ("cf_rod",)
 POLAR_SPLITS = (0, 2)  # rods at each polar position: 0 = one, 2 = a pair either side of it
 CONTROL_KINDS = ("split", "all_moving")
@@ -100,7 +111,7 @@ class RodPattern:
     makes each position a pair at polar_offset_angle +/- polar_split_angle (deg); 0 keeps a single rod. polar_n counts
     every rod. Every rod lies strictly inside its quadrant (0 < angle < 90)."""
     type: str  # REINFORCEMENT_TYPES
-    material: str  # data/parts.json material
+    material: str  # data/parts/material.json
     diameter_m: float
     radial_position_m: float  # rod centre from the axis
     polar_n: int  # rods in all
@@ -181,6 +192,7 @@ class Surface:
     chord_tip_m: float
     sweep_le_deg: float
     incidence_deg: float
+    incidence_mode: str  # see INCIDENCE_MODES
     airfoil: str
     mass_kg: float | None  # whole set; None = computed from geometry
     control: ControlSurface | None  # every panel of the set carries one; None = fixed surface
@@ -215,17 +227,49 @@ class Mount:
 
 
 @dataclass(frozen=True)
+class WireRun:
+    """One cable run: wires of one gauge and the connectors along it, in order from its start."""
+    gauge_awg: int  # motorlib wire gauge
+    conductors: int  # wires in the cable (2 battery leads, 3 motor phases)
+    plugs: tuple[str, ...]  # data/parts/connector.json names
+
+
+@dataclass(frozen=True)
+class Battery:
+    """The propulsion pack, commercial (data/parts/battery.json) or a custom stack of motorlib cells."""
+    model: str  # BATTERY_MODELS
+    label: str  # the commercial pack's name, or e.g. "6S2P Molicel INR21700-P45B 7/10C"
+    chemistry: str  # "lipo" / "liion" (commercial: its type), or the cell's name for a custom pack
+    series: int
+    parallel: int
+    capacity_mah: float  # the whole pack
+    cell_voltage_v: float  # nominal
+    ir_ohm_per_cell: float | None  # None = not known
+    connector: str  # data/parts/connector.json: the first plug along the battery run
+    lead_awg: int | None  # the pack's own leads; None = not known (not modelled)
+    lead_length_m: float | None
+    placed: "PlacedPart"  # where it sits, its size and mass (also in Airframe.parts as BATTERY_PART_NAME)
+
+
+@dataclass(frozen=True)
+class Wiring:
+    battery: WireRun  # battery -> ESC part; its plugs come after the battery's own connector
+    motors: tuple[WireRun, ...]  # ESC part -> each motor, in motor order
+
+
+@dataclass(frozen=True)
 class Propulsion:
     motor: MotorRef
     prop: str  # motorlib propeller (libs/motorlib/data/propellers.csv)
-    battery: str  # name of the placed battery part
+    battery: Battery
     esc: str  # name of the placed ESC part (battery leads end and motor leads start there)
     mounts: tuple[Mount, ...]
+    wiring: Wiring
     motor_mass_kg: float  # per motor, motorlib
     bell_diameter_m: float  # stator diameter, motorlib
     bell_length_m: float  # stator height, motorlib
     prop_diameter_m: float
-    prop_mass_kg: float  # per prop, from parts.json prop sizes
+    prop_mass_kg: float  # per prop, from data/parts/prop.json sizes
 
 
 @dataclass(frozen=True)
@@ -244,12 +288,12 @@ class Volume:
 
 @dataclass(frozen=True)
 class PlacedPart:
-    """A library component sitting in a volume."""
+    """A library component, sitting in a volume or placed on its own."""
     name: str
-    part: str  # data/parts.json <category>:<name>
-    volume: str
-    offset_m: tuple[float, float, float]  # from the volume centre
-    position_m: tuple[float, float, float]  # volume centre + offset
+    part: str  # <category>:<name> in data/parts/<category>.json
+    volume: str | None  # None = placed at its own x_m, y_m, z_m
+    offset_m: tuple[float, float, float]  # from the volume centre; (0, 0, 0) without a volume
+    position_m: tuple[float, float, float]  # volume centre + offset, or its own position
     size_m: tuple[float, float, float] | None  # library dimensions (x = l, y = w, z = h); None = none in the library (a point)
     mass_kg: tuple[float, float]  # library mass or mass_kg; 0 = counted elsewhere (e.g. in a weighed section)
 
@@ -265,6 +309,7 @@ class FuselageSection:
 class Sections:
     cuts_m: tuple[float, ...]  # cut stations along the fuselage, ascending; section i spans cut i-1 .. cut i
     per_section: tuple[FuselageSection, ...]  # len(cuts_m) + 1
+    cut_joints: tuple[str, ...]  # CUT_JOINTS, one per cut
 
 
 @dataclass(frozen=True)
@@ -421,7 +466,7 @@ def _rod_pattern(fields: _Fields, section: BodySection, parts_data: dict) -> Rod
         polar_split_angle=fields.number("polar_split_angle", minimum=0.0),
     )
     if pattern.material not in parts_data["material"]:
-        raise AirframeError(f"{fields.at('material')}: {pattern.material!r} not in data/parts.json material")
+        raise AirframeError(f"{fields.at('material')}: {pattern.material!r} not in data/parts/material.json")
     if pattern.polar_n != 4 * pattern.group_size():
         raise AirframeError(f"{fields.at('polar_n')}: {pattern.polar_n} rods is not one {'pair' if pattern.polar_split == 2 else 'rod'} per quadrant "
                             f"({4 * pattern.group_size()})")
@@ -546,6 +591,7 @@ def _surface(data: dict, path: str, fuselage_length_m: float) -> Surface:
         chord_tip_m=fields.positive("chord_tip_m"),
         sweep_le_deg=fields.number("sweep_le_deg"),
         incidence_deg=fields.number("incidence_deg"),
+        incidence_mode=fields.choice("incidence_mode", INCIDENCE_MODES),
         airfoil=fields.text("airfoil"),
         mass_kg=None if mass is None else fields.number("mass_kg", minimum=0.0, exclusive=True, value=mass),
         control=None if control is None else _control(control, f"{path}.control", LAYOUT_PANEL_COUNTS[layout]),
@@ -602,31 +648,38 @@ def _volume(data: dict, path: str) -> Volume:
     )
 
 
+def _placement(fields: "_Fields", volumes: dict[str, Volume]) -> tuple[str | None, tuple[float, float, float], tuple[float, float, float]]:
+    """(volume, offset from its centre, position): in a volume with x/y/z_offset_m, or at its own x_m, y_m, z_m."""
+    if "volume" in fields.data:
+        volume_name = fields.text("volume")
+        if volume_name not in volumes:
+            raise AirframeError(f"{fields.at('volume')}: {volume_name!r} is not a defined volume")
+        volume = volumes[volume_name]
+        offset_m = tuple(fields.number(key) if key in fields.data else 0.0 for key in ("x_offset_m", "y_offset_m", "z_offset_m"))
+        return volume_name, offset_m, (volume.x_m + offset_m[0], volume.y_m + offset_m[1], volume.z_m + offset_m[2])
+    return None, (0.0, 0.0, 0.0), (fields.number("x_m"), *(fields.number(key) if key in fields.data else 0.0 for key in ("y_m", "z_m")))
+
+
 def _part(data: dict, path: str, volumes: dict[str, Volume], parts_data: dict) -> PlacedPart:
     fields = _Fields(data, path)
     name = fields.text("name")
     part = fields.text("part")
     category, _, part_name = part.partition(":")
     if category not in PART_CATEGORIES or part_name not in parts_data[category]:
-        raise AirframeError(f"{fields.at('part')}: {part!r} not found; use '<category>:<name>' from data/parts.json, category one of {PART_CATEGORIES}")
+        raise AirframeError(f"{fields.at('part')}: {part!r} not found; use '<category>:<name>' from data/parts/<category>.json, category one of {PART_CATEGORIES}")
     part_data = parts_data[category][part_name]
-    volume_name = fields.text("volume")
-    if volume_name not in volumes:
-        raise AirframeError(f"{fields.at('volume')}: {volume_name!r} is not a defined volume")
-    volume = volumes[volume_name]
-    offset_m = tuple(fields.number(key) if key in fields.data else 0.0 for key in ("x_offset_m", "y_offset_m", "z_offset_m"))
+    volume_name, offset_m, position_m = _placement(fields, volumes)
     if "mass_kg" in fields.data:
         value = fields.required("mass_kg")
         mass_kg = _mass_range(value, fields.at("mass_kg")) if type(value) is list else (fields.number("mass_kg", minimum=0.0, value=value),) * 2
     elif part_data.get("mass"):  # null or 0 in the library = not known
         mass_kg = _mass_range(part_data["mass"], f"{fields.at('part')} ({part}) mass")
     else:
-        raise AirframeError(f"{fields.at('mass_kg')}: {part!r} has no mass in data/parts.json; give mass_kg (0 = counted elsewhere)")
+        raise AirframeError(f"{fields.at('mass_kg')}: {part!r} has no mass in its data/parts/ file; give mass_kg (0 = counted elsewhere)")
     fields.done()
     dims = part_data.get("dimensions")
     return PlacedPart(
-        name=name, part=part, volume=volume_name, offset_m=offset_m,
-        position_m=(volume.x_m + offset_m[0], volume.y_m + offset_m[1], volume.z_m + offset_m[2]),
+        name=name, part=part, volume=volume_name, offset_m=offset_m, position_m=position_m,
         size_m=None if dims is None else (dims["l"] * PARTS_DIMENSION_UNIT_M, dims["w"] * PARTS_DIMENSION_UNIT_M, dims["h"] * PARTS_DIMENSION_UNIT_M),
         mass_kg=mass_kg,
     )
@@ -651,17 +704,125 @@ def motorlib_motor(motor: MotorRef):
 
 
 def prop_mass_kg(diameter_in: float, parts_data: dict) -> float:
-    """Prop mass from parts.json prop entries, linear in diameter between listed sizes."""
+    """Prop mass from data/parts/prop.json entries: linear in diameter between listed sizes; outside them, the nearest listed
+    size scaled by diameter^PROP_MASS_SCALING_EXPONENT."""
     table = sorted((entry["diameter_in"], entry["mass"]) for entry in parts_data["prop"].values())
+    if not table[0][0] <= diameter_in <= table[-1][0]:
+        nearest_in, nearest_kg = table[0] if diameter_in < table[0][0] else table[-1]
+        return nearest_kg * (diameter_in / nearest_in) ** PROP_MASS_SCALING_EXPONENT
     for (d0, m0), (d1, m1) in zip(table, table[1:]):
         if d0 <= diameter_in <= d1:
             return m0 + (m1 - m0) * (diameter_in - d0) / (d1 - d0)
-    if diameter_in == table[-1][0]:
-        return table[-1][1]
-    raise AirframeError(f"prop diameter {diameter_in} in is outside parts.json prop sizes {[d for d, _ in table]}")
+    return table[-1][1]
 
 
-def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], parts: tuple[PlacedPart, ...], parts_data: dict) -> Propulsion:
+def motor_count(mounts, layouts: dict[str, str]) -> int:
+    """Motors from (on, surface name) per mount: one per panel of a surface mount, else one; layouts by surface name."""
+    return sum(LAYOUT_PANEL_COUNTS[layouts[surface]] if on == "surface" else 1 for on, surface in mounts)
+
+
+def cell_format(name: str) -> tuple[float, float] | None:
+    """(diameter, length) of a motorlib cell from the CELL_FORMATS format in its name; None when it has none."""
+    return next((size for code, size in CELL_FORMATS.items() if code in name), None)
+
+
+def _wire_gauge(fields: "_Fields", key: str) -> int:
+    gauge = fields.required(key)
+    if type(gauge) is not int or gauge not in {wire.gauge for wire in motor_repo().wires}:
+        raise AirframeError(f"{fields.at(key)}: {gauge!r} is not a motorlib wire gauge {sorted(wire.gauge for wire in motor_repo().wires)}")
+    return gauge
+
+
+def _connector(fields: "_Fields", value, key: str, parts_data: dict) -> str:
+    connectors = parts_data["connector"]
+    if value not in connectors or "contact_resistance_ohm" not in connectors[value]:
+        usable = sorted(name for name, connector in connectors.items() if "contact_resistance_ohm" in connector)
+        raise AirframeError(f"{fields.at(key)}: {value!r} needs to be a data/parts/connector.json entry with a contact_resistance_ohm {usable}")
+    return value
+
+
+def _battery(data: dict, path: str, volumes: dict[str, Volume], parts_data: dict) -> Battery:
+    fields = _Fields(data, path)
+    model = fields.choice("model", BATTERY_MODELS)
+    volume_name, offset_m, position_m = _placement(fields, volumes)
+    if model == "commercial":
+        name = fields.text("part")
+        if name not in parts_data["battery"]:
+            raise AirframeError(f"{fields.at('part')}: {name!r} is not in data/parts/battery.json {sorted(parts_data['battery'])}")
+        entry = parts_data["battery"][name]
+        if "mass_kg" in fields.data:
+            value = fields.required("mass_kg")
+            mass_kg = _mass_range(value, fields.at("mass_kg")) if type(value) is list else (fields.number("mass_kg", minimum=0.0, value=value),) * 2
+        elif entry.get("mass"):
+            mass_kg = _mass_range(entry["mass"], f"data/parts/battery.json {name} mass")
+        else:
+            raise AirframeError(f"{fields.at('part')}: {name!r} has no mass in data/parts/battery.json; give mass_kg")
+        for key in ("type", "s", "p", "mah"):
+            if key not in entry:
+                raise AirframeError(f"data/parts/battery.json {name}: {key} is required for a propulsion battery")
+        dims = entry.get("dimensions")
+        size_m = None if dims is None else (dims["l"] * PARTS_DIMENSION_UNIT_M, dims["w"] * PARTS_DIMENSION_UNIT_M, dims["h"] * PARTS_DIMENSION_UNIT_M)
+        leads = "lead_awg" in entry and "lead_length_mm" in entry
+        if leads and entry["lead_awg"] not in {wire.gauge for wire in motor_repo().wires}:
+            raise AirframeError(f"data/parts/battery.json {name}: lead_awg {entry['lead_awg']!r} is not a motorlib wire gauge {sorted(wire.gauge for wire in motor_repo().wires)}")
+        fields.done()
+        connector = _connector(fields, entry.get("connector"), "part", parts_data)
+        return Battery(
+            model=model, label=name, chemistry=entry["type"], series=entry["s"], parallel=entry["p"], capacity_mah=entry["mah"] * entry["p"],
+            cell_voltage_v=NOMINAL_CELL_V[entry["type"]], ir_ohm_per_cell=entry["ir_mohm_per_cell"] / 1000.0 if "ir_mohm_per_cell" in entry else None,
+            connector=connector, lead_awg=entry["lead_awg"] if leads else None, lead_length_m=entry["lead_length_mm"] * PARTS_DIMENSION_UNIT_M if leads else None,
+            placed=PlacedPart(name=BATTERY_PART_NAME, part=f"battery:{name}", volume=volume_name, offset_m=offset_m, position_m=position_m, size_m=size_m, mass_kg=mass_kg),
+        )
+    series, parallel = (fields.required(key) for key in ("s", "p"))
+    for key, value in (("s", series), ("p", parallel)):
+        if type(value) is not int or value < 1:
+            raise AirframeError(f"{fields.at(key)}: expected a whole number >= 1, got {value!r}")
+    cell_name = fields.text("cell")
+    cells = motor_repo().cell_by_name
+    if cell_name not in cells or cell_format(cell_name) is None:
+        stackable = sorted(name for name in cells if cell_format(name) is not None)
+        raise AirframeError(f"{fields.at('cell')}: {cell_name!r} needs to be a motorlib cell (libs/motorlib/data/cells.csv) with a format {sorted(CELL_FORMATS)} "
+                            f"in its name: {stackable}")
+    cell = cells[cell_name]
+    connector = _connector(fields, fields.text("connector"), "connector", parts_data)
+    axis = fields.choice("cell_axis", AXES)
+    stacking = fields.required("stacking")
+    if type(stacking) is not list or len(stacking) != 3 or any(type(count) is not int or count < 1 for count in stacking):
+        raise AirframeError(f"{fields.at('stacking')}: expected cells along x, y, z as three whole numbers >= 1, got {stacking!r}")
+    if stacking[0] * stacking[1] * stacking[2] != series * parallel:
+        raise AirframeError(f"{fields.at('stacking')}: {stacking[0]} x {stacking[1]} x {stacking[2]} = {stacking[0] * stacking[1] * stacking[2]} cells, "
+                            f"but {series}S{parallel}P has {series * parallel}")
+    lead_awg = _wire_gauge(fields, "lead_awg")
+    lead_length_m = fields.number("lead_length_m", minimum=0.0)
+    fields.done()
+    diameter_m, length_m = cell_format(cell_name)
+    size_m = tuple(count * ((length_m if AXES[index] == axis else diameter_m) + CELL_SPACING_M) for index, count in enumerate(stacking))
+    mass_kg = series * parallel * cell.weight_g / 1000.0
+    label = f"{series}S{parallel}P {cell_name}"
+    return Battery(
+        model=model, label=label, chemistry=cell_name, series=series, parallel=parallel, capacity_mah=cell.cap_mah * parallel,
+        cell_voltage_v=cell.volt, ir_ohm_per_cell=cell.res_ohm, connector=connector, lead_awg=lead_awg, lead_length_m=lead_length_m,
+        placed=PlacedPart(name=BATTERY_PART_NAME, part=f"battery:{label}", volume=volume_name, offset_m=offset_m, position_m=position_m, size_m=size_m,
+                          mass_kg=(mass_kg, mass_kg)),
+    )
+
+
+def _wire_run(data: dict, path: str, parts_data: dict) -> WireRun:
+    fields = _Fields(data, path)
+    gauge = _wire_gauge(fields, "gauge_awg")
+    conductors = fields.required("conductors")
+    if type(conductors) is not int or conductors < 2:
+        raise AirframeError(f"{fields.at('conductors')}: expected a whole number >= 2, got {conductors!r}")
+    plugs = fields.required("plugs")
+    connectors = parts_data["connector"]
+    if type(plugs) is not list or any(plug not in connectors or "contact_resistance_ohm" not in connectors[plug] for plug in plugs):
+        usable = sorted(name for name, connector in connectors.items() if "contact_resistance_ohm" in connector)
+        raise AirframeError(f"{fields.at('plugs')}: expected a list of data/parts/connector.json entries with a contact_resistance_ohm {usable}, got {plugs!r}")
+    fields.done()
+    return WireRun(gauge_awg=gauge, conductors=conductors, plugs=tuple(plugs))
+
+
+def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], parts: tuple[PlacedPart, ...], volumes: dict[str, Volume], parts_data: dict) -> Propulsion:
     fields = _Fields(data, path)
     motor_fields = _Fields(fields.required("motor"), fields.at("motor"))
     motor = MotorRef(manufacturer=motor_fields.text("manufacturer"), name=motor_fields.text("name"))
@@ -678,11 +839,10 @@ def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], parts: tup
     prop_data = motor_repo().prop(prop)
 
     categories = {part.name: part.part.partition(":")[0] for part in parts}
-    battery, esc = fields.text("battery"), fields.text("esc")
-    for key, name, category in (("battery", battery, "battery"), ("esc", esc, "esc")):
-        if categories.get(name) != category:
-            raise AirframeError(f"{fields.at(key)}: {name!r} must name a part whose part is '{category}:<name>'; {category} parts: "
-                                f"{sorted(n for n, c in categories.items() if c == category)}")
+    battery = _battery(fields.required("battery"), fields.at("battery"), volumes, parts_data)
+    esc = fields.text("esc")
+    if categories.get(esc) != "esc":
+        raise AirframeError(f"{fields.at('esc')}: {esc!r} must name a part whose part is 'esc:<name>'; esc parts: {sorted(n for n, c in categories.items() if c == 'esc')}")
 
     surface_names = {surface.name: surface for surface in surfaces}
     mounts = []
@@ -725,9 +885,17 @@ def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], parts: tup
                             thrust_axis_tilt_deg=thrust_axis_tilt_deg, pod=pod))
     if not mounts:
         raise AirframeError(f"{fields.at('mounts')}: at least one mount is required")
+    wiring_fields = _Fields(fields.required("wiring"), fields.at("wiring"))
+    count = motor_count(((mount.on, mount.surface) for mount in mounts), {surface.name: surface.layout for surface in surfaces})
+    motor_runs = wiring_fields.required("motors")
+    if type(motor_runs) is not list or len(motor_runs) != count:
+        raise AirframeError(f"{wiring_fields.at('motors')}: needs one run per motor ({count}), in motor order")
+    wiring = Wiring(battery=_wire_run(wiring_fields.required("battery"), wiring_fields.at("battery"), parts_data),
+                    motors=tuple(_wire_run(run, f"{wiring_fields.at('motors')}[{index}]", parts_data) for index, run in enumerate(motor_runs)))
+    wiring_fields.done()
     fields.done()
     return Propulsion(
-        motor=motor, prop=prop, battery=battery, esc=esc, mounts=tuple(mounts), motor_mass_kg=motor_data.weight_g / 1000.0,
+        motor=motor, prop=prop, battery=battery, esc=esc, mounts=tuple(mounts), wiring=wiring, motor_mass_kg=motor_data.weight_g / 1000.0,
         bell_diameter_m=motor_data.stator_diameter_mm / 1000.0, bell_length_m=motor_data.stator_height_mm / 1000.0,
         prop_diameter_m=prop_data.diam_in * INCH_M, prop_mass_kg=prop_mass_kg(prop_data.diam_in, parts_data),
     )
@@ -827,7 +995,7 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     print_fields = _Fields(fields.required("print"), fields.at("print"))
     material = print_fields.text("material")
     if material not in parts_data["material"]:
-        raise AirframeError(f"{print_fields.at('material')}: {material!r} not in data/parts.json material")
+        raise AirframeError(f"{print_fields.at('material')}: {material!r} not in data/parts/material.json")
     bed = print_fields.required("printer_bed_m")
     if type(bed) is not list or len(bed) != 3:
         raise AirframeError(f"{print_fields.at('printer_bed_m')}: expected [x, y, z], got {bed!r}")
@@ -871,7 +1039,11 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     propulsion_data = fields.optional("propulsion", None)
     if powered != (propulsion_data is not None):
         raise AirframeError(f"{fields.at('propulsion')}: required when powered is true, absent when false (powered is {str(powered).lower()})")
-    propulsion = None if propulsion_data is None else _propulsion(propulsion_data, fields.at("propulsion"), surfaces, parts, parts_data)
+    if BATTERY_PART_NAME in {part.name for part in parts}:
+        raise AirframeError(f"{fields.at('parts')}: {BATTERY_PART_NAME!r} is the propulsion battery's name; rename that part")
+    propulsion = None if propulsion_data is None else _propulsion(propulsion_data, fields.at("propulsion"), surfaces, parts, volumes_by_name, parts_data)
+    if propulsion is not None:
+        parts = (*parts, propulsion.battery.placed)
 
     sections_fields = _Fields(fields.required("sections"), fields.at("sections"))
     cuts = tuple(
@@ -884,6 +1056,9 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     if type(rows) is not list or len(rows) != len(cuts) + 1:
         raise AirframeError(f"{sections_fields.at('per_section')}: needs one entry per section ({len(cuts) + 1})")
     per_section = tuple(_fuselage_section(row, f"{sections_fields.at('per_section')}[{index}]") for index, row in enumerate(rows))
+    cut_joints = sections_fields.required("cut_joints")
+    if type(cut_joints) is not list or len(cut_joints) != len(cuts) or any(joint not in CUT_JOINTS for joint in cut_joints):
+        raise AirframeError(f"{sections_fields.at('cut_joints')}: needs one of {list(CUT_JOINTS)} per cut ({len(cuts)}), got {cut_joints!r}")
     sections_fields.done()
     unweighed_solid = [f"section {index + 1}" for index, section in enumerate(per_section) if section.solid and section.empty_mass_kg is None]
     if unweighed_solid and print_settings.bulk_density_kg_m3 is None:
@@ -893,8 +1068,17 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     return Airframe(
         name=name, notes=notes, preset=preset, powered=powered, vtol=vtol, tailsitter=tailsitter, operating_point=operating_point, print=print_settings,
         fuselage=fuselage, surfaces=surfaces, propulsion=propulsion, volumes=volumes, parts=parts,
-        sections=Sections(cuts_m=cuts, per_section=per_section),
+        sections=Sections(cuts_m=cuts, per_section=per_section, cut_joints=tuple(cut_joints)),
     )
+
+
+def load_parts_data() -> dict[str, dict]:
+    """The part library as {category: {name: entry}}, from data/parts/<category>.json."""
+    return {path.stem: json.loads(path.read_text()) for path in sorted(PARTS_DIR.glob("*.json"))}
+
+
+def save_parts_category(category: str, entries: dict) -> None:
+    (PARTS_DIR / f"{category}.json").write_text(json.dumps(entries, indent=4) + "\n")
 
 
 def load_airframe(path: Path, parts_data: dict) -> Airframe:
@@ -904,24 +1088,21 @@ def load_airframe(path: Path, parts_data: dict) -> Airframe:
 
 
 def main() -> None:
-    with open(PARTS_PATH, "r") as file:
-        parts_data = json.load(file)
+    parts_data = load_parts_data()
     for argument in sys.argv[1:]:
         airframe = load_airframe(Path(argument), parts_data)
-        motor_count = 0
+        motors = 0
         motor_mass = 0.0
         if airframe.propulsion is not None:
-            for mount in airframe.propulsion.mounts:
-                surface = next((item for item in airframe.surfaces if item.name == mount.surface), None)
-                motor_count += LAYOUT_PANEL_COUNTS[surface.layout] if surface is not None else 1
-            motor_mass = motor_count * (airframe.propulsion.motor_mass_kg + airframe.propulsion.prop_mass_kg)
+            motors = len(airframe.propulsion.wiring.motors)
+            motor_mass = motors * (airframe.propulsion.motor_mass_kg + airframe.propulsion.prop_mass_kg)
         volume_mass = [sum(volume.mass_kg[i] for volume in airframe.volumes if volume.mass_kg is not None) for i in (0, 1)]
         surface_mass = sum(surface.mass_kg for surface in airframe.surfaces if surface.mass_kg is not None)
         section_mass = sum(section.empty_mass_kg for section in airframe.sections.per_section if section.empty_mass_kg is not None)
-        coupler_mass = len(airframe.sections.cuts_m) * (airframe.fuselage.joints.coupler_mass_kg or 0.0)
+        coupler_mass = airframe.sections.cut_joints.count("coupler") * (airframe.fuselage.joints.coupler_mass_kg or 0.0)
         declared = [volume_mass[i] + surface_mass + motor_mass + section_mass + coupler_mass for i in (0, 1)]
         print(f"{argument}: {airframe.name!r} valid")
-        print(f"  fuselage {airframe.fuselage.length_m:.3f} m, {len(airframe.surfaces)} surface sets, {len(airframe.volumes)} volumes, {motor_count} motors")
+        print(f"  fuselage {airframe.fuselage.length_m:.3f} m, {len(airframe.surfaces)} surface sets, {len(airframe.volumes)} volumes, {motors} motors")
         print(f"  declared mass {declared[0]:.4f}-{declared[1]:.4f} kg (volumes {volume_mass[0]:.4f}-{volume_mass[1]:.4f}, surfaces {surface_mass:.4f}, motors+props {motor_mass:.4f}, sections {section_mass:.4f}, couplers {coupler_mass:.4f})")
         computed = [f"section {index + 1}" for index, section in enumerate(airframe.sections.per_section) if section.empty_mass_kg is None]
         computed += [f"surface {surface.name}" for surface in airframe.surfaces if surface.mass_kg is None]

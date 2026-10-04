@@ -128,9 +128,9 @@ def ground_hit_text(elapsed_s: float, fdm) -> str:
 
 
 def motor_electrics(fdm, export, index: int) -> tuple[float, float]:
-    """(volts, amps) of one motor from the JSBSim motor's constants: V = throttle position x pack voltage (lossless ESC),
+    """(volts, amps) of one motor from its JSBSim motor's constants: V = throttle position x pack voltage (lossless ESC),
     I = (V - rpm / Kv) / R, never negative."""
-    motor = export.motor
+    motor = export.motors[index]
     volts = fdm[f"fcs/throttle-pos-norm[{index}]"] * export.pack_voltage_v
     return volts, max(0.0, (volts - fdm[f"propulsion/engine[{index}]/propeller-rpm"] / motor.kv_rpm_v) / motor.resistance_ohm)
 

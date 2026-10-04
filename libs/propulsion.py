@@ -1,13 +1,14 @@
 """
 Usage:
-from libs.propulsion import motor_model, propulsion_summary
-model = motor_model(resolved, parts_data)
+from libs.propulsion import motor_models, propulsion_summary
+models = motor_models(resolved, parts_data)  # one per motor, in motor order
 summary = propulsion_summary(resolved, parts_data)
 
 The propulsion model shared by the GUI, the report and the JSBSim export: motorlib (libs/motorlib, the rcplanes.online
 multirotor calculator: its motor and prop data and formulas) at full throttle, static, on the definition's battery, with
-the resistance between the cells and each motor worked out from the design (wiring_resistance). Throttle is ESC duty,
-as INAV's motor output (DShot): motor voltage = duty x pack voltage.
+the resistance between the cells and each motor worked out from the design: its own wire run (propulsion.wiring, the
+route from geometry) and the shared battery run (wiring_resistances). Throttle is ESC duty, as INAV's motor output
+(DShot): motor voltage = duty x pack voltage.
 
 Below full throttle, thrust and shaft power follow motorlib's power laws in RPM (the prop's texp and pexp); current and
 duty come from the motor constants that reproduce motorlib's full-throttle point (MotorModel), as in the JSBSim motor.
@@ -15,51 +16,39 @@ Not modelled: pack voltage under load other than its internal resistance (nomina
 and anything a part's data leaves out (named in WiringResistance.not_modelled).
 """
 
-import json
 from dataclasses import dataclass
-from functools import cache
 
 import numpy as np
 
-from libs.airframe import INCH_M, SPECS_PATH, motor_repo
+from libs.airframe import INCH_M, WireRun, motor_repo
 from libs.geometry import STANDARD_GRAVITY_M_S2, ResolvedAirframe, route_length_m
 from libs.motorlib import MotorSim
 from libs.motorlib.rcplanes_multirotor import COPPER_RHO, G_ACCEL
+from libs.reportline import ReportLine
 
-NOMINAL_CELL_V = {"lipo": 3.7, "liion": 3.6}
 AIR_TEMP_C = 15.0  # ISA sea level: motorlib's density is then 1.225 kg/m^3
 MOTOR_TEMP_C = 20.0  # motorlib's reference for the listed winding resistance
 CURVE_POINTS = 101
 RPM_SEARCH_FACTOR = 1.5  # duty is inverted on an RPM grid up to this x the full-throttle RPM
-PLUG_ABSENT = ("soldered", "")  # wire_paths plug_* values that are not a connector
-CONTACTS_PER_PLUG = 2  # in the current path: + and - (battery plugs), in and out (breaker plug), 2 of 3 pins (motor plug)
-MOTOR_LEAD_CONDUCTORS = 2  # six-step commutation: one phase wire in, one out, the third floating
+CONTACTS_PER_PLUG = 2  # in the current path: + and - (battery plugs), 2 of 3 pins (motor plug)
+CONDUCTORS_IN_PATH = 2  # battery leads + and -; motor leads under six-step commutation: one phase in, one out, the third floating
 ESC_SWITCHES_IN_PATH = 2  # one high-side and one low-side MOSFET
 
 
-@cache
-def wire_specs() -> dict:
-    with open(SPECS_PATH, "r") as file:
-        specs = json.load(file)
-    return {"paths": specs["wire_paths"], "connectors": specs["connectors"]}
-
-
 def library_part(resolved: ResolvedAirframe, parts_data: dict, name: str) -> dict:
-    """data/parts.json entry of a placed part, by the placed part's name."""
+    """Part library entry of a placed part, by the placed part's name."""
     placed = next(part for part in resolved.airframe.parts if part.name == name)
     category, _, part_name = placed.part.partition(":")
     return parts_data[category][part_name]
 
 
-def copper_ohm(length_m: float, gauge: int, conductors: int) -> float:
-    """Copper at 20 C, motorlib's resistivity and AWG areas."""
-    return COPPER_RHO * conductors * length_m / motor_repo().wire(gauge).area_m2
+def leads_ohm(run: WireRun, length_m: float) -> float:
+    """The run's copper in the current path at 20 C, motorlib's resistivity and AWG areas."""
+    return COPPER_RHO * CONDUCTORS_IN_PATH * length_m / motor_repo().wire(run.gauge_awg).area_m2
 
 
-def plugs_ohm(path: dict) -> float:
-    connectors = wire_specs()["connectors"]
-    return sum(CONTACTS_PER_PLUG * connectors[value]["contact_resistance_ohm"]
-               for key, value in path.items() if key.startswith("plug_") and value not in PLUG_ABSENT)
+def plugs_ohm(plugs: tuple[str, ...], parts_data: dict) -> float:
+    return sum(CONTACTS_PER_PLUG * parts_data["connector"][plug]["contact_resistance_ohm"] for plug in plugs)
 
 
 @dataclass(frozen=True)
@@ -68,52 +57,58 @@ class WiringResistance:
     current, so a motor's voltage drop sees them times the motor count (equal currents)."""
     motor_count: int
     pack_ohm: float  # s x per-cell / p
-    battery_leads_ohm: float  # batt_to_esc, + and -
+    pack_leads_ohm: float  # the pack's own leads, + and -
+    battery_leads_ohm: float  # the battery run, + and -
     battery_plugs_ohm: float
-    motor_leads_ohm: float  # esc_to_motor, per motor
+    motor_leads_ohm: float  # this motor's run
     motor_plugs_ohm: float
     esc_ohm: float
     battery_route_m: float
-    motor_routes_m: tuple[float, ...]  # per motor; motor_leads_ohm is for their mean (one motor model for all)
+    motor_route_m: float
     not_modelled: tuple[str, ...]
 
     @property
     def shared_ohm(self) -> float:
-        return self.pack_ohm + self.battery_leads_ohm + self.battery_plugs_ohm
+        return self.pack_ohm + self.pack_leads_ohm + self.battery_leads_ohm + self.battery_plugs_ohm
 
     @property
     def per_motor_ohm(self) -> float:
         return self.motor_leads_ohm + self.motor_plugs_ohm + self.esc_ohm + self.motor_count * self.shared_ohm
 
 
-def wiring_resistance(resolved: ResolvedAirframe, parts_data: dict) -> WiringResistance:
-    """The wire runs of resolved.wires (battery part to ESC part, ESC part to each motor) with the gauges and plugs of
-    data/specs.json wire_paths batt_to_esc and esc_to_motor. One motor model serves all motors, so the motor leads are
-    taken at the mean route (an off-centre ESC makes them differ)."""
+def wiring_resistances(resolved: ResolvedAirframe, parts_data: dict) -> tuple[WiringResistance, ...]:
+    """Per motor, in motor order: the routes of resolved.wires (battery part to ESC part, ESC part to each motor) with
+    the gauges and plugs of propulsion.wiring, the battery's own connector first on the battery run."""
     propulsion = resolved.airframe.propulsion
-    paths = wire_specs()["paths"]
-    battery = library_part(resolved, parts_data, propulsion.battery)
+    battery = propulsion.battery
     esc = library_part(resolved, parts_data, propulsion.esc)
     battery_route = route_length_m(resolved.wires.battery)
-    motor_routes = tuple(route_length_m(route) for route in resolved.wires.motors)
     not_modelled = []
-    if "ir_mohm_per_cell" in battery:
-        pack_ohm = battery["s"] * battery["ir_mohm_per_cell"] / 1000.0 / battery["p"]
+    if battery.ir_ohm_per_cell is not None:
+        pack_ohm = battery.series * battery.ir_ohm_per_cell / battery.parallel
     else:
         pack_ohm = 0.0
         not_modelled.append("pack internal resistance (no ir_mohm_per_cell)")
+    if battery.lead_awg is not None:
+        pack_leads_ohm = COPPER_RHO * CONDUCTORS_IN_PATH * battery.lead_length_m / motor_repo().wire(battery.lead_awg).area_m2
+    else:
+        pack_leads_ohm = 0.0
+        not_modelled.append("pack leads (no lead_awg, lead_length_mm)")
     if "mosfet_rds_on_ohm" in esc:
         esc_ohm = ESC_SWITCHES_IN_PATH * esc["mosfet_rds_on_ohm"]
     else:
         esc_ohm = 0.0
         not_modelled.append("ESC resistance (no mosfet_rds_on_ohm)")
-    battery_path, motor_path = paths["batt_to_esc"], paths["esc_to_motor"]
-    return WiringResistance(
-        motor_count=len(resolved.motors), pack_ohm=pack_ohm,
-        battery_leads_ohm=copper_ohm(battery_route, battery_path["wires_ga"], battery_path["wires_n"]), battery_plugs_ohm=plugs_ohm(battery_path),
-        motor_leads_ohm=copper_ohm(sum(motor_routes) / len(motor_routes), motor_path["wires_ga"], MOTOR_LEAD_CONDUCTORS),
-        motor_plugs_ohm=plugs_ohm(motor_path), esc_ohm=esc_ohm, battery_route_m=battery_route, motor_routes_m=motor_routes,
-        not_modelled=tuple(not_modelled),
+    battery_run = propulsion.wiring.battery
+    battery_plugs = (battery.connector, *battery_run.plugs)
+    return tuple(
+        WiringResistance(
+            motor_count=len(resolved.motors), pack_ohm=pack_ohm, pack_leads_ohm=pack_leads_ohm, battery_leads_ohm=leads_ohm(battery_run, battery_route),
+            battery_plugs_ohm=plugs_ohm(battery_plugs, parts_data), motor_leads_ohm=leads_ohm(run, route_length_m(route)),
+            motor_plugs_ohm=plugs_ohm(run.plugs, parts_data), esc_ohm=esc_ohm, battery_route_m=battery_route, motor_route_m=route_length_m(route),
+            not_modelled=tuple(not_modelled),
+        )
+        for run, route in zip(propulsion.wiring.motors, resolved.wires.motors, strict=True)
     )
 
 
@@ -157,16 +152,26 @@ class MotorPoints:
     power_w: np.ndarray
 
 
-def motor_model(resolved: ResolvedAirframe, parts_data: dict) -> MotorModel:
+def motor_models(resolved: ResolvedAirframe, parts_data: dict) -> tuple[MotorModel, ...]:
+    """One per motor, in motor order, each with its own wiring; motors wired alike share one solve."""
+    solved: dict[float, MotorModel] = {}
+    models = []
+    for wiring in wiring_resistances(resolved, parts_data):
+        if wiring.per_motor_ohm not in solved:
+            solved[wiring.per_motor_ohm] = motor_model(resolved, parts_data, wiring)
+        models.append(solved[wiring.per_motor_ohm])
+    return tuple(models)
+
+
+def motor_model(resolved: ResolvedAirframe, parts_data: dict, wiring: WiringResistance) -> MotorModel:
+    """motorlib's full-throttle point of one motor wired as given, the other motors drawing the same."""
     airframe = resolved.airframe
     propulsion = airframe.propulsion
-    battery = library_part(resolved, parts_data, propulsion.battery)
-    cell_v = NOMINAL_CELL_V[battery["type"]]
-    wiring = wiring_resistance(resolved, parts_data)
+    battery = propulsion.battery
     sim = MotorSim(
-        repo=motor_repo(), cell=None, cell_volt=cell_v, controller=None, wire_gauge=None, wire_length_m=0.0,
+        repo=motor_repo(), cell=None, cell_volt=battery.cell_voltage_v, controller=None, wire_gauge=None, wire_length_m=0.0,
         external_resistance_ohm=wiring.per_motor_ohm, motor_mfg=propulsion.motor.manufacturer, motor_type=propulsion.motor.name,
-        propeller=propulsion.prop, cells=int(battery["s"]), parallel=int(battery["p"]), motors=len(resolved.motors),
+        propeller=propulsion.prop, cells=battery.series, parallel=battery.parallel, motors=len(resolved.motors),
         altitude_m=0.0, temp_c=AIR_TEMP_C, wire_temp_c=AIR_TEMP_C, temp_motor_c=MOTOR_TEMP_C,
     )
     static = dict(sim.static)
@@ -178,8 +183,8 @@ def motor_model(resolved: ResolvedAirframe, parts_data: dict) -> MotorModel:
     revs = rpm / 60.0
     thrust = float(static["thrust_g"]) / len(resolved.motors) / 1000.0 * G_ACCEL
     return MotorModel(
-        label=f"{propulsion.motor.manufacturer} {propulsion.motor.name} ({kv:g} KV)", prop=propulsion.prop, cells=int(battery["s"]),
-        parallel=int(battery["p"]), pack_mah=battery["mah"] * battery["p"], pack_wh=battery["mah"] * battery["p"] / 1000.0 * pack_v,
+        label=f"{propulsion.motor.manufacturer} {propulsion.motor.name} ({kv:g} KV)", prop=propulsion.prop, cells=battery.series,
+        parallel=battery.parallel, pack_mah=battery.capacity_mah, pack_wh=battery.capacity_mah / 1000.0 * pack_v,
         pack_voltage_v=pack_v, diameter_m=diameter, pitch_m=sim.prop.pitch_in * INCH_M, rho=rho, kv_rpm_v=kv,
         resistance_ohm=(pack_v - rpm / kv) / current, no_load_current_a=io, full_rpm=rpm, full_thrust_n=thrust, full_current_a=current,
         full_shaft_w=shaft, ct0=thrust / (rho * revs ** 2 * diameter ** 4), cp0=shaft / (rho * revs ** 3 * diameter ** 5),
@@ -210,69 +215,82 @@ def rpm_for_duty(model: MotorModel, duty, pack_voltage_v: float):
 
 @dataclass(frozen=True)
 class PropulsionSummary:
-    model: MotorModel
+    models: tuple[MotorModel, ...]  # per motor (motor_models); motor, prop and pack are the same in each
     motor_count: int
     pack_voltage_v: float  # nominal
     weight_n: float  # nominal mass (ranged masses at the middle)
-    curve: MotorPoints  # duty 0..1
-    full: MotorPoints  # duty 1
+    curve: MotorPoints  # duty 0..1, mean per motor
+    full: MotorPoints  # duty 1, mean per motor
     thrust_to_weight: float
     vtol: bool
-    hover: MotorPoints | None  # VTOL only; None when full thrust cannot lift the weight
+    hover: MotorPoints | None  # VTOL only, mean per motor, each motor holding its share of the weight; None when full thrust cannot lift it
     hover_time_min: float | None
     full_throttle_time_min: float
 
 
+def mean_points(points: list[MotorPoints]) -> MotorPoints:
+    return MotorPoints(*(np.mean([getattr(item, field) for item in points], axis=0) for field in ("duty", "rpm", "thrust_n", "current_a", "power_w")))
+
+
 def propulsion_summary(resolved: ResolvedAirframe, parts_data: dict) -> PropulsionSummary:
-    model = motor_model(resolved, parts_data)
-    pack = model.pack_voltage_v
-    count = len(resolved.motors)
+    models = motor_models(resolved, parts_data)
+    pack = models[0].pack_voltage_v
+    count = len(models)
     weight_n = sum(resolved.mass_kg) / 2.0 * STANDARD_GRAVITY_M_S2
-    full = static_points(model, rpm_for_duty(model, 1.0, pack), pack)
+    full = mean_points([static_points(model, rpm_for_duty(model, 1.0, pack), pack) for model in models])
+    duties = np.linspace(0.0, 1.0, CURVE_POINTS)
+    curve = mean_points([static_points(model, rpm_for_duty(model, duties, pack), pack) for model in models])
     vtol = resolved.airframe.vtol
-    hover = static_points(model, rpm_for_thrust(model, weight_n / count), pack) if vtol and full.thrust_n * count >= weight_n else None
+    hover = None
+    if vtol and float(full.thrust_n) * count >= weight_n:
+        hover = mean_points([static_points(model, rpm_for_thrust(model, weight_n / count), pack) for model in models])
+    pack_wh = models[0].pack_wh
     return PropulsionSummary(
-        model=model, motor_count=count, pack_voltage_v=pack, weight_n=weight_n,
-        curve=static_points(model, rpm_for_duty(model, np.linspace(0.0, 1.0, CURVE_POINTS), pack), pack), full=full,
+        models=models, motor_count=count, pack_voltage_v=pack, weight_n=weight_n, curve=curve, full=full,
         thrust_to_weight=float(full.thrust_n) * count / weight_n, vtol=vtol, hover=hover,
-        hover_time_min=None if hover is None else model.pack_wh / (float(hover.power_w) * count) * 60.0,
-        full_throttle_time_min=model.pack_wh / (float(full.power_w) * count) * 60.0,
+        hover_time_min=None if hover is None else pack_wh / (float(hover.power_w) * count) * 60.0,
+        full_throttle_time_min=pack_wh / (float(full.power_w) * count) * 60.0,
     )
 
 
-def summary_lines(summary: PropulsionSummary) -> list[str]:
-    """Plain-text static propulsion, totals over all motors; throttle as INAV motor output (duty)."""
-    model, full, hover, count = summary.model, summary.full, summary.hover, summary.motor_count
-    wiring = model.wiring
+def summary_lines(summary: PropulsionSummary) -> list[ReportLine]:
+    """Static propulsion as report lines, totals over all motors; throttle as INAV motor output (duty)."""
+    model, full, hover, count = summary.models[0], summary.full, summary.hover, summary.motor_count
+    wirings = [item.wiring for item in summary.models]
+    wiring = wirings[0]  # the battery run, pack and ESC are shared
     grams = 1000.0 / STANDARD_GRAVITY_M_S2
     milli = 1000.0
-    routes = sorted(wiring.motor_routes_m)
-    motor_routes = f"{routes[0]:.3f} m" if routes[-1] - routes[0] < 0.0005 else f"mean of {routes[0]:.3f}..{routes[-1]:.3f} m"
+
+    def spread(values: list[float], unit: str, scale: float = 1.0, digits: int = 1) -> str:
+        low, high = min(values) * scale, max(values) * scale
+        return f"{low:.{digits}f}{unit}" if round(high - low, digits) == 0 else f"{low:.{digits}f}..{high:.{digits}f}{unit}"
 
     def efficiency(points: MotorPoints) -> float:
         return float(points.thrust_n) * grams / float(points.power_w)
 
-    lines = [
+    lines = [ReportLine(text) for text in (
         f"{count} x {model.label}, {model.prop} (motorlib); {model.cells}S{model.parallel}P {model.pack_mah:.0f} mAh, {model.pack_wh:.1f} Wh, "
         f"{summary.pack_voltage_v:.1f} V nominal",
-        f"Resistance    : {wiring.per_motor_ohm * milli:.1f} mOhm per motor = motor leads {wiring.motor_leads_ohm * milli:.1f} "
-        f"({motor_routes}) + motor plug {wiring.motor_plugs_ohm * milli:.1f} + ESC {wiring.esc_ohm * milli:.1f} + {count} x shared "
-        f"{wiring.shared_ohm * milli:.1f} (pack {wiring.pack_ohm * milli:.1f}, battery leads {wiring.battery_leads_ohm * milli:.1f} "
+        f"Resistance    : {spread([w.per_motor_ohm for w in wirings], '', milli)} mOhm per motor = motor leads {spread([w.motor_leads_ohm for w in wirings], '', milli)} "
+        f"({spread([w.motor_route_m for w in wirings], ' m', digits=3)}) + motor plugs {spread([w.motor_plugs_ohm for w in wirings], '', milli)} "
+        f"+ ESC {wiring.esc_ohm * milli:.1f} + {count} x shared "
+        f"{wiring.shared_ohm * milli:.1f} (pack {wiring.pack_ohm * milli:.1f}, pack leads {wiring.pack_leads_ohm * milli:.1f}, battery leads {wiring.battery_leads_ohm * milli:.1f} "
         f"({wiring.battery_route_m:.3f} m), battery plugs {wiring.battery_plugs_ohm * milli:.1f})",
         f"Full throttle : {float(full.thrust_n) * count * grams:.0f} g, {float(full.current_a) * count:.1f} A, {float(full.power_w) * count:.0f} W; "
         f"{float(full.rpm):.0f} RPM, pitch speed {float(full.rpm) / 60.0 * model.pitch_m * 3.6:.0f} km/h, {efficiency(full):.2f} g/W, "
         f"{summary.full_throttle_time_min:.1f} min",
         f"Thrust/weight : {summary.thrust_to_weight:.2f} at {summary.weight_n * grams:.0f} g",
-    ]
+    )]
     if wiring.not_modelled:
-        lines.append(f"Not modelled  : {'; '.join(wiring.not_modelled)}")
-    if model.warnings:
-        lines.append(f"motorlib      : {'; '.join(model.warnings)}")
+        lines.append(ReportLine(f"Not modelled  : {'; '.join(wiring.not_modelled)}", "warning"))
+    warnings = list(dict.fromkeys(warning for item in summary.models for warning in item.warnings))
+    if warnings:
+        lines.append(ReportLine(f"motorlib      : {'; '.join(warnings)}", "warning"))
     if not summary.vtol:
         pass
     elif hover is None:
-        lines.append("Hover         : not possible, full thrust is below the weight")
+        lines.append(ReportLine("Hover         : not possible, full thrust is below the weight", "problem"))
     else:
-        lines.append(f"Hover         : motor output {float(hover.duty):.3f}, {float(hover.current_a) * count:.1f} A, {float(hover.power_w) * count:.0f} W, "
-                     f"{efficiency(hover):.2f} g/W, {summary.hover_time_min:.1f} min")
+        lines.append(ReportLine(f"Hover         : motor output {float(hover.duty):.3f}, {float(hover.current_a) * count:.1f} A, {float(hover.power_w) * count:.0f} W, "
+                                f"{efficiency(hover):.2f} g/W, {summary.hover_time_min:.1f} min"))
     return lines

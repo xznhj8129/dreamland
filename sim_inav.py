@@ -11,8 +11,10 @@ SITL on inav-jsbsim-bench (installed in the drone env). The SITL runs the projec
 from DEFAULT_SITL_PATH on the first run, with sitl/ as its workdir (eeprom.bin, sitl.log); the flight log and plots
 go to logs/. The flight log also carries what INAV reports (battery, altitude, GPS, navigation, modes) and the
 electrical model (battery power and current, each motor's voltage, current and rpm); INAV's battery and current
-meters are fed the modelled pack voltage (nominal) and current. The FC settings are generated from the design, or a
-real FC's CLI diff (--inav-config) with the real board's hardware and calibration lines removed (listed when run).
+meters are fed the modelled pack voltage (nominal) and current. INAV always flies a diff file (flown_diff): generated
+from the design, or from a real FC's CLI diff (--inav-config) with the real board's hardware and calibration lines
+removed, into the project's inav/generated/ (rewritten on every such run; templates in data/inav/), or any other diff
+given to --inav-config, as written.
 
 Scenarios, each on every aircraft that can physically fly it (scenario_reasons):
 hover:      VTOL. Standing on its tail, arm in ANGLE, climb, then NAV POSHOLD (NAV ALTHOLD if the FC settings have no
@@ -35,7 +37,6 @@ a fixed-wing flies INAV ANGLE + NAV ALTHOLD, a tailsitter its forward mixer prof
 """
 
 import argparse
-import json
 import math
 import re
 import shutil
@@ -44,7 +45,7 @@ from pathlib import Path
 
 from inavbench import Bench
 
-from libs.airframe import PARTS_PATH, load_airframe
+from libs.airframe import load_airframe, load_parts_data
 from libs.geometry import resolve_airframe
 from libs.jsbsim import INAV_THROTTLE_IDLE_PCT, reuse_or_export
 from libs.project import Project, open_project
@@ -56,27 +57,11 @@ from libs.simrun import (
 REPO_DIR = Path(__file__).resolve().parent
 DEFAULT_SITL_PATH = REPO_DIR.parent / "inav_development" / "inav" / "build_SITL" / "bin" / "SITL.elf"
 SCENARIOS = ("hover", "efficiency", "top-speed", "controls", "glide")
-# Flying on the bench: RC, baro and GPS come in over MSP_SIMULATOR.
-SITL_SENSOR_LINES = (
-    "set receiver_type = SIM (SITL)",
-    "set baro_hardware = FAKE",
-    "set pitot_hardware = NONE",
-    "feature GPS",
-    "set gps_provider = MSP",
-    "set init_gyro_cal = OFF",
-)
-# Switches for the generated config (a real config brings its own).
-GENERATED_CONFIG_LINES = (
-    "set mag_hardware = FAKE",
-    "set nav_mc_althold_throttle = MID_STICK    # centre stick holds altitude",
-    "# switches: AUX1 arm, AUX2 angle, AUX3 mid althold / high poshold, AUX4 mid mixer transition / high mixer profile 2",
-    "aux 0 0 0 1700 2100",
-    "aux 1 1 1 1300 2100",
-    "aux 2 3 2 1300 1700",
-    "aux 3 11 2 1700 2100",
-    "aux 4 63 3 1300 1700",
-    "aux 5 62 3 1700 2100",
-)
+INAV_TEMPLATES_DIR = REPO_DIR / "data" / "inav"
+TAILSITTER_TEMPLATE = INAV_TEMPLATES_DIR / "tailsitter.txt"  # switches and modes of a generated diff, after the design's mixer
+PLANE_TEMPLATE = INAV_TEMPLATES_DIR / "plane.txt"
+SITL_TEMPLATE = INAV_TEMPLATES_DIR / "sitl.txt"  # the bench's simulated hardware, in every generated diff
+REAL_FC_BANNER = re.compile(r"# INAV/\S+ \d+\.\d+")  # the version line of a real FC's CLI diff
 # From a real (INAV 8) diff only what defines the aircraft goes into the INAV 10 SITL: the mixer profiles (platform,
 # motor mix, motor direction, tailsitter offset, profile linking) and the mode switches on AUX1-4 (all MSP_SIMULATOR
 # carries). Tuning, filters, hardware and calibration stay at INAV 10 defaults.
@@ -127,18 +112,6 @@ LEVEL_THROTTLE_RAMP_PER_S = 1.0  # the throttle stick moves at most this much pe
 # The script pilot's pitch range. A tailsitter can hang on its thrust at any pitch, so nose-up goes nearly to vertical;
 # it stops short of 90 deg because the pilot steers by Euler roll and heading, which are undefined there.
 PILOT_PITCH_LIMITS_DEG = (-15.0, 80.0)
-PLANE_CONFIG_LINES = (
-    "set mag_hardware = FAKE",
-    "# switches: AUX1 arm, AUX2 angle, AUX3 nav althold",
-    "aux 0 0 0 1700 2100",
-    "aux 1 1 1 1300 2100",
-    "aux 2 3 2 1300 2100",
-    "# NAV ALTHOLD holds height with pitch and adds throttle stick above cruise: cruise and min at idle, so the stick sets the power",
-    "# (cruise 1001: INAV divides by cruise - 1000 in ANGLE mode, and 1000 crashes the SITL)",
-    "set nav_fw_allow_manual_thr_increase = ON",
-    "set nav_fw_cruise_thr = 1001",
-    "set nav_fw_min_thr = 1000",
-)
 CONTROLS_LEVEL_S = 10.0
 CONTROLS_STEP_S = 3.0
 CONTROLS_RECOVER_S = 5.0
@@ -253,6 +226,30 @@ def real_config_lines(path: Path) -> tuple[list[str], int]:
     return kept, left_out
 
 
+def is_real_fc_diff(path: Path) -> bool:
+    """A real FC's CLI diff (it carries INAV's version banner), as opposed to a SITL diff flown as written."""
+    return any(REAL_FC_BANNER.match(line.strip()) for line in path.read_text().splitlines())
+
+
+def flown_diff(project: Project, export, tailsitter: bool, inav_config: Path | None) -> Path:
+    """The diff INAV flies. Generated from the design (no inav_config) or from a real FC diff into the project's
+    inav/generated/, rewritten on every such run; any other diff is flown as written."""
+    if inav_config is not None and not is_real_fc_diff(inav_config):
+        return inav_config.resolve()  # the bench opens it from its own directory
+    if inav_config is None:
+        source, path = "the design", project.generated_inav_dir / "design.txt"
+        lines = [*export.inav_cli_path.read_text().splitlines(), *(TAILSITTER_TEMPLATE if tailsitter else PLANE_TEMPLATE).read_text().splitlines()]
+    else:
+        source, path = inav_config.name, project.generated_inav_dir / inav_config.name
+        lines, left_out = real_config_lines(inav_config)
+        print(f"{inav_config}: {len(lines)} aircraft-defining lines kept (INAV 10 names), {left_out} left at INAV 10 defaults")
+    battery_lines = battery_config_lines(export) if export.motors else []
+    path.parent.mkdir(parents=True, exist_ok=True)
+    header = f"# SITL diff from {source}, rewritten by sim_inav.py on every run from it; to edit, copy it into inav/"
+    path.write_text("\n".join([header, *lines, *SITL_TEMPLATE.read_text().splitlines(), *battery_lines]) + "\n")
+    return path
+
+
 def report(bench: Bench, phase: str, motor_count: int) -> None:
     truth = bench.truth()
     altitude_m, _ = bench.altitude()
@@ -307,7 +304,7 @@ def pack_state(export, motor_count: int):
 
 def battery_config_lines(export) -> list[str]:
     """INAV CLI lines so its battery meters read the bench's pack feed (pack_state) and know the pack's capacity."""
-    return ["feature VBAT", "feature CURRENT_METER", f"set battery_capacity = {round(export.motor.pack_mah)}"]
+    return ["feature VBAT", "feature CURRENT_METER", f"set battery_capacity = {round(export.motors[0].pack_mah)}"]  # one pack: the same in every motor model
 
 
 def electrical_log(export, motor_count: int):
@@ -368,7 +365,7 @@ class ForwardFlight:
     """Level forward flight: the one part of a scenario that depends on the airframe type. Scenarios set the throttle
     (and in controls one stick) through sticks(), every tick.
     Fixed-wing: INAV ANGLE, plus NAV ALTHOLD when powered, sticks centred; the throttle stick sets the power
-    (PLANE_CONFIG_LINES). Tailsitter: its forward mixer profile in ACRO, the script pilot holding altitude, wings level
+    (PLANE_TEMPLATE). Tailsitter: its forward mixer profile in ACRO, the script pilot holding altitude, wings level
     and heading."""
 
     def __init__(self, airframe) -> None:
@@ -529,7 +526,7 @@ def efficiency(bench: Bench, flight: ForwardFlight, export, motor_count: int, sw
     if not points:
         print(f"\nLevel flight not held at the start speed {start_speed_m_s:.1f} m/s.")
         return
-    battery_wh = export.motor.pack_wh
+    battery_wh = export.motors[0].pack_wh
     usable_wh = USABLE_BATTERY_FRACTION * battery_wh
     best_range = min(points, key=lambda p: p.power_w / p.airspeed_m_s)
     best_endurance = min(points, key=lambda p: p.power_w)
@@ -653,7 +650,8 @@ def main() -> None:
     parser.add_argument("scenario", choices=list(SCENARIOS))
     parser.add_argument("project", type=Path, help="aircraft project directory (aircraft/<name>)")
     parser.add_argument("--sitl", type=Path, default=None, help="INAV SITL.elf (default: the project's pinned sitl/SITL.elf)")
-    parser.add_argument("--inav-config", type=Path, default=None, help="real INAV CLI diff to fly (default: FC settings generated from the design)")
+    parser.add_argument("--inav-config", type=Path, default=None,
+                        help="INAV diff to fly: a real FC's diff is converted into inav/generated/, any other is flown as written (default: generated from the design)")
     parser.add_argument("--hover-s", type=float, default=15.0, help="hover: hold time in seconds")
     parser.add_argument("--sweep-from", type=float, default=None, help="efficiency: first target airspeed in m/s (default: the top speed, measured first)")
     parser.add_argument("--pack-voltage", type=float, default=None, help="battery voltage for the motors (default: nominal)")
@@ -661,8 +659,7 @@ def main() -> None:
     args = parser.parse_args()
 
     project = open_project(args.project)
-    with open(PARTS_PATH, "r") as file:
-        parts_data = json.load(file)
+    parts_data = load_parts_data()
     resolved, _problems = resolve_airframe(load_airframe(project.build_path, parts_data), parts_data)
     airframe = resolved.airframe
     reason = scenario_reasons(airframe)[args.scenario]
@@ -683,26 +680,18 @@ def main() -> None:
     sitl_path = pinned_sitl(project) if args.sitl is None else args.sitl
     out_dir = project.jsbsim_dir
     export, reused = reuse_or_export(resolved, parts_data, project.build_path, out_dir, project.name, args.pack_voltage)
-    if args.inav_config is None:
-        config_lines = [*export.inav_cli_path.read_text().splitlines(), *(GENERATED_CONFIG_LINES if airframe.tailsitter else PLANE_CONFIG_LINES)]
-    else:
-        config_lines, left_out = real_config_lines(args.inav_config)
-        print(f"{args.inav_config}: {len(config_lines)} aircraft-defining lines kept (INAV 10 names), {left_out} left at INAV 10 defaults:")
-        for line in config_lines:
-            print(f"  {line}")
+    diff_path = flown_diff(project, export, airframe.tailsitter, args.inav_config)
     project.sitl_dir.mkdir(parents=True, exist_ok=True)
-    profile_path = project.sitl_dir / "inav_sitl.cli"
-    battery_lines = battery_config_lines(export) if export.motor is not None else []
-    profile_path.write_text("\n".join([*config_lines, *SITL_SENSOR_LINES, *battery_lines]) + "\n")
     motor_count = len(export.motor_properties)
     print(f"{airframe.name}: {sum(resolved.mass_kg) / 2.0 * 1000:.0f} g, {motor_count} motors, {len(resolved.controls)} control surfaces on "
           f"{len(export.servo_properties)} servo outputs, JSBSim model in {out_dir} ({'reused: nothing it depends on changed' if reused else 'exported'})")
-    if export.motor is not None:
+    if export.motors:
         print(f"  pack {export.pack_voltage_v:.2f} V, throttle_idle {INAV_THROTTLE_IDLE_PCT} %"
               + (f", predicted hover motor command {export.hover_motor_fraction:.3f} (stick {export.hover_stick_us} us)" if airframe.vtol else ""))
 
+    print(f"INAV settings: {diff_path}")
     print(start_line(start, state))
-    vehicle = build_vehicle(export, str(profile_path), start, state, airframe.tailsitter)
+    vehicle = build_vehicle(export, str(diff_path), start, state, airframe.tailsitter)
     run_log = flight_log_path(project, args.scenario, start)
     run_log.parent.mkdir(parents=True, exist_ok=True)
     run_log.unlink(missing_ok=True)  # a run that fails before the bench logs must not plot the previous run
@@ -718,7 +707,7 @@ def main() -> None:
 
 def run_scenario(scenario: str, start: str, state: StartState, args, flight: ForwardFlight, vehicle, sitl_path: Path, workdir: Path, log_path: Path,
                  resolved, export, motor_count: int, cruise_m_s: float) -> None:
-    powered = export.motor is not None
+    powered = bool(export.motors)
     with FlightBench(vehicle, sitl=str(sitl_path), workdir=str(workdir), log=str(log_path), log_fc=True, heading_deg=state.heading_deg,
                      home=(state.lat_deg, state.lon_deg), log_extra=electrical_log(export, motor_count) if powered else None,
                      battery=pack_state(export, motor_count) if powered else None) as bench:

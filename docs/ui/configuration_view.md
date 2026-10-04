@@ -29,7 +29,7 @@ LeftPane [arrange:column]
     * RecomputeHeader [arrange:row]
     * LeftTabs [ui:tabs]
         Summary
-        Controls
+        Log
 ```
 
 ### RecomputeHeader
@@ -52,23 +52,25 @@ RecomputeHeader [arrange:row]
 ```text
 SummaryTab [fill]
 
-    * SummaryPanel [fill, scrollable, copyable]
+    * SummaryPanel [fill, scrollable, copyable, word-wrapped]
         * SummaryText [ui:fixed-width text, bind:analysis.report_text]
             includes dimensional surface-force estimates at the current Configuration operating condition
             reports per-surface lift / drag / vertical force using the configured airfoil and surface geometry
+            problems in red (layout problems, unstable margin, no hover), warnings in yellow (marginal margin,
+            parts not modelled, motorlib warnings)
 ```
 
-### Controls tab
+### Log tab
 
 ```text
-ControlsTab [arrange:column]
+LogTab [fill]
 
-    * ControlsPanel
-        * SurfaceForceOperatingPoint [ui:group]
-            - AoA (deg) [ui:number entry]
-            - Airspeed (m/s) [ui:number entry]
-            - Altitude (m) [ui:number entry]
-            used by the Summary -> Surface Forces block
+    * LogPanel [fill, scrollable, copyable, word-wrapped]
+        * LogText [ui:fixed-width text]
+            every error in red, appended with its time: definition errors, motor overloaded (no motor info, no propulsion
+            in the report), aero failures, load / save / preset errors, unhandled errors with their traceback
+            a new entry brings the Log tab to the front; the status bar says "<what> (see Log)"; the Summary keeps the
+            last valid report
 ```
 
 ## Center Pane
@@ -175,12 +177,17 @@ ASB view
 RightPane [arrange:column]
 
     * RightTabs [ui:tabs]
-        Airframe
-        Fuselage
-        Surfaces
-        Propulsion
-        Volumes
-        Parts
+        Design [ui:tabs]   the airframe itself
+            Airframe
+            Fuselage
+            Sections
+            Surfaces
+            Volumes
+            Motor mounts
+        Build [ui:tabs]    what goes in it
+            Propulsion
+            Parts
+            Wiring
 ```
 
 ## Fuselage tab
@@ -191,7 +198,6 @@ FuselageTab [scrollable, arrange:column]
     * SizePresetPanel
     * FuselagePanel
     * ReinforcementPanel
-    * SectionsTable
 ```
 
 ### SizePresetPanel
@@ -237,7 +243,7 @@ ReinforcementPanel  (title "Reinforcement (longitudinal rods)")
         on  -> the removed rods, or the labelled preset's pattern, or 4 single 2.5 mm carbon rods at 45 deg against the inner wall;
                new rods run nose end to tail start
     - type [ui:dropdown]
-    - material [ui:dropdown]  (data/parts.json materials)
+    - material [ui:dropdown]  (data/parts/material.json)
     - diameter, radial position (rod centre from the axis)
     - polar_n (all rods), polar_offset_angle (deg from the horizontal), polar_split (0 = single, 2 = pair),
       polar_split_angle (deg: a pair sits at offset +/- this)
@@ -246,27 +252,41 @@ ReinforcementPanel  (title "Reinforcement (longitudinal rods)")
     drawn as dashed lines in the side view and small circles in the front view
 ```
 
-### SectionsTable
+## Sections tab
 
 ```text
-SectionsTable  (title "Sections (cut lines; drag them in the side view)")
+SectionsTab [scrollable]  (group title "Sections (cut lines; drag them in the side view)")
 
     - Add cut [ui:button]
-        on:click -> split the longest section at its middle; both halves keep its solid flag and lose its weighed masses
+        on:click -> split the longest section at its middle; both halves keep its solid flag and lose its weighed masses;
+                    the new cut's joint is coupler
 
     columns, one row per section
         section mm   S<n> from-to
         cut mm       the section's end cut [ui:textbox]; none on the last section
+        joint        that cut's joint [ui:dropdown]: coupler (separate coupler, its mass at the cut), front_male (this
+                     section carries the male end), rear_male (the next section does); none on the last section
         solid        [ui:checkbox]  off = hollow shell wall; on = solid less the volumes inside it
         empty g      weighed printed mass [ui:textbox]; blank = calc
         calc         computed printed mass (hollow: shell wall x material density; solid: x print bulk density)
         complete g   weighed printed mass + everything attached in the section [ui:textbox]; blank = items
         items        itemised mass of everything attached in the section (props with their motor, motors with their mount,
                      wing sets at their root leading edge); a range when it holds a mass range
-        Del          [ui:button] delete the section's end cut: the two sections merge, keeping the left one's solid flag,
+        Del          [ui:button] delete the section's end cut and its joint: the two sections merge, keeping the left one's solid flag,
                      each weighed mass summed when both had one
     calc and items update after every edit
     the side view labels each section "S<n> <empty> g" (* = computed), its length, "solid", and "<complete> g all" when weighed
+```
+
+## Motor mounts tab
+
+```text
+MotorMountsTab [arrange:column]
+
+    - Add motor mount [ui:button]
+    * one card per mount: on (nose | tail | surface), surface, span position, x offset, direction, spin, thrust axis
+      tilt, pod [ui:checkbox] with its fields, Delete
+    a surface mount puts one motor on every panel of the surface
 ```
 
 ## Propulsion tab
@@ -274,8 +294,31 @@ SectionsTable  (title "Sections (cut lines; drag them in the side view)")
 ```text
 PropulsionTab [arrange:column]
 
+    * BatteryPanel
     * SelectionPanel
-    * MotorInfoPanel
+    * MotorInfoPanel   (only while the motor can turn the prop; otherwise the Log says why)
+```
+
+### BatteryPanel
+
+```text
+BatteryPanel (title "Battery")
+
+    - Battery model [ui:dropdown, readonly]   Commercial | Custom Li-Ion
+        switching keeps where the pack sits; the other model's fields come back as they were left
+        (first time: the first library pack, or a 4S1P of Molicel INR21700-P45B along x)
+    Commercial
+        - pack [ui:dropdown]   data/parts/battery.json packs
+        - mass (g) [ui:textbox]   blank = library
+    Custom Li-Ion
+        - S (cells in series), P (in parallel) [ui:textbox]
+        - cell (motorlib) [ui:dropdown]   motorlib cells with a cylindrical format (18650, 21700, ...) in the name
+        - connector [ui:dropdown]   data/parts/connector.json with a contact resistance
+        - cell length along [ui:dropdown]   x | y | z
+        - cells along x, y, z [ui:textbox]   their product must be S x P (otherwise a definition error in the Log)
+        - lead AWG [ui:dropdown], lead length (mm) [ui:textbox]
+    - volume [ui:dropdown, "(none)" first] and offsets, or its own x, y, z (as on a part)
+    - the resolved pack: label, size (each axis count x (cell + 2 mm)), mass, capacity
 ```
 
 ### SelectionPanel
@@ -283,14 +326,13 @@ PropulsionTab [arrange:column]
 ```text
 SelectionPanel [editable]
 
-    - Battery [ui:dropdown, readonly]
     - Manufacturer [ui:dropdown, readonly]
     - Motor [ui:dropdown, readonly]
     - Prop [ui:dropdown, readonly]
     - ESC [ui:dropdown, readonly]
 
 Options
-    - battery, ESC: placed parts of that kind (Parts tab)
+    - ESC: placed esc parts (Parts tab); blank until there is one to pick (a definition error in the Log)
     - manufacturers and motors from motorlib, only motors with a stator size
     - changing manufacturer selects its first motor
     - props: all motorlib props
@@ -307,7 +349,7 @@ VolumesTab [arrange:column]
 
 Rules
     - renaming a volume renames it in its parts
-    - Delete is refused while parts sit in the volume (status bar says which)
+    - deleting a volume that still holds parts leaves them pointing at it: a definition error in the Log until moved
     - dragging a volume in the side view moves its parts
 ```
 
@@ -316,14 +358,35 @@ Rules
 ```text
 PartsTab [arrange:column]
 
-    - Add part [ui:button]        new part: first library entry with a mass, in the first volume
-    * one card per part: name, part (library), volume, x, y, z offset (mm, blank = 0),
+    - Add part [ui:button]        new part: first library entry with a mass, in the first volume (no volume: at mid-fuselage)
+    * one card per part: name, part (library), volume [ui:dropdown, "(none)" first],
+      in a volume: x, y, z offset from its centre (mm, blank = 0); "(none)": its own x, y, z (mm; y, z blank = 0),
       mass (g; blank = library, required when the library has none; 0 = counted elsewhere), Delete
 
 Rules
-    - renaming a part renames it in the propulsion battery / ESC
-    - Delete is refused for the propulsion battery or ESC (status bar says so)
+    - renaming a part renames it in the propulsion ESC; the propulsion battery is not a part (Propulsion tab)
+    - deleting the propulsion battery or ESC: a definition error in the Log until another is picked
     - a part outside its volume, or overlapping another part, is listed under layout problems
+    - volume -> "(none)": the part stays where it was, now at its own x, y, z; "(none)" -> a volume: at its centre
+```
+
+## Wiring tab
+
+```text
+WiringTab [arrange:column]
+
+    * WireRunsTable  (title "Wire runs (auto-routed along the axes; drawn in the side view)")
+        one row per run: battery -> ESC, then ESC -> each motor (motor order)
+        columns
+            run          its ends
+            length mm    the auto-routed length ("-" while the definition has an error)
+            AWG          [ui:dropdown] motorlib's wire gauges
+            wires        [ui:textbox] wires in the cable
+            plugs        one [ui:dropdown] per connector along the run, in order; "(remove)" takes it off;
+                         a last "+" [ui:dropdown] appends one; connectors: data/parts/connector.json entries with a
+                         contact resistance (Part Editor)
+    an added motor gets a copy of the last motor run; a removed motor's run goes with it
+    gauges and plugs set each motor's resistance in the motor model (Motor info, report, JSBSim)
 ```
 
 ### MotorInfoPanel
@@ -334,7 +397,7 @@ MotorInfoPanel [fill]
     - top half = matplotlib plot host
     - bottom half = fixed-width text report
 
-Plot contents
+Plot contents (mean per motor)
     - thrust vs INAV motor output
     - RPM / 1000 vs INAV motor output
     - kW vs INAV motor output
@@ -342,7 +405,7 @@ Plot contents
 
 Text report
     - motors, prop, battery
-    - resistance per motor, by part
+    - resistance per motor, by part (a range when the motor runs differ)
     - full throttle, thrust/weight, hover
     - parts not modelled, motorlib warnings
 
@@ -368,6 +431,11 @@ Numeric entries
 
 Type fields
     - readonly dropdowns
+
+incidence_mode (Surfaces tab, per surface set)
+    - enum = { symmetric, cant }
+    - symmetric: incidence pitches mirror panels alike (lift, like AoA)
+    - cant: every panel turned the same way about the body axis (roll); + = right side up, anticlockwise seen from behind
 
 motor_dir
     - enum = { front, back }
