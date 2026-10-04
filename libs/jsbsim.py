@@ -2,7 +2,7 @@
 Usage:
 from libs.jsbsim import export_jsbsim, reuse_or_export
 export = export_jsbsim(resolved, parts_data, project.jsbsim_dir, project.name)  # libs/project.py
-export, reused = reuse_or_export(resolved, parts_data, project.build_path, project.jsbsim_dir, project.name)  # skips an unchanged one
+export, reused = reuse_or_export(resolved, parts_data, project.jsbsim_dir, project.name)  # skips an unchanged one
 
 JSBSim model of a resolved airframe (libs/geometry.py), for INAV SITL through inav-jsbsim-bench. INAV does the mixing;
 motor i is driven through fcs/throttle-cmd-norm[i], in resolved motor order. Writes:
@@ -47,6 +47,7 @@ Model choices (best estimates where no data exists):
 
 import ast
 import copy
+import dataclasses
 import hashlib
 import math
 import pickle
@@ -61,13 +62,12 @@ import neuralfoil
 import numpy as np
 
 from libs.aero import AERO_MODEL_SIZE, build_asb_airplane, build_hybrid_airplanes, with_side_deflections
-from libs.airframe import INCH_M, Propulsion
+from libs.airframe import INCH_M, Propulsion, motor_repo, motorlib_motor
 from libs.geometry import STANDARD_GRAVITY_M_S2, Inertia, ResolvedAirframe, Vec
 from libs.propulsion import MotorModel, motor_models, rpm_for_thrust, static_points
 
 REPO_DIR = Path(__file__).resolve().parent.parent
-LIBS_DIR = REPO_DIR / "libs"
-DATA_DIR = REPO_DIR / "data"  # everything in it is an export input (part library, presets, airfoils)
+EXPORT_ROOT = "export_jsbsim"  # the code an export runs is what this function reaches (export_code_digest)
 EXPORT_FINGERPRINT_FILE = "export.fingerprint"  # in the export directory, next to the export it describes
 EXPORT_CACHE_FILE = "export.pickle"  # the JSBSimExport of that export
 PROP_J_TABLE_POINTS = 25
@@ -483,59 +483,137 @@ def write_engine_files(propulsion: Propulsion, model: MotorModel, engine_dir: Pa
     return motor_file, prop_file
 
 
-def imported_libs_files(start: Path) -> set[Path]:
-    """start and every libs module it imports, transitively (absolute "libs." and relative imports, anywhere in the
-    code): the Python an export runs."""
-    found, pending = set(), [start.resolve()]
-    while pending:
-        path = pending.pop()
-        if path in found:
-            continue
-        found.add(path)
-        package = path.parent
-        for node in ast.walk(ast.parse(path.read_text())):
-            if isinstance(node, ast.Import):
-                names = [alias.name for alias in node.names]
-            elif isinstance(node, ast.ImportFrom):
-                base = REPO_DIR if node.level == 0 else package.parents[node.level - 2] if node.level > 1 else package
-                module = (node.module or "").split(".")
-                names = [".".join(part for part in (*module, alias.name) if part) for alias in node.names] + [node.module or ""]
-                if node.level:
-                    names = [str((base / name.replace(".", "/")).relative_to(REPO_DIR)).replace("/", ".") for name in names]
-            else:
+def feed_canonical(digest, value) -> None:
+    """Feed a value's exact content to a hash: dataclasses field by field, arrays by their bytes, floats exactly."""
+    if dataclasses.is_dataclass(value) and not isinstance(value, type):
+        digest.update(type(value).__name__.encode())
+        for field in dataclasses.fields(value):
+            digest.update(field.name.encode())
+            feed_canonical(digest, getattr(value, field.name))
+    elif isinstance(value, np.ndarray):
+        digest.update(f"array{value.dtype}{value.shape}".encode())
+        digest.update(np.ascontiguousarray(value).tobytes())
+    elif isinstance(value, (list, tuple)):
+        digest.update(f"seq{len(value)}".encode())
+        for item in value:
+            feed_canonical(digest, item)
+    elif isinstance(value, dict):
+        digest.update(f"map{len(value)}".encode())
+        for key in sorted(value, key=repr):
+            feed_canonical(digest, key)
+            feed_canonical(digest, value[key])
+    else:
+        digest.update(f"{type(value).__name__}:{value!r}".encode())
+
+
+def module_index(path: Path) -> tuple[dict[str, ast.AST], dict[str, tuple[Path, str | None]]]:
+    """A libs module's top-level definitions by name, and its libs imports: local name -> (module file, name), name
+    None for a module itself."""
+    tree = ast.parse(path.read_text())
+    definitions, imports = {}, {}
+    for node in tree.body:
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            definitions[node.name] = node
+        elif isinstance(node, ast.Assign):
+            definitions.update((target.id, node) for target in node.targets if isinstance(target, ast.Name))
+        elif isinstance(node, ast.AnnAssign) and isinstance(node.target, ast.Name):
+            definitions[node.target.id] = node
+        elif isinstance(node, ast.ImportFrom):
+            package = path.parent if node.level <= 1 else path.parents[node.level - 1]
+            base = REPO_DIR if node.level == 0 else package
+            module = base.joinpath(*(node.module or "").split(".")) if node.module else base
+            if node.level == 0 and not (node.module or "").startswith("libs"):
                 continue
-            for name in names:
-                if not name.startswith("libs"):
-                    continue
-                candidate = REPO_DIR / name.replace(".", "/")
-                packages = [parent / "__init__.py" for parent in candidate.parents if parent != REPO_DIR and REPO_DIR in parent.parents]
-                for file in (candidate.with_suffix(".py"), candidate / "__init__.py", *packages):
-                    if file.is_file():
-                        pending.append(file.resolve())
-    return found
+            module_file = module.with_suffix(".py") if module.with_suffix(".py").is_file() else module / "__init__.py"
+            for alias in node.names:
+                submodule = module / f"{alias.name}.py"
+                imports[alias.asname or alias.name] = (submodule, None) if submodule.is_file() else (module_file, alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                if alias.name.startswith("libs") and alias.asname:
+                    imports[alias.asname] = (REPO_DIR.joinpath(*alias.name.split(".")).with_suffix(".py"), None)
+    return definitions, imports
 
 
-def export_fingerprint(build_path: Path, out_dir: Path, model_name: str, pack_voltage_v: float | None) -> str:
-    """Hash of everything an export depends on: the aircraft's build file, the Python it runs (imported_libs_files of
-    this module), the non-Python files under libs/ (motorlib's tables), everything under data/, the AeroSandbox and
-    NeuralFoil versions, the model name, the output directory and the pack voltage. Other code (the GUI, the sim
-    runners) does not count."""
-    digest = hashlib.sha256(repr((model_name, str(out_dir), pack_voltage_v, asb.__version__, neuralfoil.__version__)).encode())
-    code = imported_libs_files(Path(__file__))
-    tables = {path.resolve() for path in LIBS_DIR.rglob("*") if path.is_file() and path.suffix != ".py" and "__pycache__" not in path.parts}
-    data = {path.resolve() for path in DATA_DIR.rglob("*") if path.is_file()}
-    inputs = sorted(code | tables | data)
-    for path in (build_path, *inputs):
-        digest.update(str(path).encode())
-        digest.update(path.read_bytes())
+def without_docstrings(node: ast.AST) -> ast.AST:
+    node = copy.deepcopy(node)
+    for item in ast.walk(node):
+        body = getattr(item, "body", None)
+        if isinstance(item, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and body and isinstance(body[0], ast.Expr) \
+                and isinstance(body[0].value, ast.Constant) and isinstance(body[0].value.value, str):
+            item.body = body[1:] or [ast.Pass()]
+    return node
+
+
+def export_code_digest() -> str:
+    """Hash of the code an export runs: every top-level function, class and constant in libs reachable by name from
+    EXPORT_ROOT, as parsed code without docstrings (comments, docstrings and formatting do not count, nor does code
+    the export never reaches: the GUI, the sim runners, the report, other analyses)."""
+    indexes: dict[Path, tuple[dict, dict]] = {}
+    reached: dict[str, str] = {}
+    pending = [(Path(__file__).resolve(), EXPORT_ROOT)]
+    while pending:
+        path, name = pending.pop()
+        key = f"{path.relative_to(REPO_DIR)}:{name}"
+        if key in reached or not path.is_file():
+            continue
+        if path not in indexes:
+            indexes[path] = module_index(path)
+        definitions, imports = indexes[path]
+        if name in imports and name not in definitions:
+            reached[key] = ""
+            target = imports[name]
+            if target[1] is not None:
+                pending.append((target[0].resolve(), target[1]))
+            continue
+        node = definitions.get(name)
+        if node is None:
+            continue  # a builtin, a local name or a third-party name
+        reached[key] = ast.dump(without_docstrings(node))
+        for item in ast.walk(node):
+            if isinstance(item, ast.Name):
+                pending.append((path, item.id))
+            elif isinstance(item, ast.Attribute) and isinstance(item.value, ast.Name) and imports.get(item.value.id, (None, ""))[1] is None \
+                    and item.value.id in imports:
+                pending.append((imports[item.value.id][0].resolve(), item.attr))
+    digest = hashlib.sha256()
+    for key in sorted(reached):
+        digest.update(key.encode())
+        digest.update(reached[key].encode())
     return digest.hexdigest()
 
 
-def reuse_or_export(resolved: ResolvedAirframe, parts_data: dict, build_path: Path, out_dir: Path, model_name: str,
+def export_fingerprint(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, model_name: str, pack_voltage_v: float | None) -> str:
+    """Hash of what decides an export: the resolved airframe as the export gets it (its name, notes, size preset (a
+    label and limits) and the operating point's AoA and airspeed left out: they do not change the model), the
+    library values it reads beyond that (the ESC, the connectors on the wire runs, motorlib's motor, prop and wire
+    rows), the code it runs (export_code_digest), the AeroSandbox and NeuralFoil versions, the model name, the output
+    directory and the pack voltage."""
+    airframe = resolved.airframe
+    operating_point = dataclasses.replace(airframe.operating_point, aoa_deg=0.0, airspeed_m_s=0.0)
+    digest = hashlib.sha256(repr((model_name, str(out_dir), pack_voltage_v, asb.__version__, neuralfoil.__version__)).encode())
+    feed_canonical(digest, dataclasses.replace(resolved, airframe=dataclasses.replace(airframe, name="", notes="", preset=None, operating_point=operating_point)))
+    propulsion = airframe.propulsion
+    if propulsion is not None:
+        esc = next(part.part for part in airframe.parts if part.name == propulsion.esc).partition(":")[2]
+        runs = (propulsion.wiring.battery, *propulsion.wiring.motors)
+        plugs = {propulsion.battery.connector, *(plug for run in runs for plug in run.plugs)}
+        gauges = {run.gauge_awg for run in runs} | ({propulsion.battery.lead_awg} if propulsion.battery.lead_awg is not None else set())
+        repo = motor_repo()
+        feed_canonical(digest, {
+            "esc": parts_data["esc"][esc], "connectors": {plug: parts_data["connector"][plug] for plug in plugs},
+            "motor": repr(motorlib_motor(propulsion.motor)), "prop": repr(repo.prop(propulsion.prop)),
+            "wires": {gauge: repr(repo.wire(gauge)) for gauge in gauges},
+        })
+    digest.update(export_code_digest().encode())
+    return digest.hexdigest()
+
+
+def reuse_or_export(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, model_name: str,
                     pack_voltage_v: float | None = None) -> tuple[JSBSimExport, bool]:
     """(export, reused): the export already in out_dir when nothing it depends on changed (export_fingerprint), otherwise
     a fresh one into an emptied out_dir."""
-    fingerprint = export_fingerprint(build_path, out_dir, model_name, pack_voltage_v)
+    fingerprint = export_fingerprint(resolved, parts_data, out_dir, model_name, pack_voltage_v)
     fingerprint_path, cache_path = out_dir / EXPORT_FINGERPRINT_FILE, out_dir / EXPORT_CACHE_FILE
     if fingerprint_path.is_file() and fingerprint_path.read_text() == fingerprint and cache_path.is_file():
         with open(cache_path, "rb") as file:

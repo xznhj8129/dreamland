@@ -55,7 +55,7 @@ def main() -> None:
     if reason is not None:
         parser.error(f"{args.project}: start {start}: {reason}")
     state = resolve_start(parser, args, start, START_ALT_M, airframe.operating_point.airspeed_m_s)
-    export, reused = reuse_or_export(resolved, parts_data, project.build_path, project.jsbsim_dir, project.name, args.pack_voltage)
+    export, reused = reuse_or_export(resolved, parts_data, project.jsbsim_dir, project.name, args.pack_voltage)
     motor_count, servo_count = len(export.motor_properties), len(export.servo_properties)
     print(f"{airframe.name}: {motor_count} motors (esc[0..{motor_count - 1}]), {servo_count} servos (servo[0..{servo_count - 1}]), "
           f"JSBSim model {'reused' if reused else 'exported'}; script {args.controller} ({controller_class.__name__}) at {controller_class.rate_hz:g} Hz")

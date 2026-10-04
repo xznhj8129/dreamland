@@ -679,7 +679,7 @@ def main() -> None:
     state = resolve_start(parser, args, start, GLIDE_START_ALT_M if args.scenario == "glide" else START_ALT_M, flight.air_start_speed_m_s(cruise_m_s))
     sitl_path = pinned_sitl(project) if args.sitl is None else args.sitl
     out_dir = project.jsbsim_dir
-    export, reused = reuse_or_export(resolved, parts_data, project.build_path, out_dir, project.name, args.pack_voltage)
+    export, reused = reuse_or_export(resolved, parts_data, out_dir, project.name, args.pack_voltage)
     diff_path = flown_diff(project, export, airframe.tailsitter, args.inav_config)
     project.sitl_dir.mkdir(parents=True, exist_ok=True)
     motor_count = len(export.motor_properties)
