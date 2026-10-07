@@ -1,0 +1,66 @@
+{
+    "section": {
+        "width_m": 0.062,
+        "height_m": 0.062,
+        "shape": 2.0,
+        "wall_radial_m": 0.00125
+    },
+    "joints": {
+        "type": "radial_screws",
+        "count": 8,
+        "screw": "M3",
+        "insertion_depth_m": 0.01,
+        "coupler_wall_m": 0.0045,
+        "fit_clearance_m": 0.0003,
+        "socket_wall_m": 0.00125,
+        "hole_edge_dist_m": 0.006,
+        "hole_diameter_m": 0.003,
+        "hole_angle_offset_deg": 22.5
+    },
+    "reinforcement": {
+        "type": "cf_rod",
+        "material": "carbon_rod",
+        "diameter_m": 0.0025,
+        "radial_position_m": 0.027375,
+        "polar_n": 8,
+        "polar_offset_angle": 30,
+        "polar_split": 2,
+        "polar_split_angle": 15
+    },
+    "spars": {
+        "material": "carbon_rod",
+        "diameter_m": 0.0064,
+        "count": 2,
+        "spacing_m": 0.0075,
+        "x_offset_m": 0.02,
+        "carry_through": {
+            "stem_width_m": 0.01,
+            "length_m": 0.02,
+            "flare_radius_m": 0.02,
+            "root_length_m": 0.04,
+            "wall_fillet_m": 0.004
+        }
+    },
+    "limits": {
+        "inner_diameter_m": [
+            0.059,
+            0.0595
+        ],
+        "wall_radial_m": [
+            0.00125,
+            0.003
+        ],
+        "section_length_m": [
+            0.02,
+            0.21
+        ]
+    },
+    "cad": {
+        "quadrants": 4,
+        "quadrant_offset_deg": 0.0,
+        "coupler_types": [
+            "male",
+            "female"
+        ]
+    }
+}

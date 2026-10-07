@@ -4,9 +4,12 @@ python analyze_airframe.py aircraft/m62v2
 python analyze_airframe.py aircraft/m62v2 --aoa 5 --airspeed 20
 python analyze_airframe.py aircraft/m62v2 --sweep
 python analyze_airframe.py aircraft/m62v2 --export-step out.step --step-mode fused --export-stl out.stl
+python analyze_airframe.py aircraft/m62v2 --export-sections   # printable sections and couplers into the project's cad/sections/
+python analyze_airframe.py aircraft/m62v2 --export-varsets     # FreeCAD varsets into the project's cad/varsets/
+python analyze_airframe.py aircraft/m62v2 --export-cutaway     # blueprint cutaway drawing, cad/cutaway.svg and .png
 
 Plane-first analysis of an aircraft project's airframe/2 build file: geometry, mass and CG (with ranges), volume checks,
-aerodynamics and static stability, optional STEP/STL export. --aoa/--airspeed/--altitude override the file's operating
+aerodynamics and static stability, optional STEP/STL export of the whole airframe or of its printable parts, a cutaway drawing, FreeCAD varsets. --aoa/--airspeed/--altitude override the file's operating
 point.
 """
 
@@ -17,12 +20,14 @@ from pathlib import Path
 
 from libs.aero import analyze_aero
 from libs.airframe import load_airframe, load_parts_data
-from libs.cad import export_step, export_stl
+from libs.cad import export_sections, export_step, export_stl
+from libs.cutaway import export_cutaway
 from libs.geometry import resolve_airframe
 from libs.motorlib import MotorStalled
 from libs.project import open_project
 from libs.propulsion import propulsion_summary
 from libs.report import build_report_text
+from libs.varsets import export_varsets
 
 
 def main() -> None:
@@ -35,6 +40,9 @@ def main() -> None:
     parser.add_argument("--export-step", type=Path, default=None, help="Write the airframe as STEP")
     parser.add_argument("--step-mode", choices=["assembly", "fused"], default="assembly", help="STEP: named parts per section, or one fused outer shape")
     parser.add_argument("--export-stl", type=Path, default=None, help="Write the airframe as one STL mesh")
+    parser.add_argument("--export-sections", action="store_true", help="Write each printable section and coupler as STEP and STL into the project's cad/sections/")
+    parser.add_argument("--export-cutaway", action="store_true", help="Draw the blueprint cutaway into the project's cad/cutaway.svg and .png")
+    parser.add_argument("--export-varsets", action="store_true", help="Write the FreeCAD varsets (one JSON each) into the project's cad/varsets/")
     parser.add_argument("--export-prop-discs", action="store_true", help="Include thin propeller discs in CAD exports (actuator-disc CFD)")
     args = parser.parse_args()
 
@@ -61,6 +69,17 @@ def main() -> None:
     if args.export_stl is not None:
         written_mode = export_stl(resolved, args.export_stl, include_prop_discs=args.export_prop_discs)
         print(f"STL written ({written_mode}): {args.export_stl}")
+    if args.export_sections:
+        written, notes = export_sections(resolved, project.sections_dir)
+        print("\n".join(written))
+        for note in notes:
+            print(f"Section export: {note}", file=sys.stderr)
+    if args.export_cutaway:
+        for path in export_cutaway(resolved, project.cad_dir):
+            print(f"Cutaway written: {path}")
+    if args.export_varsets:
+        for path in export_varsets(airframe, project.varsets_dir):
+            print(f"Varset written: {path}")
 
 
 if __name__ == "__main__":

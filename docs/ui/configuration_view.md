@@ -136,7 +136,11 @@ OrthographicView [fill, switchable, pannable, zoomable]
         - draw lifting-surface chord angle using aoa_ang, positive = front up
         - draw volumes as dashed outlines, named above
         - draw parts as solid outlines (a cross without library size), named below
-        - draw wires battery -> ESC -> each motor as yellow dotted lines along the axes
+        - draw wires battery -> ESC -> each motor as yellow dotted lines (battery -> ESC along the axes; to a wing
+          motor inside its panel, out along the mid-chord)
+        - draw spars as pink lines (the rod colour), inner end to tip: solid = through spar, dashed = stops where it meets another
+        - draw the carry-through as dashed pink outlines (each arm's side profile)
+        - mouse drag on a spar -> move that set's spars along the root chord (x offset)
         - draw top-left colored point guide: blue CG, red Neutral point, green Lift @ AoA, volumes, parts, wires, cuts
         - draw pods, motors, shafts, props, CG, CP, CL
 
@@ -145,6 +149,7 @@ OrthographicView [fill, switchable, pannable, zoomable]
         - draw lifting surfaces as radial lines
         - draw volumes as dashed outlines, parts as solid outlines (a cross without library size)
         - draw wires as yellow dotted lines
+        - draw spars as pink lines (solid = through, dashed = stops) and the carry-through as dashed pink outlines
         - draw top-left colored point guide: blue CG, red Neutral point, green Lift @ AoA, volumes, parts, wires, cuts
         - draw motor / pod / prop cross-sections
 ```
@@ -203,13 +208,13 @@ FuselageTab [scrollable, arrange:column]
 ### SizePresetPanel
 
 ```text
-SizePresetPanel  (title "Size preset (data/specs.json)")
+SizePresetPanel  (title "Size preset (data/presets/)")
 
     - aircraft [ui:text]
         none | <preset> | <preset> (modified)
         modified = section, joints or rod pattern differ from the preset; updates after every edit
     - preset [ui:dropdown, readonly]
-        values = (none), then the presets in data/specs.json
+        values = (none), then the presets in data/presets/
     - Load [ui:button]
         on:click -> fill section, joints (not coupler mass) and rod pattern (not from/to x) from the preset,
                     label the aircraft with it; rods it had keep their from/to x, new rods run nose end to tail start;
@@ -220,7 +225,7 @@ SizePresetPanel  (title "Size preset (data/specs.json)")
     - New [ui:button]
         on:click -> ask a name, save this aircraft's values as a new preset (no limits, no CAD data), label the aircraft with it;
                     an existing name is refused
-    a preset that fails validation is not written; data/specs.json stays as it was and the reason is shown
+    a preset that fails validation is not written; data/presets/ stays as it was and the reason is shown
 ```
 
 ### FuselagePanel
@@ -230,7 +235,8 @@ FuselagePanel
     - length
     * section: width, height, shape (superellipse exponent, 2 = circle), wall radial
     * nose, tail: profile [ui:dropdown], length, the profile's parameters
-    * joints: type [ui:dropdown], count, screw, insertion depth, coupler mass
+    * joints: type [ui:dropdown], count (screws per section end), screw, insertion depth, coupler wall, fit clearance,
+      socket wall, hole edge dist, hole diameter, hole angle offset, coupler mass
 ```
 
 ### ReinforcementPanel
@@ -276,6 +282,19 @@ SectionsTab [scrollable]  (group title "Sections (cut lines; drag them in the si
                      each weighed mass summed when both had one
     calc and items update after every edit
     the side view labels each section "S<n> <empty> g" (* = computed), its length, "solid", and "<complete> g all" when weighed
+```
+
+## Surfaces tab
+
+```text
+SurfacesTab [arrange:column]
+
+    - Add surface set [ui:button]
+    * one card per surface set: its planform fields, mass (blank = computed), Delete
+      control surface [ui:checkbox] with its fields
+      spars [ui:checkbox] (ticking fills them from the aircraft's preset): material [ui:dropdown], diameter, count, spacing, x offset,
+        carry-through [ui:checkbox]: stem width, length, flare radius, root length, wall fillet
+      root base (not built yet) [ui:checkbox]: length, width, height, forward offset, leading cut, trailing cut
 ```
 
 ## Motor mounts tab
@@ -375,7 +394,7 @@ Rules
 ```text
 WiringTab [arrange:column]
 
-    * WireRunsTable  (title "Wire runs (auto-routed along the axes; drawn in the side view)")
+    * WireRunsTable  (title "Wire runs (auto-routed: along the axes, wing motors inside their panel; drawn in the side view)")
         one row per run: battery -> ESC, then ESC -> each motor (motor order)
         columns
             run          its ends

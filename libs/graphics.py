@@ -4,8 +4,9 @@ from libs.graphics import draw_canvas_view
 metrics = draw_canvas_view(canvas, resolved, aero, "Longitudinal", roll_deg, ui_draw, ui_bg)
 
 Orthographic Tk drawing of a resolved airframe (libs/geometry.py). Everything drawn comes from the resolved model.
-Volumes carry the canvas tags ("drag", "volume:<index>"), wing sets ("drag", "surface:<index>") and section cuts
-("drag", "cut:<index>"), so the view can move them along x; metrics["scale"] converts screen pixels to metres.
+Volumes carry the canvas tags ("drag", "volume:<index>"), wing sets ("drag", "surface:<index>"), a wing set's spars
+("drag", "spars:<index>") and section cuts ("drag", "cut:<index>"), so the view can move them along x; metrics["scale"]
+converts screen pixels to metres.
 """
 
 import math
@@ -23,6 +24,9 @@ PART_COLOR = "#ff9966"
 WIRE_COLOR = "#ffff00"
 WIRE_DASH = (2, 3)  # dotted
 CUT_COLOR = "#33ccff"
+SPAR_WIDTH_PX = 3
+SPAR_STOP_DASH = (6, 3)  # a spar that stops where it meets another; a through spar is solid
+CARRY_THROUGH_DASH = (3, 2)
 ROD_COLOR = "#ff66aa"
 ROD_DASH = (8, 4)
 CUT_OVERHANG_PX = 14
@@ -52,6 +56,12 @@ def section_projected_half(half_width: float, half_height: float, shape: float, 
 def panel_outline(panel) -> list[tuple[float, float, float]]:
     """True outline: root edge along the body surface, then tip trailing edge and tip leading edge."""
     return [panel.attach_le, panel.attach_te, panel.tip_te, panel.tip_le]
+
+
+def arm_point(arm, first_axis, along_first: float, along_arm: float) -> tuple[float, float, float]:
+    """A point of a carry-through arm profile: along_first on first_axis (x for the side profile, across for the front
+    one) and along_arm along the arm, from its start."""
+    return tuple(s + along_first * f + along_arm * d for s, f, d in zip(arm.start, first_axis, arm.direction))
 
 
 def volume_half_extents(resolved: ResolvedAirframe, volume) -> tuple[float, float, float]:
@@ -92,7 +102,8 @@ def draw_marker_guide(canvas: tk.Canvas, positions: dict) -> None:
     guide = [(f"{MARKER_LABELS[key]}  x {positions[key] * 1000.0:.1f} mm" if not math.isnan(positions[key]) else f"{MARKER_LABELS[key]}  (aero pending)", color)
              for key, color in MARKER_COLORS.items()]
     guide += [("Volumes (drag along x)", VOLUME_COLOR), ("Parts (move with their volume, if in one)", PART_COLOR),
-              ("Wires: battery - ESC - motors", WIRE_COLOR), ("Section cuts (drag along x); * = computed mass", CUT_COLOR)]
+              ("Wires: battery - ESC - motors", WIRE_COLOR), ("Section cuts (drag along x); * = computed mass", CUT_COLOR),
+              ("Rods; spars (drag along the chord; dashed = stops) and carry-through", ROD_COLOR)]
     for index, (text, color) in enumerate(guide):
         canvas.create_text(12, 12 + index * 16, anchor="nw", text=text, fill=color, font=("TkDefaultFont", 9))
 
@@ -246,6 +257,15 @@ def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, 
             t_screen = transverse_to_screen(longitudinal_transverse(y, z, roll_rad))
             canvas.create_line(x_to_screen(reinforcement.from_x_m), t_screen, x_to_screen(reinforcement.to_x_m), t_screen, fill=ROD_COLOR, width=1, dash=ROD_DASH)
 
+    for spar in resolved.spars:
+        tags = ("drag", f"spars:{surface_indices[spar.surface]}")
+        ends = [value for x, y, z in (spar.start, spar.end) for value in (x_to_screen(x), transverse_to_screen(longitudinal_transverse(y, z, roll_rad)))]
+        canvas.create_line(ends, fill=ROD_COLOR, width=SPAR_WIDTH_PX, dash=() if spar.through else SPAR_STOP_DASH, tags=tags)
+    for arm in resolved.carry_through:
+        points = [arm_point(arm, (1.0, 0.0, 0.0), u, r) for u, r in arm.side_profile]
+        canvas.create_polygon([value for x, y, z in points for value in (x_to_screen(x), transverse_to_screen(longitudinal_transverse(y, z, roll_rad)))],
+                              outline=ROD_COLOR, fill="", width=1, dash=CARRY_THROUGH_DASH)
+
     sections = resolved.airframe.sections
     for index, cut in enumerate(sections.cuts_m):
         half_w, half_h = body_half_extents(body, cut)
@@ -377,6 +397,13 @@ def draw_front_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, ui_draw
         for radius, color, fill in ((pod_radius, ui_draw, ui_bg), (motor.bell_diameter_m / 2.0, ui_draw, ui_bg), (PROP_SHAFT_DIAM_M / 2.0, ui_draw, ui_bg), (motor.prop_radius_m, "red", "")):
             if radius > 0.0:
                 canvas.create_oval(x_screen - radius * scale, y_screen - radius * scale, x_screen + radius * scale, y_screen + radius * scale, outline=color, fill=fill, width=2)
+    for spar in resolved.spars:
+        canvas.create_line(center_x + spar.start[1] * scale, center_y - spar.start[2] * scale, center_x + spar.end[1] * scale, center_y - spar.end[2] * scale,
+                           fill=ROD_COLOR, width=SPAR_WIDTH_PX, dash=() if spar.through else SPAR_STOP_DASH)
+    for arm in resolved.carry_through:
+        points = [arm_point(arm, arm.across, v, r) for v, r in arm.front_profile]
+        canvas.create_polygon([value for _x, y, z in points for value in (center_x + y * scale, center_y - z * scale)],
+                              outline=ROD_COLOR, fill="", width=1, dash=CARRY_THROUGH_DASH)
     for control in resolved.controls:
         outline = deflected_outline(control, deflections.get(control.number, 0.0))
         canvas.create_polygon([value for _x, y, z in outline for value in (center_x + y * scale, center_y - z * scale)],

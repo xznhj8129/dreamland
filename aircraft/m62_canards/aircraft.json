@@ -1,0 +1,260 @@
+{
+    "schema": "airframe/2",
+    "powered": true,
+    "vtol": true,
+    "tailsitter": true,
+    "name": "62mm Quad 7in v0",
+    "notes": "Pure dart: m62 with canards",
+    "preset": "M62",
+    "operating_point": {
+        "aoa_deg": 5.0,
+        "airspeed_m_s": 20.0,
+        "altitude_m": 0.0
+    },
+    "print": {
+        "material": "elegoo_pla_plus",
+        "bulk_density_kg_m3": 318.3,
+        "printer_bed_m": [
+            0.24,
+            0.24,
+            0.25
+        ]
+    },
+    "fuselage": {
+        "length_m": 0.6,
+        "section": {
+            "width_m": 0.062,
+            "height_m": 0.062,
+            "shape": 2.0,
+            "wall_radial_m": 0.00125
+        },
+        "nose": {
+            "profile": "elliptical",
+            "length_m": 0.06,
+            "params": {}
+        },
+        "tail": {
+            "profile": "parabolic",
+            "length_m": 0.07,
+            "params": {
+                "k_prime": 1.0
+            }
+        },
+        "joints": {
+            "type": "radial_screws",
+            "count": 8,
+            "screw": "M3",
+            "insertion_depth_m": 0.01,
+            "coupler_wall_m": 0.0045,
+            "fit_clearance_m": 0.0003,
+            "socket_wall_m": 0.00125,
+            "hole_edge_dist_m": 0.006,
+            "hole_diameter_m": 0.003,
+            "hole_angle_offset_deg": 22.5,
+            "coupler_mass_kg": 0.02136
+        },
+        "channels": []
+    },
+    "surfaces": [
+        {
+            "name": "qrwing-7in",
+            "x_root_le_m": 0.35,
+            "layout": "X",
+            "fin_position": "top",
+            "dihedral_deg": 45.0,
+            "root_offset": 0.0,
+            "root": "body",
+            "span_m": 0.1,
+            "chord_root_m": 0.12,
+            "chord_tip_m": 0.06,
+            "sweep_le_deg": 25.0,
+            "incidence_deg": 0.0,
+            "incidence_mode": "symmetric",
+            "airfoil": "naca0008",
+            "mass_kg": 0.1
+        },
+        {
+            "name": "tailfin",
+            "x_root_le_m": 0.5,
+            "layout": "+",
+            "fin_position": "top",
+            "dihedral_deg": 0.0,
+            "root_offset": 0.0,
+            "root": "axis",
+            "span_m": 0.055,
+            "chord_root_m": 0.1,
+            "chord_tip_m": 0.005,
+            "sweep_le_deg": 60.0,
+            "incidence_deg": 0.0,
+            "incidence_mode": "symmetric",
+            "airfoil": "naca0008",
+            "mass_kg": 0.004
+        },
+        {
+            "name": "canards",
+            "x_root_le_m": 0.075,
+            "layout": "+",
+            "fin_position": "top",
+            "dihedral_deg": 0.0,
+            "root_offset": 0.0,
+            "root": "body",
+            "span_m": 0.04,
+            "chord_root_m": 0.06,
+            "chord_tip_m": 0.01,
+            "sweep_le_deg": 50.0,
+            "incidence_deg": 0.0,
+            "incidence_mode": "symmetric",
+            "airfoil": "naca2412",
+            "control": {
+                "kind": "all_moving",
+                "roles": [
+                    "pitch",
+                    "yaw",
+                    "roll"
+                ],
+                "deflection_min_deg": -25.0,
+                "deflection_max_deg": 25.0,
+                "rate_deg_s": 300.0,
+                "servos": [
+                    "S1",
+                    "S2",
+                    "S3",
+                    "S4"
+                ],
+                "pivot": 0.25
+            }
+        }
+    ],
+    "propulsion": {
+        "motor": {
+            "manufacturer": "DYS",
+            "name": "X2807-1300"
+        },
+        "prop": "APC E 7x5",
+        "battery": {
+            "model": "commercial",
+            "part": "CNHL-2200mah-6S",
+            "volume": "battery"
+        },
+        "esc": "ESC",
+        "mounts": [
+            {
+                "on": "surface",
+                "surface": "qrwing-7in",
+                "span_position_m": 0.1,
+                "x_offset_m": 0.12,
+                "direction": "pusher",
+                "spin": "out",
+                "thrust_axis_tilt_deg": 0.0,
+                "pod": {
+                    "diameter_m": 0.035,
+                    "flat_length_m": 0.02,
+                    "curve_length_m": 0.05,
+                    "profile": "elliptical"
+                }
+            }
+        ],
+        "wiring": {
+            "battery": {
+                "gauge_awg": 14,
+                "conductors": 2,
+                "plugs": [
+                    "XT60",
+                    "XT60"
+                ]
+            },
+            "motors": [
+                {
+                    "gauge_awg": 18,
+                    "conductors": 3,
+                    "plugs": [
+                        "MR60"
+                    ]
+                },
+                {
+                    "gauge_awg": 18,
+                    "conductors": 3,
+                    "plugs": [
+                        "MR60"
+                    ]
+                },
+                {
+                    "gauge_awg": 18,
+                    "conductors": 3,
+                    "plugs": [
+                        "MR60"
+                    ]
+                },
+                {
+                    "gauge_awg": 18,
+                    "conductors": 3,
+                    "plugs": [
+                        "MR60"
+                    ]
+                }
+            ]
+        }
+    },
+    "volumes": [
+        {
+            "name": "battery",
+            "shape": "box",
+            "x_m": 0.2208,
+            "size_m": [
+                0.11,
+                0.0355,
+                0.049
+            ]
+        },
+        {
+            "name": "ESC",
+            "shape": "bore",
+            "x_m": 0.3881,
+            "length_m": 0.05
+        }
+    ],
+    "parts": [
+        {
+            "name": "ESC",
+            "part": "esc:esc-4in1-60a",
+            "volume": "ESC",
+            "mass_kg": 0.0
+        }
+    ],
+    "sections": {
+        "cuts_m": [
+            0.06,
+            0.1551,
+            0.2932,
+            0.483
+        ],
+        "per_section": [
+            {
+                "solid": false,
+                "empty_mass_kg": 0.047
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.065
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.122
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.055
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.015
+            }
+        ],
+        "cut_joints": [
+            "coupler",
+            "coupler",
+            "coupler",
+            "coupler"
+        ]
+    }
+}

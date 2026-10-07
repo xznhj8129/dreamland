@@ -40,6 +40,7 @@ import argparse
 import math
 import re
 import shutil
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -56,6 +57,7 @@ from libs.simrun import (
 
 REPO_DIR = Path(__file__).resolve().parent
 DEFAULT_SITL_PATH = REPO_DIR.parent / "inav_development" / "inav" / "build_SITL" / "bin" / "SITL.elf"
+ABORTED_EXIT_CODE = 130  # stopped by SIGINT, as a shell reports Ctrl-C
 SCENARIOS = ("hover", "efficiency", "top-speed", "controls", "glide")
 INAV_TEMPLATES_DIR = REPO_DIR / "data" / "inav"
 TAILSITTER_TEMPLATE = INAV_TEMPLATES_DIR / "tailsitter.txt"  # switches and modes of a generated diff, after the design's mixer
@@ -730,4 +732,8 @@ def run_scenario(scenario: str, start: str, state: StartState, args, flight: For
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:  # the SITL view's Abort (SIGINT): the log and plots are already written
+        print("Aborted.")
+        sys.exit(ABORTED_EXIT_CODE)

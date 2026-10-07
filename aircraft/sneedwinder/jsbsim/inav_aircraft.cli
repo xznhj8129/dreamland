@@ -1,0 +1,17 @@
+# quadrocketbuilder export of 62mm Sneedwinder: fixed-wing, motors on throttle; servo mix from the
+# control roles, signs from each control's computed moments.
+set throttle_idle = 8
+mixer_profile 1
+set platform_type = AIRPLANE
+mmix reset
+mmix 0 1.000 +0.000 +0.000 +0.000    # motor 1 tail, cw
+smix reset
+smix 0 0 1 -100 0 -1    # S1 pitch: C1 canards panel 1
+smix 1 0 2 100 0 -1    # S1 yaw: C1 canards panel 1
+smix 2 1 1 -100 0 -1    # S2 pitch: C4 canards panel 2
+smix 3 1 2 -100 0 -1    # S2 yaw: C4 canards panel 2
+smix 4 2 1 -100 0 -1    # S3 pitch: C2 canards panel 3
+smix 5 2 2 -100 0 -1    # S3 yaw: C2 canards panel 3
+smix 6 3 1 -100 0 -1    # S4 pitch: C3 canards panel 4
+smix 7 3 2 100 0 -1    # S4 yaw: C3 canards panel 4
+smix 8 4 0 -100 0 -1    # S5 roll: C5 sagwing panel 1, C6 sagwing panel 3, C7 sagwing panel 4 (reversed), C8 sagwing panel 2 (reversed)

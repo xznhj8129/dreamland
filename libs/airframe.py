@@ -26,7 +26,7 @@ from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS, check_profile, normali
 SCHEMA = "airframe/2"
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 PARTS_DIR = DATA_DIR / "parts"  # the part library: one <category>.json per category
-SPECS_PATH = DATA_DIR / "specs.json"
+PRESETS_DIR = DATA_DIR / "presets"  # size presets: one <name>.json each, in the aircraft definition's own form
 PARTS_DIMENSION_UNIT_M = 0.001  # part library battery dimensions are in mm
 INCH_M = 0.0254
 PROP_MASS_SCALING_EXPONENT = 3.0  # a prop outside data/parts/prop.json's listed sizes: geometrically similar blades, mass ~ diameter^3
@@ -97,11 +97,25 @@ class EndProfile:
 
 @dataclass(frozen=True)
 class Joints:
+    """The seam at every cut, where the sections butt: a coupler (or a male spigot) of coupler_wall_m slides
+    insertion_depth_m into a socket in each female end, with fit_clearance_m radial play (also round rods and spars
+    through it). A socket leaves socket_wall_m of the section's skin over the coupler (bored to the outer surface less
+    socket_wall_m), whatever the section's wall elsewhere. count radial screw holes per section end, hole_edge_dist_m
+    from the cut, evenly round the axis from hole_angle_offset_deg (from +y)."""
     type: str
-    count: int
+    count: int  # screws per section end
     screw: str
     insertion_depth_m: float
+    coupler_wall_m: float
+    fit_clearance_m: float
+    socket_wall_m: float
+    hole_edge_dist_m: float
+    hole_diameter_m: float
+    hole_angle_offset_deg: float
     coupler_mass_kg: float | None  # weighed mass of one coupler; None = not counted yet
+
+    def hole_angles_deg(self) -> tuple[float, ...]:
+        return tuple(self.hole_angle_offset_deg + 360.0 * index / self.count for index in range(self.count))
 
 
 @dataclass(frozen=True)
@@ -179,6 +193,44 @@ class ControlSurface:
 
 
 @dataclass(frozen=True)
+class CarryThrough:
+    """The wing carry-through: a printed web inside the tube, one piece with it and the panel roots, that the spars run
+    through. One arm per panel along its spar line, stem_width_m thick across the panel plane, from the axis to the
+    inner wall (wall_fillet_m, the fillet into it, is recorded for post-processing; nothing builds it); length_m long along the fuselage, centred between the spars, out to
+    flare_radius_m from the axis, then flaring to root_length_m where it meets the wall."""
+    stem_width_m: float
+    length_m: float
+    flare_radius_m: float
+    root_length_m: float
+    wall_fillet_m: float
+
+
+@dataclass(frozen=True)
+class Spars:
+    """Straight rods through every panel of a set along its span, in the chord plane: from where the panel's span line
+    passes closest to the fuselage axis (through the body, into the mirror panel) out to the tip. The first is x_offset_m
+    aft of the root leading edge along the root chord, each further one spacing_m aft of it. Where the spar lines of
+    several panel pairs cross (X, +), the first panel's pair runs through; the others stop at it."""
+    material: str  # data/parts/material.json
+    diameter_m: float
+    count: int  # per panel
+    spacing_m: float
+    x_offset_m: float
+    carry_through: CarryThrough | None  # None = the rods only
+
+
+@dataclass(frozen=True)
+class RootBase:
+    """The base a panel's root sits on, to be blended into the body. Recorded only; nothing builds it yet."""
+    length_m: float
+    width_m: float
+    height_m: float
+    forward_offset_m: float
+    leading_cut_m: float
+    trailing_cut_m: float
+
+
+@dataclass(frozen=True)
 class Surface:
     name: str
     x_root_le_m: float
@@ -196,6 +248,8 @@ class Surface:
     airfoil: str
     mass_kg: float | None  # whole set; None = computed from geometry
     control: ControlSurface | None  # every panel of the set carries one; None = fixed surface
+    spars: Spars | None  # None = no spars
+    root_base: RootBase | None  # None = none (not built yet either way)
 
 
 @dataclass(frozen=True)
@@ -325,18 +379,17 @@ class PresetCad:
     quadrants: int
     quadrant_offset_deg: float
     coupler_types: tuple[str, ...]
-    coupler_inner_diameter_m: float
-    coupler_outer_diameter_m: float
-    hole_edge_dist_m: float
 
 
 @dataclass(frozen=True)
 class Preset:
-    """A tube size standard (data/specs.json presets): the fuselage blocks it fills in, the limits it checks, CAD data."""
+    """A size preset (data/presets/<name>.json): the fuselage blocks it fills in, the spars a surface set starts with,
+    the limits it checks, CAD data."""
     name: str
     section: BodySection
     joints: Joints
     reinforcement: RodPattern | None  # None = no rods
+    spars: Spars | None  # None = none to start from
     limits: PresetLimits | None  # None = nothing checked
     cad: PresetCad | None
 
@@ -447,10 +500,28 @@ def _joints(data: dict, path: str) -> Joints:
         count=int(fields.number("count", minimum=1)),
         screw=fields.text("screw"),
         insertion_depth_m=fields.positive("insertion_depth_m"),
+        coupler_wall_m=fields.positive("coupler_wall_m"),
+        fit_clearance_m=fields.number("fit_clearance_m", minimum=0.0),
+        socket_wall_m=fields.positive("socket_wall_m"),
+        hole_edge_dist_m=fields.positive("hole_edge_dist_m"),
+        hole_diameter_m=fields.positive("hole_diameter_m"),
+        hole_angle_offset_deg=fields.number("hole_angle_offset_deg"),
         coupler_mass_kg=None if "coupler_mass_kg" not in fields.data else fields.number("coupler_mass_kg", minimum=0.0, exclusive=True),
     )
     fields.done()
+    if joints.hole_edge_dist_m + joints.hole_diameter_m / 2.0 > joints.insertion_depth_m:
+        raise AirframeError(f"{fields.at('hole_edge_dist_m')}: screw holes {joints.hole_edge_dist_m} m from the section end (diameter {joints.hole_diameter_m}) "
+                            f"miss the coupler, which reaches {joints.insertion_depth_m} m in")
     return joints
+
+
+def _check_joints_fit(joints: Joints, section: BodySection, path: str) -> None:
+    """A socket is bored out of the section's wall, never thicker than it; the coupler must leave a bore inside it."""
+    if joints.socket_wall_m > section.wall_radial_m:
+        raise AirframeError(f"{path}.socket_wall_m: {joints.socket_wall_m} is thicker than the section wall {section.wall_radial_m}")
+    inner = min(section.width_m, section.height_m) / 2.0 - joints.socket_wall_m - joints.fit_clearance_m - joints.coupler_wall_m
+    if inner <= 0.0:
+        raise AirframeError(f"{path}.coupler_wall_m: {joints.coupler_wall_m} with {joints.fit_clearance_m} clearance fills the whole socket")
 
 
 def _rod_pattern(fields: _Fields, section: BodySection, parts_data: dict) -> RodPattern:
@@ -504,6 +575,7 @@ def _fuselage(data: dict, path: str, parts_data: dict) -> Fuselage:
             raise AirframeError(f"{path}.{end_name}: {error}") from error
 
     joints = _joints(fields.required("joints"), fields.at("joints"))
+    _check_joints_fit(joints, section, fields.at("joints"))
     reinforcement_data = fields.optional("reinforcement", None)
     reinforcement = None if reinforcement_data is None else _reinforcement(reinforcement_data, fields.at("reinforcement"), section, length_m, parts_data)
 
@@ -573,11 +645,63 @@ def _control(data: dict, path: str, panel_count: int) -> ControlSurface:
     )
 
 
-def _surface(data: dict, path: str, fuselage_length_m: float) -> Surface:
+def _carry_through(data: dict, path: str) -> CarryThrough:
+    fields = _Fields(data, path)
+    carry = CarryThrough(
+        stem_width_m=fields.positive("stem_width_m"),
+        length_m=fields.positive("length_m"),
+        flare_radius_m=fields.number("flare_radius_m", minimum=0.0),
+        root_length_m=fields.positive("root_length_m"),
+        wall_fillet_m=fields.number("wall_fillet_m", minimum=0.0),
+    )
+    fields.done()
+    if carry.root_length_m < carry.length_m:
+        raise AirframeError(f"{fields.at('root_length_m')}: {carry.root_length_m} is shorter than length_m {carry.length_m}")
+    return carry
+
+
+def _spars(data: dict, path: str, parts_data: dict) -> Spars:
+    fields = _Fields(data, path)
+    carry = fields.optional("carry_through", None)
+    spars = Spars(
+        material=fields.text("material"),
+        diameter_m=fields.positive("diameter_m"),
+        count=int(fields.number("count", minimum=1)),
+        spacing_m=fields.number("spacing_m", minimum=0.0),
+        x_offset_m=fields.number("x_offset_m", minimum=0.0),
+        carry_through=None if carry is None else _carry_through(carry, f"{path}.carry_through"),
+    )
+    fields.done()
+    if spars.carry_through is not None and spars.carry_through.stem_width_m <= spars.diameter_m:
+        raise AirframeError(f"{fields.at('carry_through')}.stem_width_m: {spars.carry_through.stem_width_m} does not hold spars of {spars.diameter_m}")
+    if spars.material not in parts_data["material"]:
+        raise AirframeError(f"{fields.at('material')}: {spars.material!r} not in data/parts/material.json")
+    if spars.count > 1 and spars.spacing_m <= spars.diameter_m:
+        raise AirframeError(f"{fields.at('spacing_m')}: {spars.spacing_m} does not clear spars of {spars.diameter_m}")
+    return spars
+
+
+def _root_base(data: dict, path: str) -> RootBase:
+    fields = _Fields(data, path)
+    base = RootBase(
+        length_m=fields.number("length_m", minimum=0.0),
+        width_m=fields.number("width_m", minimum=0.0),
+        height_m=fields.number("height_m", minimum=0.0),
+        forward_offset_m=fields.number("forward_offset_m"),
+        leading_cut_m=fields.number("leading_cut_m", minimum=0.0),
+        trailing_cut_m=fields.number("trailing_cut_m", minimum=0.0),
+    )
+    fields.done()
+    return base
+
+
+def _surface(data: dict, path: str, fuselage_length_m: float, parts_data: dict) -> Surface:
     fields = _Fields(data, path)
     mass = fields.optional("mass_kg", None)
     layout = fields.choice("layout", LAYOUTS)
     control = fields.optional("control", None)
+    spars = fields.optional("spars", None)
+    root_base = fields.optional("root_base", None)
     surface = Surface(
         name=fields.text("name"),
         x_root_le_m=fields.number("x_root_le_m", minimum=0.0),
@@ -595,6 +719,8 @@ def _surface(data: dict, path: str, fuselage_length_m: float) -> Surface:
         airfoil=fields.text("airfoil"),
         mass_kg=None if mass is None else fields.number("mass_kg", minimum=0.0, exclusive=True, value=mass),
         control=None if control is None else _control(control, f"{path}.control", LAYOUT_PANEL_COUNTS[layout]),
+        spars=None if spars is None else _spars(spars, f"{path}.spars", parts_data),
+        root_base=None if root_base is None else _root_base(root_base, f"{path}.root_base"),
     )
     fields.done()
     if not -1.0 <= surface.root_offset <= 1.0:
@@ -912,10 +1038,13 @@ def _limit_range(fields: _Fields, key: str) -> tuple[float, float]:
 
 
 def _preset(data: dict, name: str, parts_data: dict) -> Preset:
-    fields = _Fields(data, f"data/specs.json presets.{name}")
+    fields = _Fields(data, f"data/presets/{name}.json")
     section = _body_section(fields.required("section"), fields.at("section"))
     joints = _joints(fields.required("joints"), fields.at("joints"))
-    reinforcement = limits = cad = None
+    _check_joints_fit(joints, section, fields.at("joints"))
+    reinforcement = limits = cad = spars = None
+    if "spars" in fields.data:
+        spars = _spars(fields.required("spars"), fields.at("spars"), parts_data)
     if "reinforcement" in fields.data:
         rod_fields = _Fields(fields.required("reinforcement"), fields.at("reinforcement"))
         reinforcement = _rod_pattern(rod_fields, section, parts_data)
@@ -937,20 +1066,15 @@ def _preset(data: dict, name: str, parts_data: dict) -> Preset:
             quadrants=int(cad_fields.number("quadrants", minimum=1)),
             quadrant_offset_deg=cad_fields.number("quadrant_offset_deg"),
             coupler_types=tuple(coupler_types),
-            coupler_inner_diameter_m=cad_fields.positive("coupler_inner_diameter_m"),
-            coupler_outer_diameter_m=cad_fields.positive("coupler_outer_diameter_m"),
-            hole_edge_dist_m=cad_fields.positive("hole_edge_dist_m"),
         )
         cad_fields.done()
     fields.done()
-    return Preset(name=name, section=section, joints=joints, reinforcement=reinforcement, limits=limits, cad=cad)
+    return Preset(name=name, section=section, joints=joints, reinforcement=reinforcement, spars=spars, limits=limits, cad=cad)
 
 
-def presets_from_specs(parts_data: dict) -> dict[str, Preset]:
-    """The size presets in data/specs.json, validated."""
-    with open(SPECS_PATH, "r") as file:
-        presets = json.load(file)["presets"]
-    return {name: _preset(data, name, parts_data) for name, data in presets.items()}
+def load_presets(parts_data: dict) -> dict[str, Preset]:
+    """The size presets in data/presets/, validated."""
+    return {path.stem: _preset(json.loads(path.read_text()), path.stem, parts_data) for path in sorted(PRESETS_DIR.glob("*.json"))}
 
 
 def _fuselage_section(data: dict, path: str) -> FuselageSection:
@@ -974,9 +1098,9 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     preset_name = fields.optional("preset", None)
     preset = None
     if preset_name is not None:
-        presets = presets_from_specs(parts_data)
+        presets = load_presets(parts_data)
         if preset_name not in presets:
-            raise AirframeError(f"{fields.at('preset')}: {preset_name!r} not in data/specs.json presets {sorted(presets)}")
+            raise AirframeError(f"{fields.at('preset')}: {preset_name!r} not in data/presets/ {sorted(presets)}")
         preset = presets[preset_name]
     powered, vtol, tailsitter = fields.flag("powered"), fields.flag("vtol"), fields.flag("tailsitter")
     if tailsitter and not vtol:
@@ -1012,12 +1136,13 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     fuselage = _fuselage(fields.required("fuselage"), fields.at("fuselage"), parts_data)
 
     surfaces = tuple(
-        _surface(surface_data, f"{fields.at('surfaces')}[{index}]", fuselage.length_m)
+        _surface(surface_data, f"{fields.at('surfaces')}[{index}]", fuselage.length_m, parts_data)
         for index, surface_data in enumerate(fields.required("surfaces"))
     )
     unweighed = [surface.name for surface in surfaces if surface.mass_kg is None]
+    unweighed += [f"{surface.name} carry-through" for surface in surfaces if surface.spars is not None and surface.spars.carry_through is not None]
     if unweighed and print_settings.bulk_density_kg_m3 is None:
-        raise AirframeError(f"{print_fields.at('bulk_density_kg_m3')}: required to compute the mass of surfaces {unweighed}")
+        raise AirframeError(f"{print_fields.at('bulk_density_kg_m3')}: required to compute the mass of {unweighed}")
     volumes = tuple(
         _volume(volume_data, f"{fields.at('volumes')}[{index}]")
         for index, volume_data in enumerate(fields.required("volumes"))

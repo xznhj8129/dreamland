@@ -20,3 +20,5 @@
 - Judge a stick-step response by its extreme during the step, not the value at its end: a strong yaw that swung back read as "wrong way".
 - Every SITL run flies a written diff file. Never compose FC settings from strings in code: templates in data/inav/, the composed diff in the project's inav/generated/ (testglide could not arm at 40 deg pitch and the setting to change was invisible).
 - The GUI never forces an order of operations, never adds things the owner did not ask for, and never refuses an edit with a guard: an incomplete definition is a definition error in the Log tab. Errors go to the Log tab, never a window or a text blurb in a panel (ticking powered on testglide silently unticked because no battery part existed).
+- Old CAD/FCStd files and earlier repos are mixed-and-matched experiments, not a source of values. Never mine them for dimensions; required geometry goes into the schema and the owner gives the numbers.
+- Ask questions as an explicit numbered list at the end, only for what is not yet decided; never re-ask what the owner has answered.

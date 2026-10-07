@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 import aerosandbox as asb
 
-from libs.airframe import AXES, Airframe, AirframeError, Mount, PlacedPart, Reinforcement, Surface, Volume
+from libs.airframe import AXES, Airframe, AirframeError, CarryThrough, Mount, PlacedPart, Reinforcement, Surface, Volume
 from libs.pointed_shapes import sample_pointed_profile
 
 END_PROFILE_SAMPLES = 14
@@ -31,6 +31,7 @@ PERIMETER_SAMPLES = 72
 SPAN_STRIPS = 64
 ROOT_CHORD_SAMPLES = 16  # body radius samples under a root chord for the equivalent aero root
 PROP_SHAFT_LEN_M = 0.015
+CARRY_THROUGH_FLARE_SAMPLES = 24  # points along a carry-through flare or wall fillet
 MAX_RANGED_MASSES = 12  # CG range is found by enumerating min/max of every ranged mass
 STANDARD_GRAVITY_M_S2 = 9.80665
 GRAMS_FORCE_PER_NEWTON = 1000.0 / STANDARD_GRAVITY_M_S2
@@ -97,10 +98,42 @@ class SurfaceSet:
     planform_area_m2: float
     mac_m: float
     body_half_extent_m: float  # mean body radius under the root chord (Barrowman)
-    exposed_x_root_le_m: float  # trapezoid outside the body, for Barrowman
+    exposed_x_root_le_m: float  # trapezoid outside the body, for Barrowman; where the set meets the body, which places it
+                                # (its mass, spars, motors and CAD) in a fuselage section
     exposed_span_m: float
     exposed_chord_root_m: float
     exposed_sweep_len_m: float
+
+
+@dataclass(frozen=True)
+class SparLine:
+    """One spar rod (Surface.spars) as a straight line, from its inner end out to the panel tip."""
+    surface: str
+    panel_index: int
+    start: Vec  # the rod's inner end
+    end: Vec
+    diameter_m: float
+    through: bool  # runs on in line into the opposite panel (else it stops where it meets another)
+    joined_hole_start: Vec  # where its hole starts inside a carry-through: joining the holes it meets with no sliver between
+                            # them (a through pair overlapping half a hole, a spar that stops at a through spar on its
+                            # line, two that stop at each other mitred like the arms)
+
+
+@dataclass(frozen=True)
+class CarryThroughArm:
+    """One carry-through arm: from start (where it meets the other arms, mitred past that point) along direction to the
+    inner wall, with its profiles in its own frame (across, along)."""
+    surface: str
+    panel_index: int
+    start: Vec
+    direction: Vec  # along the arm (the panel's span direction)
+    across: Vec  # across the arm, in the stem width (the panel normal's part across the span)
+    wall_distance_m: float  # from start to the inner wall along direction
+    wall_half_extents_m: tuple[float, float]  # the inner wall at the arm's station (half width, half height; the body's shape)
+    section_shape: float  # the body's superellipse exponent
+    meet_m: float  # from start to where it meets the other arms (the mitre)
+    side_profile: tuple[tuple[float, float], ...]  # (x offset from start, distance along direction), closed
+    front_profile: tuple[tuple[float, float], ...]  # (offset across, distance along direction), closed
 
 
 @dataclass(frozen=True)
@@ -125,7 +158,8 @@ class MotorPlacement:
     bell_length_m: float
     pod_stations: tuple[tuple[float, float], ...]  # (x_m, radius_m) on the motor's axis line, nose to tail
     spin: str  # "cw" / "ccw" seen from where the thrust points (from above in hover)
-    mount_x_m: float  # where it is attached to the fuselage: its surface set's root leading edge, the nose (0) or the tail (length)
+    mount_x_m: float  # where it is attached to the fuselage: where its surface set meets the body (exposed root LE), the nose (0) or the tail (length)
+    panel: Panel | None  # the surface panel it sits on; None on the nose or tail
 
 
 @dataclass(frozen=True)
@@ -137,7 +171,7 @@ class MassPoint:
     computed: bool  # True when derived from geometry rather than given
     estimate_kg: float | None  # mass estimated from geometry and print settings, shown next to a weighed value; None = no estimate
     inertia_per_kg: Inertia  # about the point's own centroid, from its shape
-    attached_x_m: float | None = None  # where it is attached to the fuselage (surface set: root LE; motor and prop: their mount), which places it in a fuselage section; None = its own x
+    attached_x_m: float | None = None  # where it is attached to the fuselage (surface set: where it meets the body, its exposed root LE; motor and prop: their mount), which places it in a fuselage section; None = its own x
 
 
 @dataclass(frozen=True)
@@ -162,8 +196,10 @@ class Reference:
 
 @dataclass(frozen=True)
 class WireRoutes:
-    """High-current wiring as drawn and as modelled: along the axes (x, then y, then z), from the battery part to the
-    ESC part and from the ESC part to each motor (motor order)."""
+    """High-current wiring as drawn and as modelled, from the battery part to the ESC part along the axes (x, then y,
+    then z), and from the ESC part to each motor (motor order): to a motor on a surface panel inside the panel (along x
+    to the panel root's mid-chord station, out to the root, along the mid-chord to the motor's span station, then to the
+    motor); to a nose or tail motor along the axes."""
     battery: tuple[Vec, ...]
     motors: tuple[tuple[Vec, ...], ...]
 
@@ -175,6 +211,8 @@ class ResolvedAirframe:
     surfaces: tuple[SurfaceSet, ...]
     motors: tuple[MotorPlacement, ...]
     controls: tuple[ControlPlacement, ...]
+    spars: tuple[SparLine, ...]
+    carry_through: tuple[CarryThroughArm, ...]
     mass_points: tuple[MassPoint, ...]
     sections: tuple[SectionMass, ...]
     mass_kg: tuple[float, float]
@@ -429,6 +467,260 @@ def deflected_outline(control: ControlPlacement, deflection_deg: float) -> tuple
     return tuple(rotated)
 
 
+def chord_direction(panel: Panel) -> Vec:
+    """Unit vector along the chord, leading edge to trailing edge (incidence turns it towards the normal)."""
+    incidence = math.radians(panel.incidence_deg)
+    return tuple((math.cos(incidence) if axis == 0 else 0.0) - math.sin(incidence) * panel.normal[axis] for axis in range(3))
+
+
+def closest_approach(origin_a: Vec, dir_a: Vec, origin_b: Vec, dir_b: Vec) -> tuple[float, float, float] | None:
+    """(parameter along a, parameter along b, distance) of the closest points of two lines (unit directions); None when
+    they are parallel."""
+    w = tuple(a - b for a, b in zip(origin_a, origin_b))
+    b_dot = dot(dir_a, dir_b)
+    denominator = 1.0 - b_dot * b_dot
+    if denominator < 1e-12:
+        return None
+    d, e = dot(dir_a, w), dot(dir_b, w)
+    t_a = (b_dot * e - d) / denominator
+    t_b = (e - b_dot * d) / denominator
+    gap = tuple(oa + t_a * da - ob - t_b * db for oa, da, ob, db in zip(origin_a, dir_a, origin_b, dir_b))
+    return t_a, t_b, math.sqrt(dot(gap, gap))
+
+
+def spar_plane_line(panel: Panel, along_m: float, span_m: float) -> tuple[Vec, Vec]:
+    """(start, end) of a line along a panel's span in its chord plane, along_m aft of the root LE along the root chord:
+    from where it passes closest to the fuselage axis out to the tip."""
+    point = tuple(le + along_m * c for le, c in zip(panel.attach_le, chord_direction(panel)))
+    to_axis = -dot((0.0, point[1], point[2]), panel.span_dir)
+    return tuple(p + to_axis * d for p, d in zip(point, panel.span_dir)), tuple(p + span_m * d for p, d in zip(point, panel.span_dir))
+
+
+def through_partner(surface_set: SurfaceSet, along_m: float) -> int | None:
+    """The panel whose spar line is the first panel's own, continued (opposite and in line); None if there is none."""
+    first = surface_set.panels[0]
+    start, _end = spar_plane_line(first, along_m, surface_set.definition.span_m)
+    for panel in surface_set.panels[1:]:
+        other, _ = spar_plane_line(panel, along_m, surface_set.definition.span_m)
+        if dot(panel.span_dir, first.span_dir) < -1.0 + 1e-9 and math.dist(other, start) < 1e-9:
+            return panel.index
+    return None
+
+
+def build_spars(surfaces: tuple[SurfaceSet, ...], clearance_m: float) -> tuple[SparLine, ...]:
+    """Spar lines. Where the first panel's spar line runs on in line into the opposite panel, that pair's spars run
+    through, tip to tip. Every other spar runs from its tip inward and stops where it meets another (by closest approach
+    within a diameter): clearance_m clear of a through spar, or of the plane midway between itself and a spar that also
+    stops there (dihedral, radially symmetric sets that are not in line)."""
+    lines = []
+    for surface_set in surfaces:
+        spars = surface_set.definition.spars
+        if spars is None:
+            continue
+        radius = spars.diameter_m / 2.0
+        hole_radius = radius + clearance_m
+        for index in range(spars.count):
+            along = spars.x_offset_m + index * spars.spacing_m
+            partner = through_partner(surface_set, along)
+            through = {0, partner} if partner is not None else set()
+            raw = {panel.index: (*spar_plane_line(panel, along, surface_set.definition.span_m), panel.span_dir) for panel in surface_set.panels}
+            for panel_index, (start, end, direction) in raw.items():
+                if panel_index in through:
+                    lines.append(SparLine(surface_set.name, panel_index, start, end, spars.diameter_m, True, tuple(p - hole_radius * d for p, d in zip(start, direction))))
+                    continue
+                stops = []  # (stop parameter, hole start parameter)
+                for other_index, (other_start, _other_end, other_direction) in raw.items():
+                    if other_index == panel_index:
+                        continue
+                    meeting = closest_approach(start, direction, other_start, other_direction)
+                    if meeting is None or meeting[2] >= spars.diameter_m:
+                        continue
+                    if other_index in through:  # clear of the through spar's surface, whatever the angle
+                        crossing = math.acos(min(1.0, abs(dot(direction, other_direction))))
+                        stops.append((meeting[0] + (2.0 * radius + clearance_m - radius * (1.0 - math.cos(crossing))) / math.sin(crossing), meeting[0]))
+                    else:  # both stop: each clear of the plane midway between them
+                        half_angle = math.acos(max(-1.0, min(1.0, dot(direction, other_direction)))) / 2.0
+                        stops.append((meeting[0] + (clearance_m / 2.0 + radius * math.cos(half_angle)) / math.sin(half_angle),
+                                      meeting[0] - hole_radius / math.tan(half_angle)))
+                stop, hole_start = max(stops) if stops else (0.0, 0.0)
+                lines.append(SparLine(surface_set.name, panel_index, tuple(p + stop * d for p, d in zip(start, direction)), end, spars.diameter_m, False,
+                                      tuple(p + hole_start * d for p, d in zip(start, direction))))
+    return tuple(sorted(lines, key=lambda line: (line.surface, line.panel_index)))
+
+
+def inner_wall_distance(body: Body, wall_m: float, x_m: float, start: Vec, direction: Vec) -> float:
+    """Distance from start along direction (y-z) to the body's inner wall at station x, by bisection."""
+    half_w, half_h = body_half_extents(body, x_m)
+    inner_w, inner_h = half_w - wall_m, half_h - wall_m
+
+    def outside(t: float) -> bool:
+        y, z = start[1] + t * direction[1], start[2] + t * direction[2]
+        return math.hypot(y, z) > superellipse_radius(inner_w, inner_h, body.shape, math.atan2(z, y))
+
+    low, high = 0.0, 2.0 * max(inner_w, inner_h)
+    for _ in range(60):
+        middle = (low + high) / 2.0
+        low, high = (low, middle) if outside(middle) else (middle, high)
+    return low
+
+
+def carry_through_side_profile(carry: CarryThrough, meet_m: float, wall_distance_m: float, reach_m: float) -> tuple[tuple[float, float], ...]:
+    """Side view of one arm, closed, in (x offset, distance along the arm) from its start: length_m long out to
+    flare_radius_m beyond where it meets the other arms (meet_m along it), flaring (a quarter ellipse, concave) to
+    root_length_m at the wall, then straight on to reach_m (into the wall, to fuse with it)."""
+    flare_start = min(meet_m + carry.flare_radius_m, wall_distance_m)
+    flare = [(carry.length_m / 2.0 + (carry.root_length_m - carry.length_m) / 2.0 * (1.0 - math.cos(a)),
+              flare_start + (wall_distance_m - flare_start) * math.sin(a))
+             for a in (math.pi / 2.0 * k / CARRY_THROUGH_FLARE_SAMPLES for k in range(CARRY_THROUGH_FLARE_SAMPLES + 1))]
+    right = [(carry.length_m / 2.0, 0.0), *flare, (carry.root_length_m / 2.0, reach_m)]
+    return tuple(right + [(-u, r) for u, r in reversed(right)])
+
+
+def to_arm_frame(start: Vec, across: Vec, direction: Vec, y: float, z: float) -> tuple[float, float]:
+    """(across, along) of a point of the arm's cross-section plane, from the arm's start."""
+    dy, dz = y - start[1], z - start[2]
+    return dy * across[1] + dz * across[2], dy * direction[1] + dz * direction[2]
+
+
+def carry_through_front_profile(carry: CarryThrough, start: Vec, across: Vec, direction: Vec, wall_half_extents_m: tuple[float, float], shape: float,
+                                cap_offset_m: float) -> tuple[tuple[float, float], ...]:
+    """Front view of one arm, closed, in (offset across, distance along the arm) from its start: stem_width_m wide, its
+    sides straight into the inner wall (the body's section at wall_half_extents_m, any shape), then across along the wall
+    grown by cap_offset_m (into the wall). The wall fillets (wall_fillet_m) are left to post-processing."""
+    half = carry.stem_width_m / 2.0
+    half_w, half_h = wall_half_extents_m
+
+    def point(v: float, r: float) -> tuple[float, float]:
+        return start[1] + v * across[1] + r * direction[1], start[2] + v * across[2] + r * direction[2]
+
+    def side(sign: float) -> tuple[float, float]:
+        """Where one side (sign +1 the +across side) meets the wall: its distance along the arm and its polar angle about
+        the body axis."""
+        low, high = 0.0, 4.0 * max(half_w, half_h)
+        for _ in range(60):
+            middle = (low + high) / 2.0
+            y, z = point(sign * half, middle)
+            inside = math.hypot(y, z) < superellipse_radius(half_w, half_h, shape, math.atan2(z, y))
+            low, high = (middle, high) if inside else (low, middle)
+        y, z = point(sign * half, low)
+        return low, math.atan2(z, y)
+
+    right_r, right_angle = side(1.0)
+    left_r, left_angle = side(-1.0)
+    arm_angle = math.atan2(direction[2], direction[1])
+    right_angle = arm_angle + math.remainder(right_angle - arm_angle, 2.0 * math.pi)  # the arc through the arm's direction
+    left_angle = arm_angle + math.remainder(left_angle - arm_angle, 2.0 * math.pi)
+    cap = []
+    for a in (right_angle + (left_angle - right_angle) * k / CARRY_THROUGH_FLARE_SAMPLES for k in range(CARRY_THROUGH_FLARE_SAMPLES + 1)):
+        r = superellipse_radius(half_w + cap_offset_m, half_h + cap_offset_m, shape, a)
+        cap.append(to_arm_frame(start, across, direction, r * math.cos(a), r * math.sin(a)))
+    return tuple([(half, 0.0), (half, right_r), *cap, (-half, left_r), (-half, 0.0)])
+
+
+def polygon_area(points: tuple[tuple[float, float], ...]) -> float:
+    return abs(sum(a[0] * b[1] - b[0] * a[1] for a, b in zip(points, points[1:] + points[:1]))) / 2.0
+
+
+def build_carry_through(surfaces: tuple[SurfaceSet, ...], body: Body, wall_m: float) -> tuple[CarryThroughArm, ...]:
+    """One arm per panel of every surface set whose spars have a carry-through, along the spar plane midway between its
+    spars, from where that line meets the other panels' (the axis for a radial set, the middle plane for a dihedral pair;
+    else where it passes closest to the axis), mitred past it, to the inner wall."""
+    arms = []
+    for surface_set in surfaces:
+        spars = surface_set.definition.spars
+        if spars is None or spars.carry_through is None:
+            continue
+        along = spars.x_offset_m + (spars.count - 1) * spars.spacing_m / 2.0
+        mid_lines = {panel.index: spar_plane_line(panel, along, surface_set.definition.span_m)[0] for panel in surface_set.panels}
+        for panel in surface_set.panels:
+            meetings = []  # (parameter along this arm, the other arm's direction)
+            for other in surface_set.panels:
+                if other.index == panel.index:
+                    continue
+                meeting = closest_approach(mid_lines[panel.index], panel.span_dir, mid_lines[other.index], other.span_dir)
+                if meeting is not None and meeting[2] < spars.carry_through.stem_width_m:
+                    meetings.append((meeting[0], other.span_dir))
+            meet = max((t for t, _ in meetings), default=0.0)  # the first meeting coming in from the tip
+            # mitre: run on past the meeting until the outer edges of the arms meeting there cross
+            angles = [math.acos(max(-1.0, min(1.0, dot(panel.span_dir, other)))) for t, other in meetings if abs(t - meet) < 1e-9]
+            mitre = max((spars.carry_through.stem_width_m / 2.0 / math.tan(angle / 2.0) for angle in angles if 1e-6 < angle < math.pi - 1e-9), default=0.0)
+            start = tuple(p + (meet - mitre) * d for p, d in zip(mid_lines[panel.index], panel.span_dir))
+            across = unit(cross(panel.span_dir, (1.0, 0.0, 0.0)))
+            wall_distance = inner_wall_distance(body, wall_m, start[0], start, panel.span_dir)
+            half_w, half_h = body_half_extents(body, start[0])
+            wall_half = (half_w - wall_m, half_h - wall_m)
+            arms.append(CarryThroughArm(
+                surface=surface_set.name, panel_index=panel.index, start=start, direction=panel.span_dir, across=across, wall_distance_m=wall_distance,
+                wall_half_extents_m=wall_half, section_shape=body.shape, meet_m=mitre,
+                side_profile=carry_through_side_profile(spars.carry_through, mitre, wall_distance, wall_distance),
+                front_profile=carry_through_front_profile(spars.carry_through, start, across, panel.span_dir, wall_half, body.shape, 0.0),
+            ))
+    return tuple(arms)
+
+
+def carry_through_mass_points(surfaces: tuple[SurfaceSet, ...], arms: tuple[CarryThroughArm, ...], airframe: Airframe) -> list[MassPoint]:
+    """The printed carry-through of each surface set, attached with the set: side profile x stem width per arm (the fillets
+    into the wall and the overlap of the arms at the axis are left out) x print bulk density. None where the section it
+    sits in is weighed (its empty mass includes it)."""
+    points = []
+    for surface_set in surfaces:
+        own = [arm for arm in arms if arm.surface == surface_set.name]
+        if not own:
+            continue
+        section = airframe.sections.per_section[section_index(airframe.sections.cuts_m, surface_set.exposed_x_root_le_m)]
+        if section.empty_mass_kg is not None:
+            continue
+        carry = surface_set.definition.spars.carry_through
+        pieces = []
+        for arm in own:
+            volume = polygon_area(arm.side_profile) * carry.stem_width_m
+            centre = tuple(s + arm.wall_distance_m / 2.0 * d for s, d in zip(arm.start, arm.direction))
+            pieces.append((volume * airframe.print.bulk_density_kg_m3, centre, NO_INERTIA))
+        mass, centroid, inertia = combine_inertia(pieces)
+        points.append(MassPoint(f"carry-through {surface_set.name}", "structure", centroid, (mass, mass), True, mass, per_unit(inertia, mass),
+                                surface_set.exposed_x_root_le_m))
+    return points
+
+
+def spar_mass_points(surfaces: tuple[SurfaceSet, ...], lines: tuple[SparLine, ...], parts_data: dict) -> list[MassPoint]:
+    """One mass point per surface set's spars, which go with the set (its root LE places it in a section)."""
+    points = []
+    for surface_set in surfaces:
+        spars = surface_set.definition.spars
+        rods = [line for line in lines if line.surface == surface_set.name]
+        if not rods:
+            continue
+        density = parts_data["material"][spars.material]["density_kg_m3"]
+        pieces = []
+        for line in rods:
+            length = math.dist(line.start, line.end)
+            direction = unit(tuple(b - a for a, b in zip(line.start, line.end)))
+            thin_rod = tuple(length * length / 12.0 * value for value in (
+                1.0 - direction[0] ** 2, 1.0 - direction[1] ** 2, 1.0 - direction[2] ** 2,
+                -direction[0] * direction[1], -direction[0] * direction[2], -direction[1] * direction[2]))
+            mass = math.pi * (line.diameter_m / 2.0) ** 2 * length * density
+            pieces.append((mass, tuple((a + b) / 2.0 for a, b in zip(line.start, line.end)), thin_rod))
+        mass, centroid, inertia = combine_inertia(pieces)
+        points.append(MassPoint(f"spars {surface_set.name}", "reinforcement", centroid, (mass, mass), True, mass, per_unit(inertia, mass),
+                                surface_set.exposed_x_root_le_m))
+    return points
+
+
+def spar_checks(surfaces: tuple[SurfaceSet, ...], lines: tuple[SparLine, ...]) -> list[str]:
+    """Each spar inside its panel's chord at the root and at the tip."""
+    problems = []
+    panels = {(surface_set.name, panel.index): panel for surface_set in surfaces for panel in surface_set.panels}
+    for line in lines:
+        panel = panels[(line.surface, line.panel_index)]
+        radius = line.diameter_m / 2.0
+        for where, le, te in (("root", panel.attach_le, panel.attach_te), ("tip", panel.tip_le, panel.tip_te)):
+            spar_x = line.start[0] if where == "root" else line.end[0]
+            if not min(le[0], te[0]) + radius <= spar_x <= max(le[0], te[0]) - radius:
+                problems.append(f"surface {line.surface!r} panel {line.panel_index + 1}: spar at x {spar_x * 1000:.1f} mm leaves the {where} chord "
+                                f"({le[0] * 1000:.1f}-{te[0] * 1000:.1f} mm)")
+    return problems
+
+
 def panel_strips(panel: Panel):
     """(chord_m, strip_width_m, chord-midpoint position) per spanwise strip, root to tip."""
     width = panel.span_m / SPAN_STRIPS
@@ -498,7 +790,7 @@ def surface_mass_point(surface_set: SurfaceSet, density_kg_m3: float | None) -> 
         estimate = len(surface_set.panels) * unit_section_area * definition.span_m * (cr * cr + cr * ct + ct * ct) / 3.0 * density_kg_m3
     mass = definition.mass_kg if definition.mass_kg is not None else estimate
     return MassPoint(f"surface {surface_set.name}", "surface", centroid, (mass, mass), definition.mass_kg is None, estimate, per_unit(inertia, weight),
-                     definition.x_root_le_m)
+                     surface_set.exposed_x_root_le_m)
 
 
 def shell_between(body: Body, x0: float, x1: float, wall_m: float, density_kg_m3: float) -> tuple[float, Vec, Inertia]:
@@ -631,8 +923,26 @@ def apply_complete_masses(airframe: Airframe, body: Body, points: list[MassPoint
     return [point for point in kept if point is not None], tuple(section_masses)
 
 
+def socket_checks(airframe: Airframe, body: Body) -> list[str]:
+    """A female end (a coupler or a mating spigot enters it) whose body tapers within the insertion depth below its socket
+    (the outer surface at the cut less socket_wall_m): the socket breaks through the skin."""
+    sections, joints = airframe.sections, airframe.fuselage.joints
+    problems = []
+    for index, (cut, joint) in enumerate(zip(sections.cuts_m, sections.cut_joints)):
+        ends = {"coupler": ((index, -1.0), (index + 1, 1.0)), "front_male": ((index + 1, 1.0),), "rear_male": ((index, -1.0),)}[joint]
+        socket = min(body_half_extents(body, cut)) - joints.socket_wall_m
+        for section, direction in ends:
+            depth = [cut + direction * joints.insertion_depth_m * k / ROOT_CHORD_SAMPLES for k in range(ROOT_CHORD_SAMPLES + 1)]
+            thinnest = min(min(body_half_extents(body, x)) for x in depth)
+            if thinnest <= socket:
+                problems.append(f"section {section + 1}: its {socket * 2000:.1f} mm socket at the {cut * 1000:.1f} mm cut ({joint}) breaks through the skin, "
+                                f"the body tapers to {thinnest * 2000:.1f} mm within the {joints.insertion_depth_m * 1000:.0f} mm insertion depth; "
+                                f"make that end male or move the cut")
+    return problems
+
+
 def preset_checks(airframe: Airframe) -> list[str]:
-    """The fuselage against its preset's limits (data/specs.json presets); none without a preset or limits."""
+    """The fuselage against its preset's limits (data/presets/); none without a preset or limits."""
     preset = airframe.preset
     if preset is None or preset.limits is None:
         return []
@@ -691,7 +1001,21 @@ def build_wires(airframe: Airframe, motors: tuple[MotorPlacement, ...]) -> WireR
         return None
     parts = {part.name: part for part in airframe.parts}
     battery, esc = airframe.propulsion.battery.placed.position_m, parts[airframe.propulsion.esc].position_m
-    return WireRoutes(battery=right_angle_route(battery, esc), motors=tuple(right_angle_route(esc, motor.position) for motor in motors))
+    return WireRoutes(battery=right_angle_route(battery, esc), motors=tuple(motor_route(esc, motor) for motor in motors))
+
+
+def motor_route(esc: Vec, motor: MotorPlacement) -> tuple[Vec, ...]:
+    """ESC to a motor; inside the panel for a surface motor (WireRoutes)."""
+    if motor.panel is None:
+        return right_angle_route(esc, motor.position)
+    panel = motor.panel
+    span_yz = (panel.tip_le[1] - panel.attach_le[1], panel.tip_le[2] - panel.attach_le[2])
+    span_length = math.hypot(*span_yz)
+    out_yz = (motor.position[1] - panel.attach_le[1], motor.position[2] - panel.attach_le[2])
+    fraction = min(1.0, max(0.0, (out_yz[0] * span_yz[0] + out_yz[1] * span_yz[1]) / (span_length * span_length)))
+    root = panel_point(panel, 0.0, 0.5)
+    route = [esc, (root[0], esc[1], esc[2]), root, panel_point(panel, fraction, 0.5), motor.position]
+    return tuple(point for index, point in enumerate(route) if index == 0 or math.dist(point, route[index - 1]) > 1e-9)
 
 
 def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[MotorPlacement, ...]:
@@ -699,27 +1023,27 @@ def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[
     if propulsion is None:
         return ()
     bell_len = propulsion.bell_length_m
-    placements = []  # (name, position, prop_side, pod_stations, spin, thrust_dir, mount_x)
+    placements = []  # (name, position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel)
     for mount_index, mount in enumerate(propulsion.mounts):
         if mount.on == "surface":
             surface_set = next(item for item in surfaces if item.name == mount.surface)
             positions = [
                 (f"{mount.surface} {panel.index + 1}", tuple(r + mount.span_position_m * d + (mount.x_offset_m if axis == 0 else 0.0)
-                                                            for axis, (r, d) in enumerate(zip(panel.attach_le, panel.span_dir))))
+                                                            for axis, (r, d) in enumerate(zip(panel.attach_le, panel.span_dir))), panel)
                 for panel in surface_set.panels
             ]
-            mount_x = surface_set.definition.x_root_le_m
+            mount_x = surface_set.exposed_x_root_le_m
         elif mount.on == "nose":
-            positions = [("nose", (-bell_len / 2.0, 0.0, 0.0))]
+            positions = [("nose", (-bell_len / 2.0, 0.0, 0.0), None)]
             mount_x = 0.0
         else:
-            positions = [("tail", (airframe.fuselage.length_m + bell_len / 2.0, 0.0, 0.0))]
+            positions = [("tail", (airframe.fuselage.length_m + bell_len / 2.0, 0.0, 0.0), None)]
             mount_x = airframe.fuselage.length_m
         prop_side = -1.0 if mount.direction == "tractor" else 1.0  # tractor prop ahead of the motor (towards the nose)
         tilt = math.radians(mount.thrust_axis_tilt_deg)
         thrust_dir = (-math.cos(tilt), 0.0, math.sin(tilt))
-        spins = motor_spins(mount, [position for _name, position in positions])
-        for (name, position), spin in zip(positions, spins):
+        spins = motor_spins(mount, [position for _name, position, _panel in positions])
+        for (name, position, panel), spin in zip(positions, spins):
             pod_stations = ()
             if mount.pod is not None:
                 pod_radius = mount.pod.diameter_m / 2.0
@@ -729,15 +1053,15 @@ def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[
                 curve = sample_pointed_profile(mount.pod.profile, mount.pod.curve_length_m, pod_radius, POD_PROFILE_SAMPLES)
                 stations += [(flat_end - prop_side * (mount.pod.curve_length_m - x), r) for x, r in curve[:-1]]
                 pod_stations = tuple(sorted(stations))
-            placements.append((f"motor {mount_index + 1} {name}", position, prop_side, pod_stations, spin, thrust_dir, mount_x))
+            placements.append((f"motor {mount_index + 1} {name}", position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel))
     return tuple(
         MotorPlacement(
             name=name, position=position, thrust_dir=thrust_dir,
             prop_center=tuple(p - prop_side * (bell_len / 2.0 + PROP_SHAFT_LEN_M) * t for p, t in zip(position, thrust_dir)),
             prop_radius_m=propulsion.prop_diameter_m / 2.0, bell_diameter_m=propulsion.bell_diameter_m,
-            bell_length_m=bell_len, pod_stations=pod_stations, spin=spin, mount_x_m=mount_x,
+            bell_length_m=bell_len, pod_stations=pod_stations, spin=spin, mount_x_m=mount_x, panel=panel,
         )
-        for name, position, prop_side, pod_stations, spin, thrust_dir, mount_x in placements
+        for name, position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel in placements
     )
 
 
@@ -850,6 +1174,10 @@ def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirf
     if reinforcement is not None:
         points += reinforcement_mass_points(reinforcement, airframe.sections.cuts_m, parts_data["material"][reinforcement.pattern.material]["density_kg_m3"])
     points += [surface_mass_point(surface_set, airframe.print.bulk_density_kg_m3) for surface_set in surfaces]
+    spars = build_spars(surfaces, airframe.fuselage.joints.fit_clearance_m)
+    points += spar_mass_points(surfaces, spars, parts_data)
+    carry_through = build_carry_through(surfaces, body, airframe.fuselage.section.wall_radial_m)
+    points += carry_through_mass_points(surfaces, carry_through, airframe)
     wall = airframe.fuselage.section.wall_radial_m
     points += [
         MassPoint(f"volume {volume.name}", "volume", (volume.x_m, volume.y_m, volume.z_m), volume.mass_kg, False, None, volume_inertia(volume, body, wall))
@@ -877,10 +1205,11 @@ def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirf
         cg_xs.append(center_of_mass(points, masses)[0])
 
     resolved = ResolvedAirframe(
-        airframe=airframe, body=body, surfaces=surfaces, motors=motors, controls=build_controls(surfaces), mass_points=points, sections=section_masses,
+        airframe=airframe, body=body, surfaces=surfaces, motors=motors, controls=build_controls(surfaces), spars=spars, carry_through=carry_through, mass_points=points, sections=section_masses,
         mass_kg=(sum(point.mass_kg[0] for point in points), sum(point.mass_kg[1] for point in points)),
         cg_m=center_of_mass(points, nominal), cg_x_range_m=(min(cg_xs), max(cg_xs)),
         inertia_kg_m2=combine_inertia([(mass, point.position, point.inertia_per_kg) for mass, point in zip(nominal, points)])[2],
         reference=build_reference(surfaces, body), wires=build_wires(airframe, motors),
     )
-    return resolved, volume_checks(airframe, body) + part_checks(airframe, body) + preset_checks(airframe)
+    return resolved, (volume_checks(airframe, body) + part_checks(airframe, body) + preset_checks(airframe) + socket_checks(airframe, body)
+                      + spar_checks(surfaces, spars))

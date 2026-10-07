@@ -1,6 +1,23 @@
 User added TODOs (do not remove/change unless done)
 - 1% change mouse wheel scroll over value field
-- changing xyz positions entry from abs mm to relative frac to allow scaling without one-by-one mm adjustment
+- changing xyz positions entry (which specifically, some must stay mm) from abs mm to relative frac to allow scaling without one-by-one mm adjustment
+- FC position (affects IMU)
+- SITL (rename to SIM):
+        * Re-design testing scenarios to be scripts with starting conditions, measurement points and goal/stop conditions
+        * Center pane should have a Scenario text editor where the script can be edited as python
+        * Scenario method of control for Flight Controller SITL is what a pilot would traditionally use: RC channels
+- Hatches
+- Wing spars y-offset (up/down thickness)
+- CAD export options currently stale-ish and confusing, blocking, no status bar or similar
+    - Component fused / Fused OML ~vs~ Export Step, stl, printable sections, cutaway, varsets
+- I wonder why export cutaway take so long, also for m62 lancier the main wing leading edge is invisible
+- Rounded rectangle as volume
+- Auto-conduits from wires
+- Wire placement (think drawio, horizontal/vertical)
+- Editor view (btw rename Configuration to Editor) 
+    - Angle snap to surfaces flat
+- Is it even possible to do a above-side view with 1/4 cutaway? like in plane books?
+
 
 ---
 Agent added TODOs, freeform, remove done ones
@@ -35,7 +52,7 @@ Agent added TODOs, freeform, remove done ones
         - Section shell estimate vs weighed: plain tube sections 1.03-1.21x; nose 2.9x; motor-wing section 2.6x (m62v2) and 3.5x (quadlancer62); m62v2 tail with fins 2.4x.
         - Open: m62v2 motor-wing section = section 4 (122 g, old quad-wingmount-v3 module) + qrwing-7in (4 x 25 g, old wing entries), counted as 222 g. Estimate for the one-piece print: tube 47.5 g + wings 58.6 g. Owner to confirm whether the printed piece weighs ~122 g or ~222 g.
         - Rods are `fuselage.reinforcement` (from/to x; carbon_rod 1550 kg/m^3 is a typical published density, not weighed). Real m62v2/quadlancer62 use 4 x 2.5 mm x 400 mm carbon rods (M62 preset: 8); not entered in their files yet.
-        - data/specs.json M75 suspect, carried over as written: wall (78.2 - 76.2) / 2 = 1.0 mm against its 1.5 mm minimum (M62 had the same, fixed to 1.25); coupler inner diameter 59.5 is M62's; the old id_dist 2.375 disagreed with its radial_dist.
+        - data/presets/M75.json suspect, carried over as written: wall (78.2 - 76.2) / 2 = 1.0 mm against its 1.5 mm minimum (M62 had the same, fixed to 1.25); the old id_dist 2.375 disagreed with its radial_dist. Its socket_wall_m is set to its 1.0 mm wall (the socket wall is 1.25 mm and may not exceed the wall) until M75 is fixed.
 
 - B. Geometry (found on the module model; verify on the plane-first model):
         - Incidence on unpaired vertical fins opposite in CAD vs ASB (V: bottom fin chord y -0.086 CAD, +0.087 ASB); drawing applies c*sin(aoa)*cos(roll) to all panels. Emit explicit chord/normal unit vectors per panel.
@@ -92,8 +109,17 @@ Agent added TODOs, freeform, remove done ones
         - No requirements file. Deps (aerosandbox, neuralfoil, cadquery) only present in conda env "drone".
         - docs/ui predates the plane-first GUI (Builder V3 window, Controls tab, assembly cards).
 
+- Printable sections (libs/cad.py export_sections, 2026-10-05; joint geometry picked from test3: coupler wall 4.5, clearance 0.3, socket wall 1.25 (owner), holes 6 mm in, M3 3.0 mm, 22.5 deg offset):
+        - m62v2: S03 (main-wing H, 303 mm span) larger than the 240 mm bed; tailfin (axis-rooted) root chord 573-673 mm runs past the 602 mm cut into the tail section (S05 exports as 2 solids). m62v1 tailfin the same.
+        - X-layout spars through the axis cross at the same station (opposite panels' spars meet in the middle).
+        - fuselage.channels not cut: a channel has no radial position.
+        - quadlancer62 with every cut front_male (owner's M F M F test, 2026-10-05): the tail section is female, but its 20 mm elliptical cone starts at the last cut; the 10 mm socket breaks through the skin and S07 exports in 2 pieces.
+        - Fin root base (surfaces[].root_base) recorded only: needs blending into the body.
+        - Carry-through: slivers where a wing root thicker than the stem meets the wall next to a wall fillet (root blending, as root_base). M75 preset spars are M62's (picked).
+        - Carry-through test (m62v1 copy, 2026-10-06, 6.4 mm spars 7.5 apart): 0.5 mm web between the two spar holes; the spar holes break out of the thin outer wing and into the pods. A spar hole edge exactly through a pointed pod nose made an invalid solid (now reported).
+        - Auto sectioning (PLAN.md section 4) not built.
+
 - Bring over from cadbuildsystem (predecessor):
-        - cadparams/ FreeCAD spreadsheets (AirframeParams, WingVars, ParamAirfoil, CanardsAirfoil). Fix Fuselage_Thickness expr: OD - ID gives 2x wall; libs/cad.py uses (OD - ID) / 2.
         - parttojson.FCMacro (FreeCAD tree to JSON). Hidden objects are silently dropped; link_document and link_path hold each other's values.
         - README class hierarchy (Complex / System / Subsystem / Module / Submodule / Component / Subcomponent) and 2R04B1 assembly tree.
 

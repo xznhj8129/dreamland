@@ -1,0 +1,288 @@
+{
+    "schema": "airframe/2",
+    "powered": true,
+    "vtol": true,
+    "tailsitter": true,
+    "name": "62mm Quadlancer 9in",
+    "notes": "Converted from the Lego-style quadlancer62.json. Real aircraft. Sections are the old printed modules (cuts at the module boundaries); each section mass is the old module mass, which includes whatever was mounted inside it.",
+    "preset": "M62",
+    "operating_point": {
+        "aoa_deg": 0.0,
+        "airspeed_m_s": 15.0,
+        "altitude_m": 0.0
+    },
+    "print": {
+        "material": "elegoo_pla_plus",
+        "bulk_density_kg_m3": 318.3,
+        "printer_bed_m": [
+            0.24,
+            0.24,
+            0.25
+        ]
+    },
+    "fuselage": {
+        "length_m": 0.789,
+        "section": {
+            "width_m": 0.062,
+            "height_m": 0.062,
+            "shape": 6.0,
+            "wall_radial_m": 0.00125
+        },
+        "nose": {
+            "profile": "elliptical",
+            "length_m": 0.06,
+            "params": {}
+        },
+        "tail": {
+            "profile": "elliptical",
+            "length_m": 0.02,
+            "params": {}
+        },
+        "joints": {
+            "type": "radial_screws",
+            "count": 8,
+            "screw": "M3",
+            "insertion_depth_m": 0.01,
+            "coupler_wall_m": 0.0045,
+            "fit_clearance_m": 0.0003,
+            "socket_wall_m": 0.00125,
+            "hole_edge_dist_m": 0.006,
+            "hole_diameter_m": 0.003,
+            "hole_angle_offset_deg": 22.5,
+            "coupler_mass_kg": 0.02136
+        },
+        "channels": []
+    },
+    "surfaces": [
+        {
+            "name": "new-wing",
+            "x_root_le_m": 0.3978,
+            "layout": "X",
+            "fin_position": "top",
+            "dihedral_deg": 30.0,
+            "root_offset": 0.1807,
+            "root": "body",
+            "span_m": 0.32,
+            "chord_root_m": 0.1,
+            "chord_tip_m": 0.09,
+            "sweep_le_deg": 1.0,
+            "incidence_deg": 2.0,
+            "incidence_mode": "symmetric",
+            "airfoil": "naca2412",
+            "mass_kg": 0.36,
+            "control": {
+                "kind": "split",
+                "roles": [
+                    "roll"
+                ],
+                "deflection_min_deg": -25.0,
+                "deflection_max_deg": 25.0,
+                "rate_deg_s": 300.0,
+                "chord_start": 0.75,
+                "span_start": 0.65,
+                "span_end": 0.95,
+                "servos": [
+                    "S1",
+                    "S2",
+                    "S3",
+                    "S4"
+                ]
+            },
+            "spars": {
+                "material": "carbon_rod",
+                "diameter_m": 0.0064,
+                "count": 2,
+                "spacing_m": 0.0075,
+                "x_offset_m": 0.02,
+                "carry_through": {
+                    "stem_width_m": 0.01,
+                    "length_m": 0.02,
+                    "flare_radius_m": 0.02,
+                    "root_length_m": 0.04,
+                    "wall_fillet_m": 0.004
+                }
+            }
+        },
+        {
+            "name": "9in-puller",
+            "x_root_le_m": 0.6776,
+            "layout": "X",
+            "fin_position": "top",
+            "dihedral_deg": 45.0,
+            "root_offset": 0.0,
+            "root": "body",
+            "span_m": 0.137,
+            "chord_root_m": 0.09,
+            "chord_tip_m": 0.08,
+            "sweep_le_deg": 3.0,
+            "incidence_deg": 0.0,
+            "incidence_mode": "symmetric",
+            "airfoil": "naca0012",
+            "spars": {
+                "material": "carbon_rod",
+                "diameter_m": 0.0064,
+                "count": 2,
+                "spacing_m": 0.0075,
+                "x_offset_m": 0.03,
+                "carry_through": {
+                    "stem_width_m": 0.01,
+                    "length_m": 0.02,
+                    "flare_radius_m": 0.02,
+                    "root_length_m": 0.04,
+                    "wall_fillet_m": 0.004
+                }
+            }
+        }
+    ],
+    "propulsion": {
+        "motor": {
+            "manufacturer": "DYS",
+            "name": "X2812-900"
+        },
+        "prop": "APC MR 9x4.5",
+        "battery": {
+            "model": "commercial",
+            "part": "CNHL-2200mah-6S",
+            "volume": "battery"
+        },
+        "esc": "ESC",
+        "mounts": [
+            {
+                "on": "surface",
+                "surface": "9in-puller",
+                "span_position_m": 0.137,
+                "x_offset_m": -0.005,
+                "direction": "tractor",
+                "spin": "out",
+                "thrust_axis_tilt_deg": 0.0,
+                "pod": {
+                    "diameter_m": 0.035,
+                    "flat_length_m": 0.02,
+                    "curve_length_m": 0.1,
+                    "profile": "tangent_ogive"
+                }
+            }
+        ],
+        "wiring": {
+            "battery": {
+                "gauge_awg": 14,
+                "conductors": 2,
+                "plugs": [
+                    "XT60",
+                    "XT60"
+                ]
+            },
+            "motors": [
+                {
+                    "gauge_awg": 18,
+                    "conductors": 3,
+                    "plugs": [
+                        "MR60"
+                    ]
+                },
+                {
+                    "gauge_awg": 18,
+                    "conductors": 3,
+                    "plugs": [
+                        "MR60"
+                    ]
+                },
+                {
+                    "gauge_awg": 18,
+                    "conductors": 3,
+                    "plugs": [
+                        "MR60"
+                    ]
+                },
+                {
+                    "gauge_awg": 18,
+                    "conductors": 3,
+                    "plugs": [
+                        "MR60"
+                    ]
+                }
+            ]
+        }
+    },
+    "volumes": [
+        {
+            "name": "battery",
+            "shape": "box",
+            "x_m": 0.1582,
+            "size_m": [
+                0.15,
+                0.0355,
+                0.049
+            ]
+        },
+        {
+            "name": "ESC",
+            "shape": "bore",
+            "x_m": 0.6368,
+            "length_m": 0.05
+        },
+        {
+            "name": "utility",
+            "shape": "bore",
+            "x_m": 0.3232,
+            "length_m": 0.1,
+            "mass_kg": 0.05
+        }
+    ],
+    "parts": [
+        {
+            "name": "ESC",
+            "part": "esc:esc-4in1-60a",
+            "volume": "ESC",
+            "mass_kg": 0.02
+        }
+    ],
+    "sections": {
+        "cuts_m": [
+            0.06,
+            0.26,
+            0.387,
+            0.509,
+            0.659,
+            0.769
+        ],
+        "per_section": [
+            {
+                "solid": false,
+                "empty_mass_kg": 0.047
+            },
+            {
+                "solid": true,
+                "empty_mass_kg": 0.065
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.085
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.05
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.055
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.122
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.015
+            }
+        ],
+        "cut_joints": [
+            "front_male",
+            "front_male",
+            "front_male",
+            "front_male",
+            "front_male",
+            "rear_male"
+        ]
+    }
+}

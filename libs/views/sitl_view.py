@@ -68,6 +68,7 @@ class SITLMainView:
         self.drag_start: float | None = None
         self.drag_spans: list = []
         self.path_axes = None  # the 3D view's axes, kept for its rotation across redraws
+        self.aborting = False
         self.controller_var = tk.StringVar(value=INAV_CONTROLLER)
         self.duration_var = tk.StringVar(value=f"{DEFAULT_DURATION_S:g}")
         self.scenario_var = tk.StringVar(value="")
@@ -125,9 +126,14 @@ class SITLMainView:
             entry.grid(row=row, column=2 * column + 1, sticky="w", pady=1)
             self.start_option_entries[option] = entry
         self.start_box.bind("<<ComboboxSelected>>", lambda event: self.refresh_start_conditions())
-        self.run_button = ttk.Button(controls_frame, text="Run", command=self.start_run)
-        self.run_button.grid(row=7, column=0, sticky="w", pady=(6, 0))
-        ttk.Label(controls_frame, textvariable=self.status_var).grid(row=7, column=1, sticky="w", padx=(8, 0), pady=(6, 0))
+        buttons = ttk.Frame(controls_frame)
+        buttons.grid(row=7, column=0, columnspan=2, sticky="w", pady=(6, 0))
+        self.run_button = ttk.Button(buttons, text="Run", command=self.start_run)
+        self.run_button.grid(row=0, column=0)
+        self.abort_button = ttk.Button(buttons, text="Abort", command=self.abort_run)
+        self.abort_button.grid(row=0, column=1, padx=(6, 0))
+        self.abort_button.state(["disabled"])
+        ttk.Label(buttons, textvariable=self.status_var).grid(row=0, column=2, sticky="w", padx=(8, 0))
 
         summary_frame = ttk.LabelFrame(left_frame, text="Summary", padding=4)
         summary_frame.grid(row=1, column=0, sticky="nsew", pady=(8, 0))
@@ -288,6 +294,8 @@ class SITLMainView:
         self.process = subprocess.Popen(command, cwd=REPO_DIR, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, bufsize=1)
         threading.Thread(target=self.read_output, args=(self.process,), daemon=True).start()
         self.run_button.state(["disabled"])
+        self.abort_button.state(["!disabled"])
+        self.aborting = False
         self.status_var.set(f"Running {test if script is None else SCRIPT_PREFIX + script}...")
 
     def read_output(self, process: subprocess.Popen) -> None:
@@ -316,8 +324,21 @@ class SITLMainView:
             if self.plot_dirty:
                 self.draw_plot()
             self.run_button.state(["!disabled"])
-            self.status_var.set(f"Finished (exit code {code})")
+            self.abort_button.state(["disabled"])
+            self.status_var.set("Aborted" if self.aborting else f"Finished (exit code {code})")
         self.output_after_id = self.frame.after(QUEUE_POLL_MS, self.poll_output)
+
+    def abort_run(self) -> None:
+        """SIGINT, as for closing the window: the runner writes its log and plots and sim_inav stops its SITL; killed if
+        it is still running SHUTDOWN_WAIT_S later. The output and the log keep coming in until it has exited."""
+        if self.process is None or self.aborting:
+            return
+        self.aborting = True
+        self.abort_button.state(["disabled"])
+        self.status_var.set("Aborting...")
+        process = self.process
+        process.send_signal(signal.SIGINT)
+        self.frame.after(int(SHUTDOWN_WAIT_S * 1000), lambda: process.poll() is None and process.kill())
 
     def poll_log(self) -> None:
         if self.log_path is not None:

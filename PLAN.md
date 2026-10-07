@@ -34,9 +34,9 @@ powered, vtol, tailsitter   true/false; tailsitter needs vtol, vtol needs powere
                     tailsitter = hover + forward mixer profiles; not vtol = AIRPLANE profile, motors on throttle only;
                     other VTOL types and unpowered airframes are not exported. Hover numbers only for vtol.
 name, notes
-preset              optional: a data/specs.json preset name (M62, M75). Loading it fills section, joints (not coupler_mass_kg)
+preset              optional: a data/presets/ preset name (M62, M75). Loading it fills section, joints (not coupler_mass_kg)
                     and the reinforcement pattern (not from_x_m/to_x_m); values are always written out in full, and the
-                    fuselage is checked against the preset's limits
+                    fuselage is checked against the preset's limits; the preset's spars are what a surface set starts with
 operating_point     aoa_deg, airspeed_m_s, altitude_m
 print               material (data/parts/material.json), printer_bed_m [x, y, z],
                     bulk_density_kg_m3 (printed mass per solid volume; required only if a surface has no mass_kg or a solid
@@ -45,7 +45,15 @@ fuselage
   length_m
   section           width_m, height_m, shape (superellipse exponent; 2 = circle), wall_radial_m
   nose, tail        profile (pointed_shapes name), length_m, params (exactly the profile's keys)
-  joints            type radial_screws, count, screw, insertion_depth_m, coupler_mass_kg (optional, one per cut)
+  joints            type radial_screws, count (screws per section end), screw, insertion_depth_m (coupler or spigot into
+                    each female end's socket), coupler_wall_m, fit_clearance_m (radial play of coupler, spigot, rods and
+                    spars), socket_wall_m (skin left over the coupler at a female end: socket = outer surface less it; at
+                    most the section wall), hole_edge_dist_m (from the cut), hole_diameter_m, hole_angle_offset_deg (first
+                    hole from +y, the rest evenly round), coupler_mass_kg (optional, one per cut). Sections butt at the cut.
+                    An integral male (front_male / rear_male) runs insertion_depth_m back into its section, chamfered
+                    inside from the fuselage ID at that far end to the coupler ID hole_edge_dist_m short of the fastener
+                    hole centre (at the cut). A female end whose body tapers below its socket within the insertion depth
+                    is a layout problem (the socket breaks through).
   reinforcement     optional longitudinal rods: type cf_rod, material (data/parts/material.json), diameter_m, radial_position_m (rod centre
                     from the axis), polar_n (all rods), polar_offset_angle (deg from the horizontal, one position per quadrant,
                     mirrored left/right and top/bottom), polar_split (0 = one rod per position, 2 = a pair at
@@ -60,6 +68,22 @@ surfaces[]          name, x_root_le_m (must be on the body; chords may overhang 
                     panels pitched alike, lift like AoA; cant: every panel turned the same way about the body axis,
                     roll / spin; + = anticlockwise seen from behind), airfoil (AeroSandbox name),
                     mass_kg (whole set; optional, absent = computed)
+                    spars (optional): material, diameter_m, count (per panel), spacing_m, x_offset_m (first spar aft of
+                      the root LE along the root chord); straight rods along each panel's span in the chord plane, from
+                      closest to the fuselage axis out to the tip; mass with the surface set; holes in the printed parts.
+                      Where the first panel's spar line runs on in line into the opposite panel, that pair runs through tip
+                      to tip; every other spar runs from its tip inward and stops where it meets another: fit_clearance_m
+                      clear of a through spar, or of the plane midway between itself and another stopping spar (dihedral
+                      and other sets not in line have no through spar). Holes: inside a carry-through they join the holes
+                      they meet (mitred, no sliver); without one each ends a fit clearance short of its rod, never meeting.
+                      carry_through (optional): the printed web inside the tube the spars run through, one arm per panel:
+                        stem_width_m (across the panel plane), length_m (along x, centred between the spars) out to
+                        flare_radius_m from where the arms meet (the axis for a radial set, the middle plane for a dihedral
+                        pair; arms mitred there), flaring to root_length_m at the inner wall, wall_fillet_m (front view
+                        fillet into the wall: recorded for post-processing, not built; the arms meet the wall square); mass = side profile x stem width x print bulk density,
+                        none when its section is weighed
+                    root_base (optional, recorded only, not built: needs blending): length_m, width_m, height_m,
+                      forward_offset_m, leading_cut_m, trailing_cut_m
                     control (optional, absent = fixed; applies to every panel of the set):
                       kind split: chord_start (hinge, chord fraction from LE, 0..1 exclusive),
                         span_start, span_end (panel span fractions from the root, end > start)
@@ -79,7 +103,8 @@ propulsion          required when powered, absent when not
                         each axis; x * y * z = s * p), lead_awg, lead_length_m; size per axis = count * (cell size + 2 mm),
                         mass, capacity, resistance and voltage from the cell
                     its connector is the first plug of the battery run; its leads add to the shared resistance
-  esc               name of a placed esc part; wires run battery -> ESC -> each motor along the axes
+  esc               name of a placed esc part; wires run battery -> ESC along the axes, ESC -> a surface motor inside its panel (along x to the root
+                    mid-chord, out along the mid-chord to the motor's span station), ESC -> a nose/tail motor along the axes
   wiring            battery (the battery -> ESC run), motors[] (ESC -> each motor, one per motor in motor order); a run:
                     gauge_awg (motorlib wire gauge), conductors (wires in the cable), plugs[] (data/parts/connector.json
                     names along the run, in order); each motor's run and the shared battery run set its resistance in
@@ -107,7 +132,7 @@ sections
   per_section[]     one per section: solid (true: printed solid less the volumes inside it, x print.bulk_density_kg_m3;
                     false: hollow shell wall), empty_mass_kg (optional: weighed printed mass), complete_mass_kg (optional:
                     weighed printed mass + everything attached in the section, which it replaces: points by position,
-                    props with their motor, motors with their mount, surface sets at their root LE)
+                    props with their motor, motors with their mount, surface sets where they meet the body: their exposed root LE)
   cut_joints[]      one per cut: coupler (separate coupler into both sections; fuselage.joints.coupler_mass_kg at the
                     cut), front_male or rear_male (the section ahead of / behind the cut carries the male end, no coupler)
 ```
@@ -120,7 +145,7 @@ Converted examples: `aircraft/m62v2/` and `aircraft/quadlancer62/` reproduce the
 
 - `data/parts/`, one file per category: batteries (mass required, > 0; connector: the battery's own plug, first on the battery run), ESCs, FCs, cameras, payloads, props (mass; linear between listed diameters, outside them the nearest scaled by diameter^3), materials, connectors (contact_resistance_ohm).
 - Motors and props: motorlib (`libs/motorlib`, copied from `dronebuildcalc`), used as published.
-- `specs.json`: size presets (`presets`: section, joints, reinforcement pattern in the aircraft's own form, limits checked
+- `presets/<name>.json`: size presets (section, joints, reinforcement pattern, spars in the aircraft's own form, limits checked
   against the aircraft, CAD data), fasteners, openings, printer bed, wiring. Presets are created and saved from the
   GUI's Fuselage tab.
 - Airfoils: one source (AeroSandbox names), `data/airfoils.json` only for imported coordinates.
@@ -170,7 +195,7 @@ Re-enter `m62v2` and `quadlancer62` plane-first. Compare derived total mass and 
 2. `resolve_airframe` geometry; AeroBuildup, VLM and Barrowman read it; old module stacking removed from `analysis.py`.
 3. Drawing and CAD read the shared geometry.
 4. Mass model: computed structure, 3D CG, inertia; propulsion physics fixes from `TODO.md` C.
-5. Auto sectioning and coupler generation; printable section STEP/STL.
+5. Auto sectioning and coupler generation; printable section STEP/STL. Section and coupler STEP/STL done 2026-10-05 (`libs/cad.py` `export_sections`); auto sectioning not built.
 6. GUI rebuilt around the definition (edit plane parameters, move/lock cuts).
 7. Aero refinements from `TODO.md` D.
 8. JSBSim export. Milestone 1 (hover in INAV SITL) done 2026-10-01; forward flight and transition next (`TODO.md` F).

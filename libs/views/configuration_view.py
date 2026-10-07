@@ -24,7 +24,9 @@ from libs.airframe import (
 )
 from libs.geometry import route_length_m
 from libs.graphics import draw_canvas_view
-from libs.presets import ROD_PATTERN_KEYS, apply_preset, default_rod_extent, preset_names, preset_status, read_specs, save_preset
+from libs.presets import (
+    ROD_PATTERN_KEYS, apply_preset, default_rod_extent, preset_carry_through, preset_names, preset_spars, preset_status, read_presets, save_preset,
+)
 from libs.propulsion import summary_lines
 from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS
 
@@ -36,6 +38,7 @@ MM_KEYS = {
     "length_m", "width_m", "height_m", "wall_radial_m", "insertion_depth_m", "diameter_m", "radial_position_m",
     "from_x_m", "to_x_m", "x_root_le_m", "span_m", "chord_root_m", "chord_tip_m", "span_position_m",
     "x_offset_m", "y_offset_m", "z_offset_m", "x_m", "y_m", "z_m", "lead_length_m", "flat_length_m", "curve_length_m", "nose_radius", "size_m", "printer_bed_m", "cuts_m",
+    "stem_width_m", "flare_radius_m", "root_length_m", "wall_fillet_m", "coupler_wall_m", "fit_clearance_m", "socket_wall_m", "hole_edge_dist_m", "hole_diameter_m", "spacing_m", "forward_offset_m", "leading_cut_m", "trailing_cut_m",
 }
 GRAM_KEYS = {"mass_kg", "coupler_mass_kg", "empty_mass_kg", "complete_mass_kg"}
 UNIT_SUFFIXES = ("_kg_m3", "_m_s", "_deg_s", "_deg", "_kg", "_m")
@@ -65,6 +68,10 @@ NEW_SURFACE = {
 CONTROL_KIND_FIELDS = {"split": {"chord_start": 0.75, "span_start": 0.0, "span_end": 1.0}, "all_moving": {"pivot": 0.25}}
 NEW_CONTROL = {"kind": "split", "roles": [], "deflection_min_deg": -25.0, "deflection_max_deg": 25.0, "rate_deg_s": 300.0}  # + kind fields, servos
 NEW_POD = {"diameter_m": 0.035, "flat_length_m": 0.02, "curve_length_m": 0.05, "profile": "elliptical"}
+# Spars and carry-through for an aircraft without a preset to take them from (the M62 preset's values).
+NEW_SPARS = {"material": "carbon_rod", "diameter_m": 0.0064, "count": 2, "spacing_m": 0.0075, "x_offset_m": 0.02}
+NEW_CARRY_THROUGH = {"stem_width_m": 0.01, "length_m": 0.02, "flare_radius_m": 0.02, "root_length_m": 0.04, "wall_fillet_m": 0.004}
+NEW_ROOT_BASE = {"length_m": 0.096, "width_m": 0.018, "height_m": 0.0, "forward_offset_m": 0.0, "leading_cut_m": 0.01, "trailing_cut_m": 0.06}
 NEW_MOTOR = {"manufacturer": "DYS", "name": "X2807-1300"}  # motorlib
 NEW_PROP = "APC E 7x5"  # motorlib
 # Rods for an aircraft without a preset to take them from: 4 x 2.5 mm carbon (the built M62 aircraft), touching the inner wall.
@@ -88,7 +95,7 @@ SECTION_COLUMNS = ("section mm", "cut mm", "joint", "solid", "empty g", "calc", 
 NEW_CUT_JOINT = "coupler"
 SECTION_ENTRY_WIDTH = 5
 TYPE_FLAGS = ("tailsitter", "vtol", "powered")  # each implies the ones after it
-DRAG_KEYS = {"volume": ("volumes", "x_m"), "surface": ("surfaces", "x_root_le_m")}  # cuts drag the sections.cuts_m entry itself
+DRAG_KEYS = {"volume": ("volumes", "x_m"), "surface": ("surfaces", "x_root_le_m")}  # cuts drag the sections.cuts_m entry, spars their x_offset_m
 MIN_SECTION_LENGTH_M = 0.005
 
 
@@ -340,6 +347,10 @@ class ConfigurationMainView:
             if kind == "cut" and index:
                 cuts = self.app.definition["sections"]["cuts_m"]
                 self.drag_target = (cuts, int(index), event.x, cuts[int(index)])
+                return
+            if kind == "spars" and index:  # along the root chord from its leading edge
+                spars = self.app.definition["surfaces"][int(index)]["spars"]
+                self.drag_target = (spars, "x_offset_m", event.x, spars["x_offset_m"])
                 return
             if kind in DRAG_KEYS and index:
                 collection, key = DRAG_KEYS[kind]
@@ -604,7 +615,7 @@ class ConfigurationMainView:
         names = [motor.name for motor in resolved.motors] if current else [f"motor {index + 1}" for index in range(len(wiring["motors"]))]
         routes = [resolved.wires.battery, *resolved.wires.motors] if current else [None] * (len(wiring["motors"]) + 1)
         runs = [("battery -> ESC", wiring["battery"]), *((f"ESC -> {name}", run) for name, run in zip(names, wiring["motors"]))]
-        group = ttk.LabelFrame(parent, text="Wire runs (auto-routed along the axes; drawn in the side view)", padding=6)
+        group = ttk.LabelFrame(parent, text="Wire runs (auto-routed: along the axes, wing motors inside their panel; drawn in the side view)", padding=6)
         group.grid(row=0, column=0, sticky="ew", padx=4, pady=4)
         for column, title in enumerate(WIRING_COLUMNS):
             ttk.Label(group, text=title).grid(row=0, column=column, sticky="w", padx=(0, 6))
@@ -673,7 +684,7 @@ class ConfigurationMainView:
         self.build_reinforcement_group(parent, 2)
 
     def build_preset_group(self, parent, grid_row: int) -> None:
-        group = ttk.LabelFrame(parent, text="Size preset (data/specs.json)", padding=6)
+        group = ttk.LabelFrame(parent, text="Size preset (data/presets/)", padding=6)
         group.grid(row=grid_row, column=0, sticky="ew", padx=4, pady=4)
         group.columnconfigure(1, weight=1)
         ttk.Label(group, text="aircraft").grid(row=0, column=0, sticky="w")
@@ -700,13 +711,13 @@ class ConfigurationMainView:
             self.app.recompute_status_var.set("Pick a preset to save over, or New")
             return
         if overwrite and not messagebox.askyesno(
-                "Save preset", f"Overwrite preset {name} in data/specs.json with this aircraft's section, joints and rods?\n"
-                f"Every aircraft labelled {name} then shows as modified where it differs. Limits and CAD data stay.", parent=self.frame):
+                "Save preset", f"Overwrite preset {name} (data/presets/{name}.json) with this aircraft's section, joints and rods?\n"
+                f"Every aircraft labelled {name} then shows as modified where it differs. Its spars, limits and CAD data stay.", parent=self.frame):
             return
         try:
             save_preset(name, self.app.definition, self.app.parts_data)
         except AirframeError as error:
-            self.app.log_error("Save preset", f"Not saved, data/specs.json unchanged:\n{error}")
+            self.app.log_error("Save preset", f"Not saved, data/presets/ unchanged:\n{error}")
             return
         self.app.definition["preset"] = name
         self.changed(rebuild=True)
@@ -747,7 +758,7 @@ class ConfigurationMainView:
         elif self.stashed_reinforcement is not None:
             fuselage["reinforcement"] = self.stashed_reinforcement
         else:
-            preset = read_specs()["presets"].get(definition.get("preset"), {})
+            preset = read_presets().get(definition.get("preset"), {})
             if "reinforcement" in preset:
                 pattern = {key: preset["reinforcement"][key] for key in ROD_PATTERN_KEYS}
             else:
@@ -824,9 +835,14 @@ class ConfigurationMainView:
         for index, surface in enumerate(surfaces):
             frame = self.card(parent, index + 1, surface["name"], lambda i=index: self.delete_item("surfaces", i))
             skip = set() if surface["layout"] in ("1", "3") else {"fin_position"}
-            row = self.add_fields(frame, surface, start_row=1, skip=skip | {"mass_kg", "control"}, on_change={"layout": lambda s=surface: self.fit_servos(s)})
+            row = self.add_fields(frame, surface, start_row=1, skip=skip | {"mass_kg", "control", "spars", "root_base"}, on_change={"layout": lambda s=surface: self.fit_servos(s)})
             self.add_entry(frame, row, surface, "mass_kg", optional=True)
             self.build_control(frame, row + 1, surface)
+            row += 3
+            definition = self.app.definition
+            row = self.optional_block(frame, row, surface, "spars", "spars", preset_spars(definition) or NEW_SPARS,
+                                      nested=("carry_through", "carry-through", preset_carry_through(definition) or NEW_CARRY_THROUGH))
+            row = self.optional_block(frame, row, surface, "root_base", "root base (not built yet)", NEW_ROOT_BASE)
 
     def build_control(self, frame, row: int, surface: dict) -> None:
         enabled = tk.BooleanVar(value="control" in surface)
@@ -1002,13 +1018,32 @@ class ConfigurationMainView:
             self.add_choice(frame, row + 1, mount, "spin", list(SURFACE_PROP_SPINS if mount["on"] == "surface" else SINGLE_PROP_SPINS))
             self.add_entry(frame, row + 2, mount, "thrust_axis_tilt_deg")
             row += 2
-            pod_var = tk.BooleanVar(value="pod" in mount)
-            ttk.Checkbutton(frame, text="pod", variable=pod_var, command=lambda m=mount, v=pod_var: self.toggle_pod(m, v)).grid(row=row + 1, column=0, sticky="w")
-            if "pod" in mount:
-                pod = ttk.LabelFrame(frame, text="pod", padding=4)
-                pod.grid(row=row + 2, column=0, columnspan=3, sticky="ew")
-                pod.columnconfigure(1, weight=1)
-                self.add_fields(pod, mount["pod"])
+            self.optional_block(frame, row + 1, mount, "pod", "pod", NEW_POD)
+
+    def optional_block(self, frame, row: int, data: dict, key: str, label: str, template: dict, nested: tuple[str, str, dict] | None = None) -> int:
+        """A tick box adding (from template) or removing data[key], and its fields when present, with nested (key, label,
+        template) as an optional block of its own inside it; returns the next free row."""
+        variable = tk.BooleanVar(value=key in data)
+        ttk.Checkbutton(frame, text=label, variable=variable, command=lambda: self.toggle_block(data, key, template, variable)).grid(row=row, column=0, sticky="w")
+        if key not in data:
+            return row + 1
+        group = ttk.LabelFrame(frame, text=label, padding=4)
+        group.grid(row=row + 1, column=0, columnspan=3, sticky="ew")
+        group.columnconfigure(1, weight=1)
+        block = data[key]
+        if "material" in block:
+            self.add_choice(group, 0, block, "material", sorted(self.app.parts_data["material"]))
+        inner = self.add_fields(group, block, start_row=1, skip={"material"} | ({nested[0]} if nested else set()))
+        if nested is not None:
+            self.optional_block(group, inner, block, *nested)
+        return row + 2
+
+    def toggle_block(self, data: dict, key: str, template: dict, variable: tk.BooleanVar) -> None:
+        if variable.get():
+            data[key] = copy.deepcopy(template)
+        else:
+            data.pop(key, None)
+        self.changed(rebuild=True)
 
     def build_motor_info(self, parent, grid_row: int) -> None:
         """Static propulsion of the last valid airframe (app.propulsion): motorlib's model against INAV motor output (duty)."""
@@ -1055,13 +1090,6 @@ class ConfigurationMainView:
             mount["direction"] = "tractor" if mount["on"] == "nose" else "pusher"
             if mount["spin"] not in SINGLE_PROP_SPINS:
                 mount["spin"] = SINGLE_PROP_SPINS[0]
-
-    def toggle_pod(self, mount: dict, variable: tk.BooleanVar) -> None:
-        if variable.get():
-            mount["pod"] = copy.deepcopy(NEW_POD)
-        else:
-            mount.pop("pod", None)
-        self.changed(rebuild=True)
 
     def add_mount(self) -> None:
         mount = {"on": "nose", "direction": "tractor", "spin": SINGLE_PROP_SPINS[0], "thrust_axis_tilt_deg": 0.0}

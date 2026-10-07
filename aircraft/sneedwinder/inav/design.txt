@@ -1,0 +1,70 @@
+# SITL diff from the design, rewritten by sim_inav.py on every run from it; to edit, copy it into inav/
+# quadrocketbuilder export of 62mm Quad 7in v0: fixed-wing, motors on throttle; servo mix from the
+# control roles, signs from each control's computed moments.
+set throttle_idle = 8
+mixer_profile 1
+set platform_type = AIRPLANE
+mmix reset
+mmix 0 1.000 +0.000 +0.000 +0.000    # motor 1 tail, cw
+smix reset
+smix 0 0 1 -100 0 -1    # S1 pitch: C1 canards panel 1
+smix 1 0 0 -100 0 -1    # S1 roll: C1 canards panel 1
+smix 2 0 2 100 0 -1    # S1 yaw: C1 canards panel 1
+smix 3 1 1 -100 0 -1    # S2 pitch: C4 canards panel 2
+smix 4 1 0 100 0 -1    # S2 roll: C4 canards panel 2
+smix 5 1 2 -100 0 -1    # S2 yaw: C4 canards panel 2
+smix 6 2 1 -100 0 -1    # S3 pitch: C2 canards panel 3
+smix 7 2 0 -100 0 -1    # S3 roll: C2 canards panel 3
+smix 8 2 2 -100 0 -1    # S3 yaw: C2 canards panel 3
+smix 9 3 1 -100 0 -1    # S4 pitch: C3 canards panel 4
+smix 10 3 0 100 0 -1    # S4 roll: C3 canards panel 4
+smix 11 3 2 100 0 -1    # S4 yaw: C3 canards panel 4
+
+# Generated SITL diff of a fixed-wing or glider: after the design's mixer, before the bench and battery lines.
+set mag_hardware = FAKE
+# switches: AUX1 arm, AUX2 angle, AUX3 nav althold
+aux 0 0 0 1700 2100
+aux 1 1 1 1300 2100
+aux 2 3 2 1300 2100
+# NAV ALTHOLD holds height with pitch and adds throttle stick above cruise: cruise and min at idle, so the stick sets the power
+# (cruise 1001: INAV divides by cruise - 1000 in ANGLE mode, and 1000 crashes the SITL)
+set nav_fw_allow_manual_thr_increase = ON
+set nav_fw_cruise_thr = 1001
+set nav_fw_min_thr = 1000
+# What the bench's simulated hardware needs (inav-jsbsim-bench, MSP_SIMULATOR). Appended to every generated SITL diff.
+set receiver_type = SIM (SITL)
+set baro_hardware = FAKE
+set pitot_hardware = NONE
+feature GPS
+set gps_provider = MSP
+set init_gyro_cal = OFF
+set small_angle = 180    # air starts arm at whatever attitude they start in
+feature VBAT
+feature CURRENT_METER
+set battery_capacity = 2200
+
+set fw_p_pitch = 15
+set fw_i_pitch = 5
+set fw_d_pitch = 5
+set fw_ff_pitch = 91
+set fw_p_roll = 10
+set fw_i_roll = 3
+set fw_d_roll = 7
+set fw_p_yaw = 50
+set fw_i_yaw = 0
+set fw_d_yaw = 20
+set fw_ff_yaw = 255
+#set max_angle_inclination_rll = 600
+#set max_angle_inclination_pit = 600
+set dterm_lpf_hz = 10
+set fw_turn_assist_pitch_gain =  0.400
+set nav_fw_pos_z_p = 25
+set nav_fw_pos_z_d = 8
+set nav_fw_pos_xy_p = 55
+set d_boost_min =  1.000
+set d_boost_max =  1.000
+set rc_expo = 30
+set rc_yaw_expo = 30
+set roll_rate = 18
+set pitch_rate = 10
+set yaw_rate = 3

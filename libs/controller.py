@@ -38,6 +38,7 @@ RANGEFINDER_MAX_M = 10.0  # VL53L1X class, looking down the body's -z
 PWM_MIN_US, PWM_MID_US, PWM_MAX_US = 1000, 1500, 2000
 GPS_FIX_3D = 3  # u-blox NAV-PVT fixType
 GPS_SATELLITES = 14
+KNOT_M_S = 0.514444
 
 
 def _noisy(value: float, sigma: float) -> float:
@@ -165,6 +166,26 @@ class Rangefinder:
         self._mm = -1 if cm < 0 else max(0, round(_noisy(cm * 10.0, noise.get("range_mm", 0.0))))
 
 
+@dataclass(frozen=True)
+class TruthState:
+    """What the simulator knows the aircraft is doing: no sensor, no noise, nothing a real flight controller has. For
+    scripting around a flight (stop conditions, events, scoring, logging), never for control."""
+    lat_deg: float
+    lon_deg: float
+    north_m: float  # from home
+    east_m: float
+    agl_m: float  # above the ground
+    roll_deg: float  # + = right wing down
+    pitch_deg: float  # + = nose up
+    yaw_deg: float  # heading, 0..360 from north
+    vn_m_s: float  # velocity north, east, down
+    ve_m_s: float
+    vd_m_s: float
+    airspeed_m_s: float  # calibrated
+    aoa_deg: float
+    sideslip_deg: float
+
+
 class Controller:
     """A flight controller script: write setup() and loop(). loop() runs rate_hz times per simulated second; before
     each call the sensors hold fresh readings, and after it esc[] and servo[] go to the aircraft.
@@ -173,6 +194,8 @@ class Controller:
     Outputs: esc[i] (motor i in the export's order) and servo[i] (S1 = servo[0]), pulse widths in us, PWM_MIN_US ..
     PWM_MAX_US; they keep their value between loops.
     Time: micros(), millis() (simulated). log(name, value) adds a flight-log column; stop() ends the run.
+    truth: the simulator's TruthState, fresh before each loop(); a real flight controller has nothing like it, so use
+    it for scripting around the flight, not for control.
     sensor_noise: Gaussian standard deviations, in the physical units before the part's conversion, by name: accel_g,
     gyro_dps, baro_pa, mag_gauss, gps_m, gps_m_s, pitot_pa, range_mm."""
 
@@ -189,6 +212,7 @@ class Controller:
         self._next_gps_us = 0
         self._logged: dict[str, float] = {}
         self._stopped = False
+        self.truth: TruthState | None = None  # set before setup()
 
     def setup(self) -> None:
         pass
@@ -209,8 +233,14 @@ class Controller:
         self._stopped = True
 
     def _sample(self, plant, time_us: int) -> None:
-        """Fresh readings from the plant at time_us (the runner's call, before setup() and every loop())."""
+        """Fresh readings from the plant at time_us, and its truth (the runner's call, before setup() and every loop())."""
         self._time_us = time_us
+        state, fdm = plant.truth(), plant.fdm
+        self.truth = TruthState(
+            lat_deg=state["lat"], lon_deg=state["lon"], north_m=state["north_m"], east_m=state["east_m"], agl_m=state["agl_m"],
+            roll_deg=state["roll"], pitch_deg=state["pitch"], yaw_deg=state["yaw"], vn_m_s=state["vn"], ve_m_s=state["ve"], vd_m_s=state["vd"],
+            airspeed_m_s=state["ias_kts"] * KNOT_M_S, aoa_deg=fdm["aero/alpha-deg"], sideslip_deg=fdm["aero/beta-deg"],
+        )
         noise = self.sensor_noise
         for part in (self.imu, self.baro, self.mag, self.pitot, self.rangefinder):
             part._sample(plant, noise)

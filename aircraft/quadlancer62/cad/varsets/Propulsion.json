@@ -1,0 +1,39 @@
+{
+    "Base": {
+        "Label": {
+            "Type": "App::PropertyString",
+            "Value": "'Propulsion'"
+        }
+    },
+    "Motor": {
+        "Manufacturer": {
+            "Type": "App::PropertyString",
+            "Value": "'DYS'"
+        },
+        "Name": {
+            "Type": "App::PropertyString",
+            "Value": "'X2812-900'"
+        },
+        "BellDiameter": {
+            "Type": "App::PropertyLength",
+            "Value": 28.0,
+            "Unit": "mm"
+        },
+        "BellLength": {
+            "Type": "App::PropertyLength",
+            "Value": 12.0,
+            "Unit": "mm"
+        }
+    },
+    "Prop": {
+        "Name": {
+            "Type": "App::PropertyString",
+            "Value": "'APC MR 9x4.5'"
+        },
+        "Diameter": {
+            "Type": "App::PropertyLength",
+            "Value": 228.6,
+            "Unit": "mm"
+        }
+    }
+}

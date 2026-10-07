@@ -73,8 +73,14 @@ SITLRunPanel [arrange:column]
         on:click -> save the airframe file, then run the scenario
         disabled while a run is going
 
+    - Abort [ui:button], next to Run
+        on:click -> stop the run: the flight log and plots so far are written, INAV's SITL is stopped, the summary ends
+                    with "Aborted."; a run still going a few seconds later is killed
+        enabled only while a run is going
+
     - StatusText [ui:text]
-        Idle | No valid airframe | Running <scenario>... | Running script: <name>... | Finished (exit code N)
+        Idle | No valid airframe | Running <scenario>... | Running script: <name>... | Aborting... | Aborted |
+        Finished (exit code N)
 ```
 
 ### Run behavior
@@ -88,7 +94,7 @@ Run
     - the scenario, start and FC settings lists refresh whenever the view is shown and after Load
     - a run started on the ground logs to its own file, next to the air-start one
     - a script run logs to logs/script_<name>.csv
-    - closing the window during a run stops the simulation
+    - closing the window during a run stops the simulation, as Abort does
 ```
 
 ## SummaryPanel

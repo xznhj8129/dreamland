@@ -13,6 +13,7 @@ model, what the script's hardware read and the script's log() columns; the plots
 
 import argparse
 import csv
+import sys
 import time
 from pathlib import Path
 
@@ -29,6 +30,7 @@ from libs.simrun import (
 )
 
 DEFAULT_DURATION_S = 60.0
+ABORTED_EXIT_CODE = 130  # stopped by SIGINT, as a shell reports Ctrl-C
 
 
 def script_log_path(project: Project, name: str) -> Path:
@@ -129,4 +131,8 @@ def write_log(path: Path, rows: list[dict]) -> None:
 
 
 if __name__ == "__main__":
-    main()
+    try:
+        main()
+    except KeyboardInterrupt:  # the SITL view's Abort (SIGINT): the log and plots are already written
+        print("Aborted.")
+        sys.exit(ABORTED_EXIT_CODE)

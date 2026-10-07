@@ -36,106 +36,6 @@
             "type": "PLA+"
         }
     },
-    "presets": {
-        "M62": {
-            "section": {
-                "width_m": 0.062,
-                "height_m": 0.062,
-                "shape": 2.0,
-                "wall_radial_m": 0.00125
-            },
-            "joints": {
-                "type": "radial_screws",
-                "count": 8,
-                "screw": "M3",
-                "insertion_depth_m": 0.01
-            },
-            "reinforcement": {
-                "type": "cf_rod",
-                "material": "carbon_rod",
-                "diameter_m": 0.0025,
-                "radial_position_m": 0.027375,
-                "polar_n": 8,
-                "polar_offset_angle": 30,
-                "polar_split": 2,
-                "polar_split_angle": 15
-            },
-            "limits": {
-                "inner_diameter_m": [
-                    0.059,
-                    0.0595
-                ],
-                "wall_radial_m": [
-                    0.00125,
-                    0.003
-                ],
-                "section_length_m": [
-                    0.02,
-                    0.21
-                ]
-            },
-            "cad": {
-                "quadrants": 4,
-                "quadrant_offset_deg": 0.0,
-                "coupler_types": [
-                    "male",
-                    "female"
-                ],
-                "coupler_inner_diameter_m": 0.0595,
-                "coupler_outer_diameter_m": 0.062,
-                "hole_edge_dist_m": 0.006
-            }
-        },
-        "M75": {
-            "section": {
-                "width_m": 0.0782,
-                "height_m": 0.0782,
-                "shape": 2.0,
-                "wall_radial_m": 0.001
-            },
-            "joints": {
-                "type": "radial_screws",
-                "count": 8,
-                "screw": "M3",
-                "insertion_depth_m": 0.01
-            },
-            "reinforcement": {
-                "type": "cf_rod",
-                "material": "carbon_rod",
-                "diameter_m": 0.0062,
-                "radial_position_m": 0.0341,
-                "polar_n": 4,
-                "polar_offset_angle": 36,
-                "polar_split": 0,
-                "polar_split_angle": 0
-            },
-            "limits": {
-                "inner_diameter_m": [
-                    0.076,
-                    0.0765
-                ],
-                "wall_radial_m": [
-                    0.0015,
-                    0.003
-                ],
-                "section_length_m": [
-                    0.02,
-                    0.21
-                ]
-            },
-            "cad": {
-                "quadrants": 4,
-                "quadrant_offset_deg": 0.0,
-                "coupler_types": [
-                    "male",
-                    "female"
-                ],
-                "coupler_inner_diameter_m": 0.0595,
-                "coupler_outer_diameter_m": 0.076,
-                "hole_edge_dist_m": 0.006
-            }
-        }
-    },
     "types": {
         "modules": [
             "nose",
@@ -200,6 +100,13 @@
         "elrs_915": {},
         "vtx_5800": {},
         "lora_915": {}
+    },
+    "conduits": {
+        "wire": {
+            "shape": "rounded_rectangle",
+            "height": 6,
+            "width": 8
+        }
     },
     "wire_paths": {
         "fc_to_esc": {

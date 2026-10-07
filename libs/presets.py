@@ -4,29 +4,42 @@ from libs.presets import apply_preset, preset_names, preset_status, save_preset
 apply_preset(definition, "M62")
 preset_status(definition)  # "M62" or "M62 (modified)"
 
-Size presets (data/specs.json presets) on a raw airframe/2 definition. A preset fills the fuselage blocks it drives
-(section, joints, rod pattern); the aircraft keeps its own values and the preset name as a label. The aircraft's
-own coupler mass and rod extent (from_x_m, to_x_m) are never driven. Validation is libs/airframe.py's.
+Size presets (data/presets/<name>.json, in the definition's own form) on a raw airframe/2 definition. A preset fills
+the fuselage blocks it drives (section, joints, rod pattern); the aircraft keeps its own values and the preset name as a
+label. The aircraft's own coupler mass and rod extent (from_x_m, to_x_m) are never driven. The preset's spars are what a
+surface set starts with when spars are added; they are not driven. Validation is libs/airframe.py's.
 """
 
 import copy
 import json
 
-from libs.airframe import SPECS_PATH, AirframeError, presets_from_specs
+from libs.airframe import PRESETS_DIR, AirframeError, load_presets
 
 DRIVEN_BLOCKS = ("section", "joints", "reinforcement")
-DRIVEN_JOINT_KEYS = ("type", "count", "screw", "insertion_depth_m")
+DRIVEN_JOINT_KEYS = ("type", "count", "screw", "insertion_depth_m", "coupler_wall_m", "fit_clearance_m", "socket_wall_m", "hole_edge_dist_m", "hole_diameter_m",
+                     "hole_angle_offset_deg")
 ROD_PATTERN_KEYS = ("type", "material", "diameter_m", "radial_position_m", "polar_n", "polar_offset_angle", "polar_split", "polar_split_angle")
 ROD_EXTENT_KEYS = ("from_x_m", "to_x_m")
 
 
-def read_specs() -> dict:
-    with open(SPECS_PATH, "r") as file:
-        return json.load(file)
+def read_presets() -> dict[str, dict]:
+    """Every preset as stored, by name."""
+    return {path.stem: json.loads(path.read_text()) for path in sorted(PRESETS_DIR.glob("*.json"))}
 
 
 def preset_names() -> list[str]:
-    return list(read_specs()["presets"])
+    return list(read_presets())
+
+
+def preset_spars(definition: dict) -> dict | None:
+    """The spars block of the definition's preset, without its carry-through; None without a preset or preset spars."""
+    spars = read_presets().get(definition.get("preset"), {}).get("spars")
+    return None if spars is None else {key: value for key, value in spars.items() if key != "carry_through"}
+
+
+def preset_carry_through(definition: dict) -> dict | None:
+    """The carry-through of the definition's preset spars; None without one."""
+    return read_presets().get(definition.get("preset"), {}).get("spars", {}).get("carry_through")
 
 
 def preset_blocks(definition: dict) -> dict:
@@ -43,9 +56,9 @@ def preset_status(definition: dict) -> str:
     name = definition.get("preset")
     if name is None:
         return "none"
-    stored = read_specs()["presets"].get(name)
+    stored = read_presets().get(name)
     if stored is None:
-        return f"{name} (not in data/specs.json)"
+        return f"{name} (not in data/presets/)"
     return name if preset_blocks(definition) == {key: stored[key] for key in DRIVEN_BLOCKS if key in stored} else f"{name} (modified)"
 
 
@@ -58,7 +71,7 @@ def default_rod_extent(definition: dict) -> dict:
 def apply_preset(definition: dict, name: str) -> None:
     """Fill the driven blocks from the preset and label the definition with it. Rods keep their extent (the default
     one when the aircraft had none); a preset without rods removes them."""
-    preset = read_specs()["presets"][name]
+    preset = read_presets()[name]
     fuselage = definition["fuselage"]
     fuselage["section"] = copy.deepcopy(preset["section"])
     fuselage["joints"].update(copy.deepcopy(preset["joints"]))
@@ -71,15 +84,18 @@ def apply_preset(definition: dict, name: str) -> None:
 
 
 def save_preset(name: str, definition: dict, parts_data: dict) -> None:
-    """Write the definition's driven values as preset `name` (new or overwritten; an existing preset keeps its limits
-    and CAD data) and validate the presets; on AirframeError the file is restored and the error raised."""
-    before = SPECS_PATH.read_text()
-    specs = json.loads(before)
-    kept = {key: value for key, value in specs["presets"].get(name, {}).items() if key not in DRIVEN_BLOCKS}
-    specs["presets"][name] = preset_blocks(definition) | kept
-    SPECS_PATH.write_text(json.dumps(specs, indent=4) + "\n")
+    """Write the definition's driven values as preset `name` (new or overwritten; an existing preset keeps its spars,
+    limits and CAD data) and validate the presets; on AirframeError the file is restored (or removed, if new) and the
+    error raised."""
+    path = PRESETS_DIR / f"{name}.json"
+    before = path.read_text() if path.exists() else None
+    kept = {key: value for key, value in (json.loads(before) if before else {}).items() if key not in DRIVEN_BLOCKS}
+    path.write_text(json.dumps(preset_blocks(definition) | kept, indent=4) + "\n")
     try:
-        presets_from_specs(parts_data)
+        load_presets(parts_data)
     except AirframeError:
-        SPECS_PATH.write_text(before)
+        if before is None:
+            path.unlink()
+        else:
+            path.write_text(before)
         raise

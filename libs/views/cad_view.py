@@ -2,17 +2,19 @@
 Usage:
 from libs.views.cad_view import CADMainView
 
-CAD view: STEP/STL solid export and FreeCAD varset (AirframeParams) export of the current resolved airframe.
+CAD view: STEP/STL solid export of the current resolved airframe, printable sections and couplers, the cutaway drawing and
+FreeCAD varsets.
 """
 
 from __future__ import annotations
 
-import json
 import traceback
 import tkinter as tk
 from tkinter import filedialog, ttk
 
-from libs.cad import build_freecad_exports, export_step, export_stl
+from libs.cad import export_sections, export_step, export_stl
+from libs.cutaway import export_cutaway
+from libs.varsets import export_varsets
 
 
 STEP_MODE_LABELS = {
@@ -53,7 +55,9 @@ class CADMainView:
         button_bar.grid(row=3, column=0, sticky="w")
         ttk.Button(button_bar, text="Export STEP", command=self.on_export_step).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(button_bar, text="Export STL", command=self.on_export_stl).grid(row=0, column=1, padx=(0, 8))
-        ttk.Button(button_bar, text="Export FreeCAD params (JSON)", command=self.on_export_freecad).grid(row=0, column=2)
+        ttk.Button(button_bar, text="Export printable sections", command=self.on_export_sections).grid(row=0, column=2, padx=(0, 8))
+        ttk.Button(button_bar, text="Export cutaway drawing", command=self.on_export_cutaway).grid(row=0, column=3, padx=(0, 8))
+        ttk.Button(button_bar, text="Export FreeCAD varsets", command=self.on_export_varsets).grid(row=0, column=4)
 
         self.status_var = tk.StringVar(value="")
         ttk.Label(export_frame, textvariable=self.status_var, wraplength=520, justify="left").grid(
@@ -117,19 +121,40 @@ class CADMainView:
         note = " (fuse failed, wrote unfused compound)" if written_mode == "compound" else ""
         self.status_var.set(f"STL written{note}: {path}")
 
-    def on_export_freecad(self) -> None:
+    def on_export_sections(self) -> None:
         if self.app.resolved is None:
             self.status_var.set("No valid airframe yet; fix the definition first.")
             return
-        path = filedialog.asksaveasfilename(
-            title="Export FreeCAD params",
-            defaultextension=".json",
-            initialdir=self.export_dir(),
-            initialfile=f"{self.app.project.name}_freecad.json",
-            filetypes=[("JSON", "*.json"), ("All files", "*.*")],
-        )
-        if not path:
+        directory = self.app.project.sections_dir
+        self.status_var.set("Exporting printable sections...")
+        self.frame.update_idletasks()
+        try:
+            written, problems = export_sections(self.app.resolved, directory)
+        except Exception as error:
+            traceback.print_exc()
+            self.status_var.set(f"Section export failed: {error}")
             return
-        with open(path, "w") as file:
-            json.dump(build_freecad_exports(self.app.resolved), file, indent=4)
-        self.status_var.set(f"FreeCAD params written: {path}")
+        if problems:
+            self.app.log_error("Section export", "\n".join(problems))
+        self.status_var.set(f"{len(written)} parts written to {directory}" + (f"; {len(problems)} problems in the Log tab" if problems else ""))
+
+    def on_export_cutaway(self) -> None:
+        if self.app.resolved is None:
+            self.status_var.set("No valid airframe yet; fix the definition first.")
+            return
+        self.status_var.set("Drawing the cutaway...")
+        self.frame.update_idletasks()
+        try:
+            written = export_cutaway(self.app.resolved, self.app.project.cad_dir)
+        except Exception as error:
+            traceback.print_exc()
+            self.status_var.set(f"Cutaway failed: {error}")
+            return
+        self.status_var.set(f"Cutaway written: {', '.join(str(path) for path in written)}")
+
+    def on_export_varsets(self) -> None:
+        if self.app.resolved is None:
+            self.status_var.set("No valid airframe yet; fix the definition first.")
+            return
+        written = export_varsets(self.app.resolved.airframe, self.app.project.varsets_dir)
+        self.status_var.set(f"{len(written)} varsets written to {self.app.project.varsets_dir}: {', '.join(path.stem for path in written)}")

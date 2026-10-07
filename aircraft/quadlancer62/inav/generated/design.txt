@@ -1,0 +1,66 @@
+# SITL diff from the design, rewritten by sim_inav.py on every run from it; to edit, copy it into inav/
+# quadrocketbuilder export of 62mm Quadlancer 9in: INAV mixer profiles of the tailsitter, structured as the real m62v1
+# config that flew forward (Aug 2025): profile 1 hover (multirotor, tailsitter offset), profile 2 forward flight on
+# the motors (multirotor platform, nose-first mix). Motor outputs in INAV quad X order where it applies.
+set throttle_idle = 8
+set nav_mc_hover_thr = 1434    # predicted motor command 0.480 for 4.43 N per motor
+mixer_profile 1
+set platform_type = MULTIROTOR
+set tailsitter_orientation_offset = ON
+set motor_direction_inverted = OFF
+set mixer_control_profile_linking = ON
+mmix reset
+mmix 0 1.000 -1.000 +1.000 +1.000    # motor 1 9in-puller 1, ccw
+mmix 1 1.000 -1.000 -1.000 -1.000    # motor 1 9in-puller 3, cw
+mmix 2 1.000 +1.000 +1.000 -1.000    # motor 1 9in-puller 2, cw
+mmix 3 1.000 +1.000 -1.000 +1.000    # motor 1 9in-puller 4, ccw
+smix reset
+smix 0 0 2 100 0 -1    # S1 roll: C1 new-wing panel 1
+smix 1 0 0 100 0 -1    # S1 yaw: C1 new-wing panel 1
+smix 2 1 2 -100 0 -1    # S2 roll: C4 new-wing panel 2
+smix 3 1 0 -100 0 -1    # S2 yaw: C4 new-wing panel 2
+smix 4 2 2 100 0 -1    # S3 roll: C2 new-wing panel 3
+smix 5 2 0 -100 0 -1    # S3 yaw: C2 new-wing panel 3
+smix 6 3 2 -100 0 -1    # S4 roll: C3 new-wing panel 4
+smix 7 3 0 100 0 -1    # S4 yaw: C3 new-wing panel 4
+mixer_profile 2
+set platform_type = MULTIROTOR
+set tailsitter_orientation_offset = OFF
+set motor_direction_inverted = OFF
+set mixer_control_profile_linking = ON
+mmix reset
+mmix 0 1.000 -1.000 +1.000 -1.000    # motor 1 9in-puller 1, ccw
+mmix 1 1.000 +1.000 -1.000 -1.000    # motor 1 9in-puller 3, cw
+mmix 2 1.000 +1.000 +1.000 +1.000    # motor 1 9in-puller 2, cw
+mmix 3 1.000 -1.000 -1.000 +1.000    # motor 1 9in-puller 4, ccw
+smix reset
+smix 0 0 0 -100 0 -1    # S1 roll: C1 new-wing panel 1
+smix 1 0 2 100 0 -1    # S1 yaw: C1 new-wing panel 1
+smix 2 1 0 100 0 -1    # S2 roll: C4 new-wing panel 2
+smix 3 1 2 -100 0 -1    # S2 yaw: C4 new-wing panel 2
+smix 4 2 0 -100 0 -1    # S3 roll: C2 new-wing panel 3
+smix 5 2 2 -100 0 -1    # S3 yaw: C2 new-wing panel 3
+smix 6 3 0 100 0 -1    # S4 roll: C3 new-wing panel 4
+smix 7 3 2 100 0 -1    # S4 yaw: C3 new-wing panel 4
+mixer_profile 1
+# Generated SITL diff of a tailsitter: after the design's mixer, before the bench and battery lines.
+set mag_hardware = FAKE
+set nav_mc_althold_throttle = MID_STICK    # centre stick holds altitude
+# switches: AUX1 arm, AUX2 angle, AUX3 mid althold / high poshold, AUX4 mid mixer transition / high mixer profile 2
+aux 0 0 0 1700 2100
+aux 1 1 1 1300 2100
+aux 2 3 2 1300 1700
+aux 3 11 2 1700 2100
+aux 4 63 3 1300 1700
+aux 5 62 3 1700 2100
+# What the bench's simulated hardware needs (inav-jsbsim-bench, MSP_SIMULATOR). Appended to every generated SITL diff.
+set receiver_type = SIM (SITL)
+set baro_hardware = FAKE
+set pitot_hardware = NONE
+feature GPS
+set gps_provider = MSP
+set init_gyro_cal = OFF
+set small_angle = 180    # air starts arm at whatever attitude they start in
+feature VBAT
+feature CURRENT_METER
+set battery_capacity = 2200

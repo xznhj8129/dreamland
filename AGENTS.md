@@ -8,11 +8,13 @@ Primary files:
 - `guibuilder.py`: Tk window and widget wiring
 - `libs/airframe.py`: airframe/2 schema loader and validator (the saved aircraft definition) and size preset validation
 - `libs/project.py`: aircraft project layout (`aircraft/<project>/`), open and copy
-- `libs/presets.py`: size presets (`data/specs.json` presets) applied to, compared with and saved from a definition
+- `libs/presets.py`: size presets (`data/presets/<name>.json`) applied to, compared with and saved from a definition
 - `libs/geometry.py`: `resolve_airframe`: shared geometry, mass points, CG, checks; every consumer reads it
 - `libs/aero.py`: aero (lifting-line wings + AeroBuildup bodies), Barrowman cross-check, VLM sweep
 - `libs/report.py`: report shared by the GUI and `analyze_airframe.py`; lines carry a level (`libs/reportline.py`: info, warning, problem) the GUI colours
-- `libs/cad.py`: CAD export: FreeCAD-style varsets plus CadQuery solid geometry (STEP/STL, built in mm)
+- `libs/cad.py`: CAD export: CadQuery solid geometry (STEP/STL, built in mm): whole airframe, and printable sections and couplers
+- `libs/cutaway.py`: blueprint side cutaway (SVG/PNG) of the printable parts: cut faces hatched, far half hidden-line drawn
+- `libs/varsets.py`: FreeCAD varsets, one JSON per varset (Varset_FROM_JSON.FCMacro); every value in exactly one varset
 - `libs/graphics.py`: orthographic drawing on Tk canvas
 - `libs/library_editors.py`: main-window editor panel for the part library `data/parts/`
 - `libs/airfoil_analysis.py`: NeuralFoil 2D airfoil comparison and DAT import
@@ -20,7 +22,7 @@ Primary files:
 - `libs/views/aero_analysis_view.py`: Aero Analysis main-view layout and NeuralFoil airfoil comparison
 - `libs/views/vlm_view.py`: VLM main-view layout and selectors
 - `libs/views/sitl_view.py`: SITL main-view: runs `sim_inav.py` or `sim_script.py`, streams its output, live flight-log plot
-- `libs/views/cad_view.py`: CAD main-view with STEP/STL export controls
+- `libs/views/cad_view.py`: CAD main-view with STEP/STL, printable section, cutaway and varset export controls
 - `libs/views/part_editor_view.py`: part-editor main-view mount
 - `libs/pointed_shapes.py`: pointed-profile geometry helpers
 - `libs/motorlib/`: motorlib (rcplanes.online calculator data and formulas: motors, props, cells, ESCs, wires), copied from dronebuildcalc
@@ -31,14 +33,15 @@ Primary files:
 - `libs/propulsion.py`: motor + prop model on motorlib, wiring resistance from the design, throttle as ESC duty
 - `sim_inav.py`: flies the JSBSim export in INAV SITL on `inav_development/inav-jsbsim-bench`
 - `sim_script.py`: flies the JSBSim export with a project's controller script, lockstep in simulated time
-- `libs/controller.py`: `Controller` script API: simulated SPI IMU, baro, mag, GPS, pitot, rangefinder in raw hardware units; ESC/servo pulses in us
+- `libs/controller.py`: `Controller` script API: simulated SPI IMU, baro, mag, GPS, pitot, rangefinder in raw hardware units; ESC/servo pulses in us; `truth` (`TruthState`): the simulator's own state, for scripting around a flight, not for control
 - `libs/simrun.py`: shared by both runners: start conditions, vehicle build, ground rule, electrical model, plots
 - `airfoil_analysis_example.py`: simple non-GUI example of the airfoil comparison
-- `aircraft/<project>/`: one aircraft project (`aircraft/` is gitignored except `aircraft/example`, a copy of simpleplane): `aircraft.json` (airframe/2 definition), `inav/` (real FC diffs, SITL diffs; `generated/`: the diff written for each generated or real-FC run), `sitl/` (pinned SITL.elf, eeprom.bin, sitl.log), `jsbsim/` (export), `logs/` (SITL and script flight logs and plots), `cad/` (exports), `controllers/` (flight controller scripts)
+- `aircraft/<project>/`: one aircraft project (`aircraft/` is gitignored except `aircraft/example`, a copy of simpleplane): `aircraft.json` (airframe/2 definition), `inav/` (real FC diffs, SITL diffs; `generated/`: the diff written for each generated or real-FC run), `sitl/` (pinned SITL.elf, eeprom.bin, sitl.log), `jsbsim/` (export), `logs/` (SITL and script flight logs and plots), `cad/` (exports; `cutaway.svg/.png`; `sections/`: printable parts, `varsets/`: FreeCAD varsets), `controllers/` (flight controller scripts)
 - `data/parts/`: part library, one `<category>.json` per category (battery, esc, prop, material, connector)
 - `data/airfoils.json`: imported airfoil coordinates
 - `data/inav/`: INAV settings templates (`sitl.txt` bench hardware, `plane.txt`, `tailsitter.txt` switches and modes) for generated SITL diffs
-- `data/specs.json`: size presets (M62, M75), fasteners, openings, signal wire paths (an early sketch, not authoritative)
+- `data/presets/`: size presets (M62, M75), one file each, in the definition's own form (section, joints, rods, spars, limits, CAD)
+- `data/specs.json`: shared specs: fasteners, printer, openings, signal wire paths (an early sketch, not authoritative)
 
 ## Rules
 

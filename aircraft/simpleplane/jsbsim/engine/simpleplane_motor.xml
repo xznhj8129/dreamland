@@ -1,0 +1,10 @@
+<?xml version="1.0"?>
+<!-- quadrocketbuilder: DYS X2812-900 (900 KV), GWS HD 9x5, 6S: motorlib's full-throttle static point (13424 RPM,
+     39.9 A) at 22.2 V nominal; resistance = wiring 76.9 mOhm per motor
+     (see libs/propulsion.py) + loaded winding; maxvolts = nominal pack voltage. -->
+<brushless_dc_motor name="DYS X2812-900 (900 KV)">
+  <velocityconstant> 900.0 </velocityconstant>
+  <coilresistance> 0.18266 </coilresistance>
+  <noloadcurrent> 1.3050 </noloadcurrent>
+  <maxvolts> 22.200 </maxvolts>
+</brushless_dc_motor>
