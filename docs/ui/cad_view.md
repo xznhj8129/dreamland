@@ -44,5 +44,5 @@ SolidGeometryExportPanel
     - if the boolean fuse fails, the export still writes an unfused compound
       and the status line says so
     - every export requires a computed analysis; otherwise the status line
-      asks to recompute the configuration first
+      asks to recompute the definition first
 ```

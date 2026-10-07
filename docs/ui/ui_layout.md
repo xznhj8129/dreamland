@@ -34,9 +34,9 @@ Component [attr, attr]          Layout/behavior properties
 ## Files
 
 - [main_window.md](docs/ui/main_window.md)
-- [configuration_view.md](docs/ui/configuration_view.md)
+- [editor_view.md](docs/ui/editor_view.md)
 - [aero_analysis_view.md](docs/ui/aero_analysis_view.md)
 - [vlm_view.md](docs/ui/vlm_view.md)
-- [sitl_view.md](docs/ui/sitl_view.md)
+- [sim_view.md](docs/ui/sim_view.md)
 - [cad_view.md](docs/ui/cad_view.md)
 - [part_editor_view.md](docs/ui/part_editor_view.md)

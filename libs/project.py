@@ -21,6 +21,7 @@ aircraft/<project>/
 
 from __future__ import annotations
 
+import json
 import shutil
 from dataclasses import dataclass
 from pathlib import Path
@@ -99,3 +100,22 @@ def copy_project(project: Project, new_root: Path) -> Project:
         raise ProjectError(f"{new_root} already exists")
     shutil.copytree(project.root, new_root)
     return Project(new_root.resolve())
+
+
+def create_project(name: str, definition: dict) -> Project:
+    """A new project directory holding definition as its build file; the standard subdirectories are created empty."""
+    if not name or Path(name).name != name:
+        raise ProjectError(f"{name!r} is not a plain directory name")
+    root = PROJECTS_DIR / name
+    if root.exists():
+        raise ProjectError(f"{root} already exists")
+    try:
+        root.mkdir()
+        for relative in ("inav/generated", "sitl", "jsbsim", "logs", "cad/sections", "cad/varsets", "controllers"):
+            (root / relative).mkdir(parents=True)
+        with open(root / BUILD_FILE, "w") as file:
+            json.dump(definition, file, indent=4)
+    except OSError as error:
+        shutil.rmtree(root, ignore_errors=True)
+        raise ProjectError(f"could not create {root}: {error}") from error
+    return Project(root.resolve())

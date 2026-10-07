@@ -11,7 +11,7 @@ import re
 import tkinter as tk
 from tkinter import messagebox, ttk
 
-from libs.airframe import load_parts_data, save_parts_category
+from libs.airframe import PART_ROLES, load_parts_data, save_parts_category
 
 
 UI_BG = "#000000"
@@ -50,6 +50,8 @@ OPTIONAL_LIBRARY_FIELDS = {
     "battery": {"connector": str, "ir_mohm_per_cell": float, "lead_awg": int, "lead_length_mm": float},
     "esc": {"mosfet_rds_on_ohm": float},
 }
+# A new part of a role (libs/airframe.py PART_ROLES): its common fields, filled in by hand.
+NEW_ROLE_PART = {"generic": True, "mass": 0.0, "dimensions": {"l": 10.0, "w": 10.0, "h": 10.0}, "mount": None, "wiring_origin_mm": [0.0, 0.0, 0.0], "notes": ""}
 NEW_PART_LIBRARY_DEFAULTS = {
     "battery": {
         "type": "lipo",
@@ -61,13 +63,9 @@ NEW_PART_LIBRARY_DEFAULTS = {
         "connector": "",
         "dimensions": {"l": 0, "h": 0, "w": 0},
     },
-    "esc": {
-        "type": "esc",
-        "mass": 0.0,
-        "curr": 0,
-        "min_s": 0,
-        "max_s": 0,
-    },
+    **{role: dict(NEW_ROLE_PART) for role in PART_ROLES},
+    "esc": dict(NEW_ROLE_PART) | {"curr": 0, "min_s": 0, "max_s": 0},
+    "mounting": {"holes_mm": [], "screw": "M3", "outline_mm": [0.0, 0.0], "notes": ""},
     "prop": {"diameter_in": 0, "mass": 0.0},
     "material": {"density_kg_m3": 0.0},
     "connector": {"contact_resistance_ohm": 0.0},
@@ -82,6 +80,8 @@ def ordered_keys(data: dict, preferred_keys: list[str]) -> list[str]:
 
 
 def format_field_value(key: str, value):
+    if value is None:
+        return ""
     if key in LENGTH_FIELD_KEYS_M:
         return f"{value * 1000.0:g}"
     if key in MASS_FIELD_KEYS_KG:
@@ -128,6 +128,8 @@ def field_label(key: str) -> str:
 
 
 def parse_field_value(key: str, text: str, existing_value):
+    if existing_value is None:  # e.g. a part's mount: blank (or none) stays null
+        return None if text.strip().lower() in ("", "none", "null") else text.strip()
     if type(existing_value) is int:
         value = int(text)
     elif type(existing_value) is float:

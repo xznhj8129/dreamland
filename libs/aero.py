@@ -48,6 +48,10 @@ class OperatingPointError(Exception):
     """The operating point lies outside what the aero model covers."""
 
 
+class NoLiftingSurfacesError(Exception):
+    """The definition has no lifting surfaces, so there is nothing for the aero model to solve."""
+
+
 @dataclass(frozen=True)
 class SweepRow:
     aoa_deg: float
@@ -425,6 +429,8 @@ def lifting_line_sweep(
 
 
 def analyze_aero(resolved: ResolvedAirframe) -> AeroResult:
+    if not resolved.surfaces:
+        raise NoLiftingSurfacesError("aero needs at least one lifting surface; the definition has none")
     operating_point = resolved.airframe.operating_point
     if not AOA_SWEEP_DEG.start <= operating_point.aoa_deg <= AOA_SWEEP_DEG.stop - 1:
         raise OperatingPointError(f"aero covers AoA {AOA_SWEEP_DEG.start} to {AOA_SWEEP_DEG.stop - 1} deg; operating point AoA is {operating_point.aoa_deg} deg")
@@ -545,7 +551,7 @@ def build_vlm_report_text(result: VLMResult) -> str:
         "",
         "AeroSandbox VLM models the lifting surfaces only: the fuselage, pods and motors are left out, so",
         "body-mounted wings read low (no lift carried across the body) and NP / static margin here are for",
-        "the wings alone. The Configuration summary (AeroBuildup) includes the body.",
+        "the wings alone. The Editor summary (AeroBuildup) includes the body.",
         "",
         "Parameters",
         f"AoA                   : {settings['aoa_start']:g} to {settings['aoa_end']:g} deg step {settings['aoa_increment']:g}",

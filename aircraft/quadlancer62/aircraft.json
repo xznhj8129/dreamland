@@ -94,6 +94,7 @@
                 "count": 2,
                 "spacing_m": 0.0075,
                 "x_offset_m": 0.02,
+                "y_offset_m": 0.0,
                 "carry_through": {
                     "stem_width_m": 0.01,
                     "length_m": 0.02,
@@ -124,6 +125,7 @@
                 "count": 2,
                 "spacing_m": 0.0075,
                 "x_offset_m": 0.03,
+                "y_offset_m": 0.0,
                 "carry_through": {
                     "stem_width_m": 0.01,
                     "length_m": 0.02,

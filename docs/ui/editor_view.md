@@ -1,11 +1,11 @@
-# Configuration View
+# Editor View
 
 This file covers the main aircraft-building view shown by default.
 
 ## Layout
 
 ```text
-ConfigurationView [fill, split:h]
+EditorView [fill, split:h]
 
     * LeftPane [fill]
     * CenterPane [fill]
@@ -15,7 +15,7 @@ ConfigurationView [fill, split:h]
 ### Pane behavior
 
 ```text
-ConfigurationView split behavior
+EditorView split behavior
     - left / center / right panes are horizontally split
     - startup split is 25% / 50% / 25%
     - pane dividers remain draggable after startup
@@ -54,7 +54,7 @@ SummaryTab [fill]
 
     * SummaryPanel [fill, scrollable, copyable, word-wrapped]
         * SummaryText [ui:fixed-width text, bind:analysis.report_text]
-            includes dimensional surface-force estimates at the current Configuration operating condition
+            includes dimensional surface-force estimates at the current operating condition
             reports per-surface lift / drag / vertical force using the configured airfoil and surface geometry
             problems in red (layout problems, unstable margin, no hover), warnings in yellow (marginal margin,
             parts not modelled, motorlib warnings)
@@ -292,7 +292,7 @@ SurfacesTab [arrange:column]
     - Add surface set [ui:button]
     * one card per surface set: its planform fields, mass (blank = computed), Delete
       control surface [ui:checkbox] with its fields
-      spars [ui:checkbox] (ticking fills them from the aircraft's preset): material [ui:dropdown], diameter, count, spacing, x offset,
+      spars [ui:checkbox] (ticking fills them from the aircraft's preset): material [ui:dropdown], diameter, count, spacing, x offset, y offset (up),
         carry-through [ui:checkbox]: stem width, length, flare radius, root length, wall fillet
       root base (not built yet) [ui:checkbox]: length, width, height, forward offset, leading cut, trailing cut
 ```
@@ -367,6 +367,8 @@ VolumesTab [arrange:column]
       list of the parts in it, Delete
 
 Rules
+    - shapes: box, rounded box (size, axis of its rounded edges, corner radius), cylinder, bore, point
+    - deleting a volume leaves its parts (and the battery) where they are, at their own x, y, z
     - renaming a volume renames it in its parts
     - deleting a volume that still holds parts leaves them pointing at it: a definition error in the Log until moved
     - dragging a volume in the side view moves its parts
@@ -380,7 +382,7 @@ PartsTab [arrange:column]
     - Add part [ui:button]        new part: first library entry with a mass, in the first volume (no volume: at mid-fuselage)
     * one card per part: name, part (library), volume [ui:dropdown, "(none)" first],
       in a volume: x, y, z offset from its centre (mm, blank = 0); "(none)": its own x, y, z (mm; y, z blank = 0),
-      mass (g; blank = library, required when the library has none; 0 = counted elsewhere), Delete
+      yaw, pitch, roll (deg, blank = 0), mass (g; blank = library, required when the library has none; 0 = counted elsewhere), Delete
 
 Rules
     - renaming a part renames it in the propulsion ESC; the propulsion battery is not a part (Propulsion tab)
@@ -437,7 +439,9 @@ Refreshes after every edit
 Length fields
     - displayed in mm
     - stored internally in meters
-    - mouse wheel changes by 1 displayed mm
+
+Any number field
+    - mouse wheel over it: up multiplies by 1.01, down divides by 1.01 (a whole number: +/- 1), applied at once
 
 Mass fields
     - displayed in g

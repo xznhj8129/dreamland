@@ -99,7 +99,8 @@ def surface_varset(surface: Surface) -> dict:
     if surface.spars is not None:
         spars = surface.spars
         groups["Spars"] = {"Material": text(spars.material), "Diameter": length(spars.diameter_m), "Count": integer(spars.count),
-                           "Spacing": length(spars.spacing_m), "XOffset": length(spars.x_offset_m)}
+                           "Spacing": length(spars.spacing_m), "XOffset": length(spars.x_offset_m),
+                           "YOffset": distance(spars.y_offset_m)}
         if spars.carry_through is not None:
             carry = spars.carry_through
             groups["CarryThrough"] = {"StemWidth": length(carry.stem_width_m), "Length": length(carry.length_m), "FlareRadius": length(carry.flare_radius_m),

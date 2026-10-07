@@ -20,7 +20,7 @@ from pathlib import Path
 from inavbench.bench import LOG_HZ
 from inavbench.vehicles import Plant
 
-from libs.airframe import load_airframe, load_parts_data
+from libs.airframe import PlacedPart, load_airframe, load_parts_data
 from libs.controller import load_controller
 from libs.geometry import resolve_airframe
 from libs.jsbsim import reuse_or_export
@@ -36,6 +36,15 @@ ABORTED_EXIT_CODE = 130  # stopped by SIGINT, as a shell reports Ctrl-C
 def script_log_path(project: Project, name: str) -> Path:
     """The flight log (CSV) of a script's run."""
     return project.logs_dir / f"script_{name}.csv"
+
+
+def imu_mount(fc: PlacedPart, cg_m) -> tuple:
+    """The FC's offset from the CG and its axes, in the plant's body axes (x forward, y left, z up; the geometry's x aft,
+    y right, z up: both frames flip x and y, so the rotation is D R D with D = diag(-1, -1, 1))."""
+    flip = (-1.0, -1.0, 1.0)
+    offset = tuple(f * (p - c) for f, p, c in zip(flip, fc.position_m, cg_m))
+    rotation = tuple(tuple(flip[i] * value * flip[j] for j, value in enumerate(row)) for i, row in enumerate(fc.rotation()))
+    return offset, rotation
 
 
 def main() -> None:
@@ -67,6 +76,12 @@ def main() -> None:
     plant.hover_frame = False  # the script's IMU is fixed to the body, whatever the aircraft
     plant.set_wind(*state.wind_ned_m_s())
     controller = controller_class(motor_count, servo_count)
+    fc = next((placed for placed in airframe.parts if placed.part.split(":")[0] == "fc"), None)
+    if fc is not None:
+        controller.imu._mount(*imu_mount(fc, resolved.cg_m))
+        print(f"IMU on {fc.name} ({fc.part}), {[round(v * 1000.0, 1) for v in fc.position_m]} mm, yaw/pitch/roll {list(fc.orientation_deg)} deg")
+    else:
+        print("IMU at the CG, body axes (no fc part placed)")
     run_log = script_log_path(project, args.controller)
     run_log.parent.mkdir(parents=True, exist_ok=True)
     run_log.unlink(missing_ok=True)
@@ -133,6 +148,6 @@ def write_log(path: Path, rows: list[dict]) -> None:
 if __name__ == "__main__":
     try:
         main()
-    except KeyboardInterrupt:  # the SITL view's Abort (SIGINT): the log and plots are already written
+    except KeyboardInterrupt:  # the SIM view's Abort (SIGINT): the log and plots are already written
         print("Aborted.")
         sys.exit(ABORTED_EXIT_CODE)

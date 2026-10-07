@@ -1,20 +1,15 @@
 User added TODOs (do not remove/change unless done)
-- 1% change mouse wheel scroll over value field
 - changing xyz positions entry (which specifically, some must stay mm) from abs mm to relative frac to allow scaling without one-by-one mm adjustment
-- FC position (affects IMU)
-- SITL (rename to SIM):
+- SIM:
         * Re-design testing scenarios to be scripts with starting conditions, measurement points and goal/stop conditions
         * Center pane should have a Scenario text editor where the script can be edited as python
         * Scenario method of control for Flight Controller SITL is what a pilot would traditionally use: RC channels
 - Hatches
-- Wing spars y-offset (up/down thickness)
 - CAD export options currently stale-ish and confusing, blocking, no status bar or similar
     - Component fused / Fused OML ~vs~ Export Step, stl, printable sections, cutaway, varsets
-- I wonder why export cutaway take so long, also for m62 lancier the main wing leading edge is invisible
-- Rounded rectangle as volume
 - Auto-conduits from wires
 - Wire placement (think drawio, horizontal/vertical)
-- Editor view (btw rename Configuration to Editor) 
+- Editor view
     - Angle snap to surfaces flat
 - Is it even possible to do a above-side view with 1/4 cutaway? like in plane books?
 
@@ -85,6 +80,7 @@ Agent added TODOs, freeform, remove done ones
         - m62v1 vs real flight (log .06, steady forward samples, cruise sweep at 22.2 V), 2026-10-02, with the bench-fit motor model (retired 2026-10-03 for motorlib; not rerun): with the old prop, speed at the real battery power bias +0.7 km/h RMS 6.8, but that prop made -3..+1 N thrust at the logged speed and motor (25-35 % of the real power). With the APC-shaped prop: speed at the real motor +42 km/h (RMS 43), at the real power +68 km/h. Prop alone at the logged points: 80-85 % of the real battery power, 10-18 N thrust; the log's power (Cp 0.54-0.62 of static at J ~0.72) is more than either prop shape. AeroBuildup drag at 31 m/s is a few N. Open: real drag, prop in forward flight, current sensor (pack sag fit 58 mOhm, plausible).
         - JSBSim quirks: do_simple_trim (ground trim) segfaults on a nose-up model, so start standing at stance_height_m; BOGEY contacts explode with the body axis vertical, so STRUCTURE contacts.
         - INAV HITL: MSP_SIMULATOR writes acc/gyro/mag past board/tailsitter alignment; the bench (Vehicle.tailsitter) rotates sensors into the hover frame. FC pitch estimate carries ~+1.6 deg bias in hover (likely INAV's one-time tailsitter quaternion rotation at boot); POSHOLD absorbs it.
+        - FC part position and orientation not used in INAV SITL yet (the script controller's IMU uses them): bench change to read sensors at the FC (lever arm, axes) and matching board alignment in the generated diff.
         - 2026-10-02: m62v1 dash on its real Aug-2025 profile 2 (aircraft-defining lines only, rest INAV 10 defaults): level, stable at full throttle. Motor model now a fitted brushless DC motor (bench thrust within 5 g, RPM ~1.5 %). Real flight log 22/08/2025: 30-36 m/s at 57-77 % motor, pack 21-23 V (not full throttle).
         - 2026-10-02: quadlancer62 takeoff + transition + cruise sweep (generated two-profile config): best range ~60 km/h 2.4 Wh/km, best endurance ~55 km/h 138 W, stall just under 55 km/h (model estimates; no battery sag).
         - quadlancer62 hover with INAV 10 default PIDs oscillates (~1 Hz pitch/yaw, tilt to 30 deg); ANGLE climb steady. Needs a hover tune (bigger inertia, 9in props).
@@ -104,6 +100,8 @@ Agent added TODOs, freeform, remove done ones
           On ice 2026-10-02: cloned to Software/other_software/FluidX3D (unmodified, built; benchmark 2527 MLUPs/s on the 3060). cfd/fluidx3d_setup.cpp written, not compiled or run (free stream at AoA on all faces, aircraft fixed, force + moment about CG to CSV; case file via QRB_CASE). Not done: runner cfd_fluidx3d.py (install setup as src/quadrocket_setup.cpp, enable FORCE_FIELD/EQUILIBRIUM_BOUNDARIES/SUBGRID, BENCHMARK off, export fused STL (binary, mm, geometry frame), average last flow-through, compare with LL/AeroBuildup). Docs: forces up to 2x high in turbulent flow (no wall model). License: no commercial or military use; publish altered source if results are published.
         - CFD, CPU: OpenFOAM (Docker image opencfd/openfoam-default; Mint's packaged version is 2020), simpleFoam k-omega SST, half model (XZ symmetry), 0.5-1M cells: ~10-25 min per AoA on the Ryzen 5 3400G (4 cores), overnight sweeps; fully turbulent RANS misreads laminar bubbles at Re ~100k (transition model is slower). Cloud 32-64 cores (~1-3 $/h) for occasional big runs.
         - CFD is a spot-check referee for the fast models, not part of the optimizer loop.
+
+- Web front end (later, not now): TypeScript UI with a 3D engine (Three.js or Babylon.js), talking to a local Python server; geometry, aero, CAD, JSBSim and SITL stay Python. Start with the editor (Editor view: definition editors and the 3D airframe/section view) and the SIM window only; the Tk app keeps working alongside.
 
 - Housekeeping:
         - No requirements file. Deps (aerosandbox, neuralfoil, cadquery) only present in conda env "drone".

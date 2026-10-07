@@ -18,7 +18,7 @@ import dataclasses
 import sys
 from pathlib import Path
 
-from libs.aero import analyze_aero
+from libs.aero import NoLiftingSurfacesError, OperatingPointError, analyze_aero
 from libs.airframe import load_airframe, load_parts_data
 from libs.cad import export_sections, export_step, export_stl
 from libs.cutaway import export_cutaway
@@ -54,7 +54,11 @@ def main() -> None:
         airframe = dataclasses.replace(airframe, operating_point=dataclasses.replace(airframe.operating_point, **overrides))
 
     resolved, problems = resolve_airframe(airframe, parts_data)
-    aero = analyze_aero(resolved)
+    try:
+        aero = analyze_aero(resolved)
+    except (OperatingPointError, NoLiftingSurfacesError) as error:
+        print(f"Aero not computed: {error}", file=sys.stderr)
+        aero = None
     print(f"Source: {project.build_path}")
     propulsion = None
     if airframe.propulsion is not None:

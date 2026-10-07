@@ -1,8 +1,8 @@
 """
 Usage:
-from libs.views.configuration_view import ConfigurationMainView
+from libs.views.editor_view import EditorMainView
 
-Configuration view: summary, drawing and the plane-first editors (Airframe, Surfaces, Propulsion, Volumes).
+Editor view: summary, drawing and the plane-first editors (Airframe, Surfaces, Propulsion, Volumes).
 Editors write straight into app.definition (the airframe/2 dict) and call app.recompute(). Lengths are shown in
 mm and masses in g; the definition stays in SI. In the side view, volumes and wing sets can be dragged along x.
 """
@@ -18,7 +18,7 @@ from matplotlib.backends.backend_tkagg import FigureCanvasTkAgg
 from matplotlib.figure import Figure
 
 from libs.airframe import (
-    AXES, BATTERY_PART_NAME, CONTROL_KINDS, CONTROL_ROLES, CUT_JOINTS, FIN_POSITIONS, INCIDENCE_MODES, JOINT_TYPES, LAYOUT_PANEL_COUNTS, LAYOUTS, MOUNT_TARGETS, REINFORCEMENT_TYPES,
+    AXES, BATTERY_PART_NAME, ORIENTATION_KEYS, CONTROL_KINDS, CONTROL_ROLES, CUT_JOINTS, FIN_POSITIONS, INCIDENCE_MODES, JOINT_TYPES, LAYOUT_PANEL_COUNTS, LAYOUTS, MOUNT_TARGETS, REINFORCEMENT_TYPES,
     SERVO_OUTPUTS, PART_CATEGORIES, SINGLE_PROP_SPINS, SURFACE_PROP_SPINS, SURFACE_ROOTS, THRUST_DIRECTIONS, VOLUME_SHAPES, AirframeError,
     cell_format, motor_count, motor_repo,
 )
@@ -38,7 +38,7 @@ MM_KEYS = {
     "length_m", "width_m", "height_m", "wall_radial_m", "insertion_depth_m", "diameter_m", "radial_position_m",
     "from_x_m", "to_x_m", "x_root_le_m", "span_m", "chord_root_m", "chord_tip_m", "span_position_m",
     "x_offset_m", "y_offset_m", "z_offset_m", "x_m", "y_m", "z_m", "lead_length_m", "flat_length_m", "curve_length_m", "nose_radius", "size_m", "printer_bed_m", "cuts_m",
-    "stem_width_m", "flare_radius_m", "root_length_m", "wall_fillet_m", "coupler_wall_m", "fit_clearance_m", "socket_wall_m", "hole_edge_dist_m", "hole_diameter_m", "spacing_m", "forward_offset_m", "leading_cut_m", "trailing_cut_m",
+    "corner_radius_m", "stem_width_m", "flare_radius_m", "root_length_m", "wall_fillet_m", "coupler_wall_m", "fit_clearance_m", "socket_wall_m", "hole_edge_dist_m", "hole_diameter_m", "spacing_m", "forward_offset_m", "leading_cut_m", "trailing_cut_m",
 }
 GRAM_KEYS = {"mass_kg", "coupler_mass_kg", "empty_mass_kg", "complete_mass_kg"}
 UNIT_SUFFIXES = ("_kg_m3", "_m_s", "_deg_s", "_deg", "_kg", "_m")
@@ -57,6 +57,7 @@ CHOICES = {
 PROFILE_PARAM_DEFAULTS = {"k_prime": 1.0, "nose_radius": 0.00465, "break_fraction": 0.5, "break_radius_fraction": 0.5, "rho_factor": 1.25, "exponent": 0.66, "c": 0.0}
 VOLUME_SHAPE_FIELDS = {
     "box": {"size_m": [0.02, 0.02, 0.02]},
+    "rounded_box": {"size_m": [0.02, 0.02, 0.02], "axis": "x", "corner_radius_m": 0.004},
     "cylinder": {"diameter_m": 0.02, "length_m": 0.03, "axis": "x"},
     "bore": {"length_m": 0.05},
     "point": {},
@@ -69,7 +70,7 @@ CONTROL_KIND_FIELDS = {"split": {"chord_start": 0.75, "span_start": 0.0, "span_e
 NEW_CONTROL = {"kind": "split", "roles": [], "deflection_min_deg": -25.0, "deflection_max_deg": 25.0, "rate_deg_s": 300.0}  # + kind fields, servos
 NEW_POD = {"diameter_m": 0.035, "flat_length_m": 0.02, "curve_length_m": 0.05, "profile": "elliptical"}
 # Spars and carry-through for an aircraft without a preset to take them from (the M62 preset's values).
-NEW_SPARS = {"material": "carbon_rod", "diameter_m": 0.0064, "count": 2, "spacing_m": 0.0075, "x_offset_m": 0.02}
+NEW_SPARS = {"material": "carbon_rod", "diameter_m": 0.0064, "count": 2, "spacing_m": 0.0075, "x_offset_m": 0.02, "y_offset_m": 0.0}
 NEW_CARRY_THROUGH = {"stem_width_m": 0.01, "length_m": 0.02, "flare_radius_m": 0.02, "root_length_m": 0.04, "wall_fillet_m": 0.004}
 NEW_ROOT_BASE = {"length_m": 0.096, "width_m": 0.018, "height_m": 0.0, "forward_offset_m": 0.0, "leading_cut_m": 0.01, "trailing_cut_m": 0.06}
 NEW_MOTOR = {"manufacturer": "DYS", "name": "X2807-1300"}  # motorlib
@@ -97,6 +98,7 @@ SECTION_ENTRY_WIDTH = 5
 TYPE_FLAGS = ("tailsitter", "vtol", "powered")  # each implies the ones after it
 DRAG_KEYS = {"volume": ("volumes", "x_m"), "surface": ("surfaces", "x_root_le_m")}  # cuts drag the sections.cuts_m entry, spars their x_offset_m
 MIN_SECTION_LENGTH_M = 0.005
+WHEEL_STEP_FRACTION = 0.01  # mouse wheel over a value field changes it by this fraction per notch
 
 
 def field_label(key: str) -> str:
@@ -136,7 +138,7 @@ def parse_value(key: str, text: str, existing):
     return float(text) / display_factor(key)
 
 
-class ConfigurationMainView:
+class EditorMainView:
     def __init__(self, app, parent) -> None:
         self.app = app
         self.view_zoom_scale = 1.0
@@ -159,7 +161,7 @@ class ConfigurationMainView:
         self.frame.grid(row=0, column=0, sticky="nsew")
         self.frame.columnconfigure(0, weight=1)
         self.frame.rowconfigure(0, weight=1)
-        app.configuration_view = self.frame
+        app.editor_view = self.frame
 
         pane_window = ttk.Panedwindow(self.frame, orient=tk.HORIZONTAL)
         pane_window.grid(row=0, column=0, sticky="nsew")
@@ -453,8 +455,20 @@ class ConfigurationMainView:
                 self.changed(rebuild=True)
             return "break"
 
+        def wheel(step: int) -> str:
+            """Mouse wheel over a number: WHEEL_STEP_FRACTION of its value per notch, up multiplying and down dividing so a notch
+            back undoes it (an integer by 1), committed at once."""
+            value = data[key] if type(data) is list or key in data else None
+            if type(value) not in (int, float) or type(value) is bool:
+                return "break"
+            variable.set(format_value(unit_key, value + step if type(value) is int else value * (1.0 + WHEEL_STEP_FRACTION) ** step))
+            return commit()
+
         for sequence in ("<Return>", "<KP_Enter>", "<FocusOut>"):
             entry.bind(sequence, commit)
+        entry.bind("<MouseWheel>", lambda event: wheel(1 if event.delta > 0 else -1))
+        entry.bind("<Button-4>", lambda _event: wheel(1))
+        entry.bind("<Button-5>", lambda _event: wheel(-1))
         return entry
 
     def add_vector_entries(self, frame, row: int, data: dict, key: str, axis_labels: tuple[str, ...]) -> int:
@@ -513,6 +527,12 @@ class ConfigurationMainView:
         frame.columnconfigure(1, weight=1)
         ttk.Button(frame, text="Delete", command=on_delete).grid(row=0, column=2, sticky="e")
         return frame
+
+    def reset_definition_state(self) -> None:
+        """A newly created or loaded definition: drop the blocks stashed from the previous one."""
+        self.stashed_propulsion = None
+        self.stashed_batteries = {}
+        self.stashed_reinforcement = None
 
     def rebuild_editors(self) -> None:
         for frame in self.editor_frames.values():
@@ -990,8 +1010,9 @@ class ConfigurationMainView:
         battery = propulsion["battery"]
         if model == battery["model"]:
             return
-        self.stashed_batteries[battery["model"]] = {key: value for key, value in battery.items() if key not in PLACEMENT_KEYS}
-        placement = {key: value for key, value in battery.items() if key in PLACEMENT_KEYS}
+        kept = (*PLACEMENT_KEYS, *ORIENTATION_KEYS)  # where it is and how it is turned
+        self.stashed_batteries[battery["model"]] = {key: value for key, value in battery.items() if key not in kept}
+        placement = {key: value for key, value in battery.items() if key in kept}
         fields = self.stashed_batteries.get(model) or (copy.deepcopy(NEW_CUSTOM_PACK) if model == "custom_liion" else
                                                          {"model": "commercial", "part": sorted(self.app.parts_data["battery"])[0]})
         propulsion["battery"] = {**fields, **placement}
@@ -1106,14 +1127,14 @@ class ConfigurationMainView:
                                "Drag volumes along the body in the side view (their parts move with them).").grid(row=0, column=0, sticky="w", padx=4)
         ttk.Button(parent, text="Add volume", command=self.add_volume).grid(row=1, column=0, sticky="w", padx=4, pady=4)
         for index, volume in enumerate(volumes):
-            frame = self.card(parent, index + 2, volume["name"], lambda i=index: self.delete_item("volumes", i))
+            frame = self.card(parent, index + 2, volume["name"], lambda i=index: self.delete_volume(i))
             self.add_entry(frame, 1, volume, "name", on_commit=self.rename_volume)
             self.add_choice(frame, 2, volume, "shape", list(VOLUME_SHAPES), on_change=lambda v=volume: self.reset_volume_shape(v))
             row = 3
             for key in ("x_m", "y_m", "z_m"):
                 self.add_entry(frame, row, volume, key, optional=key != "x_m")
                 row += 1
-            if volume["shape"] == "box":
+            if "size_m" in VOLUME_SHAPE_FIELDS[volume["shape"]]:
                 row = self.add_vector_entries(frame, row, volume, "size_m", ("x", "y", "z"))
             for key in VOLUME_SHAPE_FIELDS[volume["shape"]]:
                 if key != "size_m":
@@ -1126,6 +1147,24 @@ class ConfigurationMainView:
             row += 1
             contents = [part["name"] for part in self.app.definition["parts"] if part.get("volume") == volume["name"]]
             ttk.Label(frame, text=f"parts: {', '.join(contents) if contents else 'none'}").grid(row=row, column=0, columnspan=3, sticky="w")
+
+    def delete_volume(self, index: int) -> None:
+        """Delete a volume; the parts (and the battery) in it stay where they are, at their own x, y, z."""
+        definition = self.app.definition
+        volume = definition["volumes"][index]
+        centre = (volume["x_m"], volume.get("y_m", 0.0), volume.get("z_m", 0.0))
+        held = list(definition["parts"])
+        if "propulsion" in definition:
+            held.append(definition["propulsion"]["battery"])
+        for item in held:
+            if item.get("volume") != volume["name"]:
+                continue
+            position = [c + item.get(f"{axis}_offset_m", 0.0) for c, axis in zip(centre, AXES)]
+            for key in PLACEMENT_KEYS:
+                item.pop(key, None)
+            item.update({f"{axis}_m": round(value, 6) for axis, value in zip(AXES, position)})
+        definition["volumes"].pop(index)
+        self.changed(rebuild=True)
 
     def rename_volume(self, old: str, new: str) -> None:
         for part in self.app.definition["parts"]:
@@ -1142,15 +1181,15 @@ class ConfigurationMainView:
             frame = self.card(parent, index + 2, part["name"], lambda i=index: self.delete_item("parts", i))
             self.add_entry(frame, 1, part, "name", on_commit=self.rename_part)
             self.add_choice(frame, 2, part, "part", library)
-            self.add_placement(frame, 3, part, part["name"])
+            mass_row = self.add_placement(frame, 3, part, part["name"])
             category, _, name = part["part"].partition(":")
             library_mass = self.app.parts_data[category][name].get("mass") if name in self.app.parts_data.get(category, {}) else None
             hint = "blank = library" if library_mass else "required (none in library)"
-            self.add_entry(frame, 7, part, "mass_kg", optional=True, blank_hint=hint)
+            self.add_entry(frame, mass_row, part, "mass_kg", optional=True, blank_hint=hint)
 
     def add_placement(self, frame, row: int, item: dict, placed_name: str) -> int:
-        """Volume dropdown (NO_VOLUME first) and the offsets in it, or the item's own x, y, z; returns the next row.
-        placed_name: the item among the resolved parts."""
+        """Volume dropdown (NO_VOLUME first) and the offsets in it, or the item's own x, y, z, then its yaw, pitch, roll;
+        returns the next row. placed_name: the item among the resolved parts."""
         ttk.Label(frame, text="volume").grid(row=row, column=0, sticky="w")
         volume_var = tk.StringVar(value=item.get("volume", NO_VOLUME))
         volume_box = ttk.Combobox(frame, values=[NO_VOLUME, *(volume["name"] for volume in self.app.definition["volumes"])], textvariable=volume_var, state="readonly")
@@ -1163,7 +1202,9 @@ class ConfigurationMainView:
             self.add_entry(frame, row + 1, item, "x_m")
             for offset, key in enumerate(("y_m", "z_m"), start=2):
                 self.add_entry(frame, row + offset, item, key, optional=True, blank_hint="blank = 0")
-        return row + 4
+        for offset, key in enumerate(ORIENTATION_KEYS, start=4):
+            self.add_entry(frame, row + offset, item, key, optional=True, blank_hint="blank = 0")
+        return row + 7
 
     def set_part_volume(self, part: dict, volume: str, placed_name: str) -> None:
         """Into a volume: at its centre (offsets cleared). Out of one (NO_VOLUME): stays where it is, at its own x, y, z."""

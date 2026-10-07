@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 import aerosandbox as asb
 
-from libs.airframe import AXES, Airframe, AirframeError, CarryThrough, Mount, PlacedPart, Reinforcement, Surface, Volume
+from libs.airframe import AXES, BOX_SHAPES, Airframe, AirframeError, CarryThrough, Mount, PlacedPart, Reinforcement, Surface, Volume
 from libs.pointed_shapes import sample_pointed_profile
 
 END_PROFILE_SAMPLES = 14
@@ -488,10 +488,16 @@ def closest_approach(origin_a: Vec, dir_a: Vec, origin_b: Vec, dir_b: Vec) -> tu
     return t_a, t_b, math.sqrt(dot(gap, gap))
 
 
-def spar_plane_line(panel: Panel, along_m: float, span_m: float) -> tuple[Vec, Vec]:
-    """(start, end) of a line along a panel's span in its chord plane, along_m aft of the root LE along the root chord:
-    from where it passes closest to the fuselage axis out to the tip."""
-    point = tuple(le + along_m * c for le, c in zip(panel.attach_le, chord_direction(panel)))
+def thickness_direction(panel: Panel) -> Vec:
+    """Unit vector through the section thickness, square to the chord (towards the normal; incidence turns it with the chord)."""
+    incidence = math.radians(panel.incidence_deg)
+    return tuple((math.sin(incidence) if axis == 0 else 0.0) + math.cos(incidence) * panel.normal[axis] for axis in range(3))
+
+
+def spar_plane_line(panel: Panel, along_m: float, span_m: float, up_m: float) -> tuple[Vec, Vec]:
+    """(start, end) of a line along a panel's span, along_m aft of the root LE along the root chord and up_m off the chord
+    line through the thickness: from where it passes closest to the fuselage axis out to the tip."""
+    point = tuple(le + along_m * c + up_m * t for le, c, t in zip(panel.attach_le, chord_direction(panel), thickness_direction(panel)))
     to_axis = -dot((0.0, point[1], point[2]), panel.span_dir)
     return tuple(p + to_axis * d for p, d in zip(point, panel.span_dir)), tuple(p + span_m * d for p, d in zip(point, panel.span_dir))
 
@@ -499,9 +505,10 @@ def spar_plane_line(panel: Panel, along_m: float, span_m: float) -> tuple[Vec, V
 def through_partner(surface_set: SurfaceSet, along_m: float) -> int | None:
     """The panel whose spar line is the first panel's own, continued (opposite and in line); None if there is none."""
     first = surface_set.panels[0]
-    start, _end = spar_plane_line(first, along_m, surface_set.definition.span_m)
+    up = surface_set.definition.spars.y_offset_m
+    start, _end = spar_plane_line(first, along_m, surface_set.definition.span_m, up)
     for panel in surface_set.panels[1:]:
-        other, _ = spar_plane_line(panel, along_m, surface_set.definition.span_m)
+        other, _ = spar_plane_line(panel, along_m, surface_set.definition.span_m, up)
         if dot(panel.span_dir, first.span_dir) < -1.0 + 1e-9 and math.dist(other, start) < 1e-9:
             return panel.index
     return None
@@ -523,7 +530,7 @@ def build_spars(surfaces: tuple[SurfaceSet, ...], clearance_m: float) -> tuple[S
             along = spars.x_offset_m + index * spars.spacing_m
             partner = through_partner(surface_set, along)
             through = {0, partner} if partner is not None else set()
-            raw = {panel.index: (*spar_plane_line(panel, along, surface_set.definition.span_m), panel.span_dir) for panel in surface_set.panels}
+            raw = {panel.index: (*spar_plane_line(panel, along, surface_set.definition.span_m, spars.y_offset_m), panel.span_dir) for panel in surface_set.panels}
             for panel_index, (start, end, direction) in raw.items():
                 if panel_index in through:
                     lines.append(SparLine(surface_set.name, panel_index, start, end, spars.diameter_m, True, tuple(p - hole_radius * d for p, d in zip(start, direction))))
@@ -631,7 +638,7 @@ def build_carry_through(surfaces: tuple[SurfaceSet, ...], body: Body, wall_m: fl
         if spars is None or spars.carry_through is None:
             continue
         along = spars.x_offset_m + (spars.count - 1) * spars.spacing_m / 2.0
-        mid_lines = {panel.index: spar_plane_line(panel, along, surface_set.definition.span_m)[0] for panel in surface_set.panels}
+        mid_lines = {panel.index: spar_plane_line(panel, along, surface_set.definition.span_m, spars.y_offset_m)[0] for panel in surface_set.panels}
         for panel in surface_set.panels:
             meetings = []  # (parameter along this arm, the other arm's direction)
             for other in surface_set.panels:
@@ -762,6 +769,14 @@ def box_inertia(size_m: Vec) -> Inertia:
     return ((sy + sz) / 12.0, (sx + sz) / 12.0, (sx + sy) / 12.0, 0.0, 0.0, 0.0)
 
 
+def rotate_inertia(local: Inertia, rotation: tuple[tuple[float, float, float], ...]) -> Inertia:
+    """An inertia given in a part's own axes, in the body's (R I R^T; products as tensor entries, as Inertia)."""
+    ixx, iyy, izz, ixy, ixz, iyz = local
+    tensor = ((ixx, ixy, ixz), (ixy, iyy, iyz), (ixz, iyz, izz))
+    turned = [[sum(rotation[i][a] * tensor[a][b] * rotation[j][b] for a in range(3) for b in range(3)) for j in range(3)] for i in range(3)]
+    return turned[0][0], turned[1][1], turned[2][2], turned[0][1], turned[0][2], turned[1][2]
+
+
 def cylinder_inertia(radius_m: float, length_m: float, axis: str) -> Inertia:
     """Solid cylinder along axis x, y or z, per kg."""
     along = radius_m * radius_m / 2.0
@@ -810,8 +825,11 @@ def shell_between(body: Body, x0: float, x1: float, wall_m: float, density_kg_m3
 
 def volume_size(volume: Volume, body: Body, wall_m: float) -> tuple[float, float]:
     """(geometric volume m^3, extent along x m) of a volume; a point has none."""
-    if volume.shape == "box":
-        return volume.size_m[0] * volume.size_m[1] * volume.size_m[2], volume.size_m[0]
+    if volume.shape in BOX_SHAPES:
+        rounded = 0.0
+        if volume.shape == "rounded_box":  # the four rounded edges along the axis each lose a square less a quarter circle
+            rounded = (4.0 - math.pi) * volume.corner_radius_m ** 2 * volume.size_m[AXES.index(volume.axis)]
+        return volume.size_m[0] * volume.size_m[1] * volume.size_m[2] - rounded, volume.size_m[0]
     if volume.shape == "cylinder":
         radius = volume.diameter_m / 2.0
         return math.pi * radius * radius * volume.length_m, volume.length_m if volume.axis == "x" else volume.diameter_m
@@ -960,7 +978,7 @@ def preset_checks(airframe: Airframe) -> list[str]:
 
 
 def volume_inertia(volume: Volume, body: Body, wall_m: float) -> Inertia:
-    if volume.shape == "box":
+    if volume.shape in BOX_SHAPES:  # a rounded box as its box
         return box_inertia(volume.size_m)
     if volume.shape == "cylinder":
         return cylinder_inertia(volume.diameter_m / 2.0, volume.length_m, volume.axis)
@@ -1101,7 +1119,7 @@ def volume_checks(airframe: Airframe, body: Body) -> list[str]:
     for volume in airframe.volumes:
         if volume.shape == "point":
             continue
-        if volume.shape == "box":
+        if volume.shape in BOX_SHAPES:  # a rounded box checked as its box (conservative)
             half = (volume.size_m[0] / 2.0, volume.size_m[1] / 2.0, volume.size_m[2] / 2.0)
         elif volume.shape == "cylinder":
             radius = volume.diameter_m / 2.0
@@ -1127,12 +1145,13 @@ def volume_checks(airframe: Airframe, body: Body) -> list[str]:
 
 
 def part_overhang_m(part: PlacedPart, volume: Volume, body: Body, wall_m: float) -> float:
-    """How far a part's box (a point without library dimensions) reaches outside its volume (m; <= 0 fits)."""
-    half = (0.0, 0.0, 0.0) if part.size_m is None else tuple(size / 2.0 for size in part.size_m)
+    """How far a part's box (turned by its orientation; a point without library dimensions) reaches outside its volume
+    (m; <= 0 fits)."""
+    half = part.half_extents_m() or (0.0, 0.0, 0.0)
     offset = part.offset_m
     if volume.shape == "point":
         return max(abs(o) + h for o, h in zip(offset, half))
-    if volume.shape == "box":
+    if volume.shape in BOX_SHAPES:  # a part in a rounded box is checked against its box: its corners are not
         return max(abs(o) + h - size / 2.0 for o, h, size in zip(offset, half, volume.size_m))
     along = AXES.index(volume.axis) if volume.shape == "cylinder" else 0
     length_overhang = abs(offset[along]) + half[along] - volume.length_m / 2.0
@@ -1153,8 +1172,8 @@ def part_checks(airframe: Airframe, body: Body) -> list[str]:
         if overhang > 1e-9:
             reach = "outside the fuselage interior" if math.isinf(overhang) else f"{overhang * 1000.0:.1f} mm outside it"
             problems.append(f"part {part.name!r} does not fit volume {part.volume!r}: reaches {reach}")
-    boxes = [(part.name, [c - size / 2.0 for c, size in zip(part.position_m, part.size_m)], [c + size / 2.0 for c, size in zip(part.position_m, part.size_m)])
-             for part in airframe.parts if part.size_m is not None]
+    boxes = [(part.name, [c - h for c, h in zip(part.position_m, part.half_extents_m())], [c + h for c, h in zip(part.position_m, part.half_extents_m())])
+             for part in airframe.parts if part.size_m is not None]  # turned boxes as their body-axis bounds
     for (name_a, lo_a, hi_a), (name_b, lo_b, hi_b) in itertools.combinations(boxes, 2):
         if all(lo_a[axis] < hi_b[axis] - 1e-9 and lo_b[axis] < hi_a[axis] - 1e-9 for axis in range(3)):
             problems.append(f"parts {name_a!r} and {name_b!r} overlap")
@@ -1184,7 +1203,7 @@ def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirf
         for volume in airframe.volumes if volume.mass_kg is not None
     ]
     points += [
-        MassPoint(f"part {part.name}", "part", part.position_m, part.mass_kg, False, None, NO_INERTIA if part.size_m is None else box_inertia(part.size_m))
+        MassPoint(f"part {part.name}", "part", part.position_m, part.mass_kg, False, None, NO_INERTIA if part.size_m is None else rotate_inertia(box_inertia(part.size_m), part.rotation()))
         for part in airframe.parts
     ]
     for motor in motors:

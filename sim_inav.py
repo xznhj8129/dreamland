@@ -734,6 +734,6 @@ def run_scenario(scenario: str, start: str, state: StartState, args, flight: For
 if __name__ == "__main__":
     try:
         main()
-    except KeyboardInterrupt:  # the SITL view's Abort (SIGINT): the log and plots are already written
+    except KeyboardInterrupt:  # the SIM view's Abort (SIGINT): the log and plots are already written
         print("Aborted.")
         sys.exit(ABORTED_EXIT_CODE)

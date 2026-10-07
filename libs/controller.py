@@ -14,11 +14,14 @@ class Level(Controller):
         self.esc[0] = 1600
         self.log("ax", ax)                # an extra flight-log column
 
-Run: python sim_script.py aircraft/<project> <name> (see sim_script.py), or pick the script in the GUI's SITL view.
+Run: python sim_script.py aircraft/<project> <name> (see sim_script.py), or pick the script in the GUI's SIM view.
 
 A flight controller script, talking to its hardware the way a microcontroller does: raw sensor readings in the units
 the parts deliver, pulse widths out, time from micros()/millis(). The hardware is simulated from the JSBSim plant
-(inavbench.vehicles.Plant), mounted level and facing forward, so its axes are the body's: x forward, y left, z up.
+(inavbench.vehicles.Plant), mounted level and facing forward, so its axes are the body's: x forward, y left, z up. The
+IMU sits on the airframe's flight controller (its first placed part of role fc): it reads at the FC's position (the
+lever arm from the CG adds the angular-acceleration and centripetal terms) and in the FC's own axes; without an FC part
+it sits at the CG, in the body's axes.
 """
 
 import importlib.util
@@ -27,6 +30,7 @@ import random
 from dataclasses import dataclass
 
 # The simulated parts (datasheet scales)
+STANDARD_GRAVITY_M_S2 = 9.80665
 ACCEL_LSB_PER_G = 4096.0  # ICM-20602 class SPI IMU, accelerometer at +-8 g
 GYRO_LSB_PER_DPS = 16.4  # its gyro at +-2000 deg/s
 INT16_RANGE = (-32768, 32767)  # IMU registers saturate here
@@ -45,17 +49,28 @@ def _noisy(value: float, sigma: float) -> float:
     return value + random.gauss(0.0, sigma) if sigma else value
 
 
+def _cross(a, b) -> list[float]:
+    return [a[1] * b[2] - a[2] * b[1], a[2] * b[0] - a[0] * b[2], a[0] * b[1] - a[1] * b[0]]
+
+
 def _int16(value: float) -> int:
     return int(min(max(round(value), INT16_RANGE[0]), INT16_RANGE[1]))
 
 
 class Imu:
     """SPI IMU: accel() and gyro() return raw int16 counts (ACCEL_LSB_PER_G, GYRO_LSB_PER_DPS). Level and at rest it
-    reads +ACCEL_LSB_PER_G on z; gyro x + = rolling right, y + = nose down, z + = nose left."""
+    reads +ACCEL_LSB_PER_G on z; gyro x + = rolling right, y + = nose down, z + = nose left (in its own axes)."""
 
     def __init__(self) -> None:
         self._accel = (0, 0, 0)
         self._gyro = (0, 0, 0)
+        self._offset_m = (0.0, 0.0, 0.0)  # from the CG, body axes (x forward, y left, z up)
+        self._rotation = ((1.0, 0.0, 0.0), (0.0, 1.0, 0.0), (0.0, 0.0, 1.0))  # its axes in the body's (rows)
+        self._previous: tuple[int, tuple[float, float, float]] | None = None  # (time_us, rad/s) of the last sample
+
+    def _mount(self, offset_m: tuple[float, float, float], rotation: tuple[tuple[float, float, float], ...]) -> None:
+        """Where the runner put it: offset from the CG and its axes, both in the body's (x forward, y left, z up)."""
+        self._offset_m, self._rotation = offset_m, rotation
 
     def accel(self) -> tuple[int, int, int]:
         return self._accel
@@ -63,9 +78,18 @@ class Imu:
     def gyro(self) -> tuple[int, int, int]:
         return self._gyro
 
-    def _sample(self, plant, noise: dict) -> None:
-        self._accel = tuple(_int16(_noisy(mg / 1000.0, noise.get("accel_g", 0.0)) * ACCEL_LSB_PER_G) for mg in plant.acc_mg())
-        self._gyro = tuple(_int16(_noisy(dps16 / 16.0, noise.get("gyro_dps", 0.0)) * GYRO_LSB_PER_DPS) for dps16 in plant.gyro_dps16())
+    def _sample(self, plant, noise: dict, time_us: int) -> None:
+        accel_g = [mg / 1000.0 for mg in plant.acc_mg()]  # at the CG, body axes
+        rate = [math.radians(dps16 / 16.0) for dps16 in plant.gyro_dps16()]
+        previous, self._previous = self._previous, (time_us, tuple(rate))
+        lever = _cross(rate, _cross(rate, self._offset_m))  # centripetal, then angular acceleration from the last sample
+        if previous is not None and time_us > previous[0]:
+            angular_accel = [(now - before) / ((time_us - previous[0]) / 1e6) for now, before in zip(rate, previous[1])]
+            lever = [c + a for c, a in zip(lever, _cross(angular_accel, self._offset_m))]
+        accel_g = [a + extra / STANDARD_GRAVITY_M_S2 for a, extra in zip(accel_g, lever)]
+        own = [[sum(row[axis] * vector[i] for i, row in enumerate(self._rotation)) for axis in range(3)] for vector in (accel_g, rate)]  # R^T v
+        self._accel = tuple(_int16(_noisy(g, noise.get("accel_g", 0.0)) * ACCEL_LSB_PER_G) for g in own[0])
+        self._gyro = tuple(_int16(_noisy(math.degrees(w), noise.get("gyro_dps", 0.0)) * GYRO_LSB_PER_DPS) for w in own[1])
 
 
 class Baro:
@@ -242,7 +266,8 @@ class Controller:
             airspeed_m_s=state["ias_kts"] * KNOT_M_S, aoa_deg=fdm["aero/alpha-deg"], sideslip_deg=fdm["aero/beta-deg"],
         )
         noise = self.sensor_noise
-        for part in (self.imu, self.baro, self.mag, self.pitot, self.rangefinder):
+        self.imu._sample(plant, noise, time_us)
+        for part in (self.baro, self.mag, self.pitot, self.rangefinder):
             part._sample(plant, noise)
         if time_us >= self._next_gps_us:
             self._next_gps_us += round(1e6 / self.gps_hz)

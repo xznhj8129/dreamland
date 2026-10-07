@@ -69,7 +69,8 @@ surfaces[]          name, x_root_le_m (must be on the body; chords may overhang 
                     roll / spin; + = anticlockwise seen from behind), airfoil (AeroSandbox name),
                     mass_kg (whole set; optional, absent = computed)
                     spars (optional): material, diameter_m, count (per panel), spacing_m, x_offset_m (first spar aft of
-                      the root LE along the root chord); straight rods along each panel's span in the chord plane, from
+                      the root LE along the root chord), y_offset_m (off the chord line through the thickness, + towards
+                      the panel normal: up on a wing); straight rods along each panel's span in the chord plane, from
                       closest to the fuselage axis out to the tip; mass with the surface set; holes in the printed parts.
                       Where the first panel's spar line runs on in line into the opposite panel, that pair runs through tip
                       to tip; every other spar runs from its tip inward and stops where it meets another: fit_clearance_m
@@ -118,15 +119,20 @@ propulsion          required when powered, absent when not
                     pod optional: diameter_m, flat_length_m, curve_length_m, profile (parameter-free)
 volumes[]           internal space: name, x_m (centre), y_m and z_m (default 0), shape:
                       box: size_m [x, y, z]
+                      rounded_box: size_m [x, y, z], axis x|y|z, corner_radius_m (the edges along axis rounded; fit and
+                        overlap checked as its box)
                       cylinder: diameter_m, length_m, axis x|y|z
                       bore: length_m (fills the internal section)
                       point
                     mass_kg optional: its own mass, number or [min, max] (> 0), e.g. ballast; absent = space only
-parts[]             library components: name, part (<category>:<name> from data/parts/<category>.json, category battery | esc),
+parts[]             library components: name, part (<category>:<name>; category battery (data/parts/battery.json) or a role:
+                    fc | esc | camera | companion | vtx | receiver | gps | servo (data/parts/<role>/<name>.json)),
                     volume (optional, the one it sits in) with x_offset_m, y_offset_m, z_offset_m (from the volume
                     centre, default 0), or without a volume its own x_m, y_m, z_m (y, z default 0), mass_kg optional (number >= 0 or [min, max]; absent = library mass, required when the
                     library has none; 0 = counted elsewhere, e.g. a weighed section); box = library dimensions
-                    (x = l, y = w, z = h), a point without them; must fit its volume, must not overlap other parts
+                    (x = l, y = w, z = h), a point without them; must fit its volume, must not overlap other parts;
+                    yaw_deg, pitch_deg, roll_deg optional (default 0): its turn, about z, y, x, roll first, body axes;
+                    the first fc part carries the script controller's IMU (its position and axes)
 sections
   cuts_m[]          cut stations (ascending, inside the fuselage); section i spans cut i-1 .. cut i
   per_section[]     one per section: solid (true: printed solid less the volumes inside it, x print.bulk_density_kg_m3;
@@ -143,7 +149,8 @@ Converted examples: `aircraft/m62v2/` and `aircraft/quadlancer62/` reproduce the
 
 ## 2. Libraries (data/)
 
-- `data/parts/`, one file per category: batteries (mass required, > 0; connector: the battery's own plug, first on the battery run), ESCs, FCs, cameras, payloads, props (mass; linear between listed diameters, outside them the nearest scaled by diameter^3), materials, connectors (contact_resistance_ohm).
+- `data/parts/`, tables (one file each): batteries (`battery.json`; mass required, > 0; connector: the battery's own plug, first on the battery run), props (mass; linear between listed diameters, outside them the nearest scaled by diameter^3), materials, connectors (contact_resistance_ohm), mounting patterns (`mounting.json`: holes_mm, screw, outline_mm).
+- `data/parts/<role>/<name>.json`, one file per product, roles fc, esc, camera, companion, vtx, receiver, gps, servo: generic (true = typical stand-in), mass (g), dimensions l, w, h (mm), mount (mounting.json pattern or null), wiring_origin_mm [x, y, z] (from the box centre, part axes), notes; esc also curr, min_s, max_s. Checked when placed.
 - Motors and props: motorlib (`libs/motorlib`, copied from `dronebuildcalc`), used as published.
 - `presets/<name>.json`: size presets (section, joints, reinforcement pattern, spars in the aircraft's own form, limits checked
   against the aircraft, CAD data), fasteners, openings, printer bed, wiring. Presets are created and saved from the

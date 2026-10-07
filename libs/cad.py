@@ -12,9 +12,10 @@ cadquery is imported lazily so the GUI starts light. FreeCAD varsets: libs/varse
 
 import math
 
+from libs.airframe import BOX_SHAPES
 from libs.geometry import (
     Body, CarryThroughArm, Panel, ResolvedAirframe, body_half_extents, build_body, carry_through_front_profile, carry_through_side_profile,
-    chord_direction, section_index, superellipse_radius,
+    chord_direction, section_index, superellipse_radius, thickness_direction,
 )
 
 M_TO_MM = 1000.0
@@ -24,9 +25,11 @@ AIRFOIL_POINTS_PER_SIDE = 40
 PROP_DISC_THICKNESS_MM = 1.0
 GEOM_EPS_MM = 1e-4
 LOFT_TIP_MM = 0.05  # non-circular bodies loft to a tiny section instead of a point
+FLAT_PLATE_SECTION = ((0.0, 0.01), (1.0, 0.01), (1.0, -0.01), (0.0, -0.01))  # chord fractions, for an airfoil with no thickness
 FUSE_ROOT_EXTEND_FRACTION = 0.75  # of the body half width: body-rooted panels reach this far into the body when fused
 CUT_OVERSHOOT_MM = 0.5  # holes and bores reach this far past the material they cut, so no skin is left
 CARRY_THROUGH_WALL_EMBED = 0.5  # of the wall: carry-through arms reach this far into the tube wall, fusing to it
+_PRINTABLE_PARTS: dict[str, list] = {}  # the last design's printable parts, by its definition (build_printable_parts)
 SPIGOT_WALL_EMBED = 0.5  # of the wall: a male spigot's root ring reaches this far into the carrying section's wall, fusing to it
 
 
@@ -67,8 +70,7 @@ def _airfoil_section_coordinates(airfoil_name: str):
     coordinates = asb.Airfoil(airfoil_name).repanel(n_points_per_side=AIRFOIL_POINTS_PER_SIDE).coordinates
     thickness = float(coordinates[:, 1].max() - coordinates[:, 1].min())
     if thickness < 1e-4:
-        half = 0.01
-        return [(0.0, half), (1.0, half), (1.0, -half), (0.0, -half)]
+        return list(FLAT_PLATE_SECTION)
     return [(float(x), float(y)) for x, y in coordinates]
 
 
@@ -121,17 +123,23 @@ def build_wing_solid(panel: Panel, root_extend_m: float = 0.0):
     import cadquery as cq
 
     coordinates = _airfoil_section_coordinates(panel.airfoil)
-    incidence = math.radians(panel.incidence_deg)
     chord_dir = chord_direction(panel)
-    thick_dir = tuple((math.sin(incidence) if axis == 0 else 0.0) + math.cos(incidence) * panel.normal[axis] for axis in range(3))
+    thick_dir = thickness_direction(panel)
 
     def section_wire(leading_edge, chord_m: float):
+        """The airfoil as one spline from the upper trailing edge round the leading edge to the lower one, closed by a
+        straight trailing edge (kept sharp): a loft is then two faces per segment, smooth round the leading edge, rather
+        than one per sample (slow booleans, and no outline at the leading edge in a hidden-line drawing)."""
         chord_mm = chord_m * M_TO_MM
         points = [
             cq.Vector(*(leading_edge[axis] * M_TO_MM + chord_mm * (x * chord_dir[axis] + y * thick_dir[axis]) for axis in range(3)))
             for x, y in coordinates
         ]
-        return cq.Wire.makePolygon(points, close=True)
+        if len(points) == len(FLAT_PLATE_SECTION):
+            return cq.Wire.makePolygon(points, close=True)
+        if (points[0] - points[-1]).Length < GEOM_EPS_MM:
+            points = points[:-1]
+        return cq.Wire.assembleEdges([cq.Edge.makeSpline(points), cq.Edge.makeLine(points[-1], points[0])])
 
     root_drop = max(0.0, math.hypot(panel.attach_le[1], panel.attach_le[2]) - math.hypot(panel.attach_te[1], panel.attach_te[2]))
     extend = root_drop + root_extend_m
@@ -467,10 +475,10 @@ def build_section_solid(resolved: ResolvedAirframe, index: int) -> tuple[object,
         shape = shape.cut(_socket(resolved, x0, 1.0))
     if index < len(cuts) and sections.cut_joints[index] in ("coupler", "rear_male"):
         shape = shape.cut(_socket(resolved, x1, -1.0))
-    for arm in resolved.carry_through:  # after the bore, which would remove it
-        surface_set = next(item for item in resolved.surfaces if item.name == arm.surface)
-        if section_index(cuts, surface_set.exposed_x_root_le_m) == index:
-            shape = shape.fuse(build_carry_through_arm(resolved, arm))
+    arms = [build_carry_through_arm(resolved, arm) for arm in resolved.carry_through  # after the bore, which would remove them
+            if section_index(cuts, next(item for item in resolved.surfaces if item.name == arm.surface).exposed_x_root_le_m) == index]
+    if arms:  # one boolean for all: each one pays a full setup
+        shape = shape.fuse(*arms)
     reach0, reach1 = x0, x1  # extent of this part's material along x, spigots included
     if index > 0 and sections.cut_joints[index - 1] == "rear_male":
         shape = shape.fuse(_spigot(resolved, cuts[index - 1], -1.0))
@@ -478,8 +486,9 @@ def build_section_solid(resolved: ResolvedAirframe, index: int) -> tuple[object,
     if index < len(cuts) and sections.cut_joints[index] == "front_male":
         shape = shape.fuse(_spigot(resolved, cuts[index], 1.0))
         reach1 = cuts[index] + joints.insertion_depth_m
-    for hole in _through_holes(resolved, reach0, reach1):
-        shape = shape.cut(hole)
+    holes = _through_holes(resolved, reach0, reach1)
+    if holes:
+        shape = shape.cut(*holes)
     return shape.clean(), notes
 
 
@@ -490,19 +499,23 @@ def build_coupler_solid(resolved: ResolvedAirframe, cut_index: int):
     cut = resolved.airframe.sections.cuts_m[cut_index]
     half_length = joints.insertion_depth_m
     solid = _ring(cut - half_length, cut + half_length, *joint_half_extents(resolved, cut), resolved.body.shape)
-    for hole in _through_holes(resolved, cut - half_length, cut + half_length):
-        solid = solid.cut(hole)
+    holes = _through_holes(resolved, cut - half_length, cut + half_length)
+    if holes:
+        solid = solid.cut(*holes)
     return solid.clean()
 
 
 def build_volume_solid(resolved: ResolvedAirframe, volume):
-    """A volume's space as a cq.Solid (box, cylinder, or the bore over its length)."""
+    """A volume's space as a cq.Solid (box, rounded box, cylinder, or the bore over its length)."""
     import cadquery as cq
 
     centre = cq.Vector(volume.x_m, volume.y_m, volume.z_m) * M_TO_MM
-    if volume.shape == "box":
+    if volume.shape in BOX_SHAPES:
         size = cq.Vector(*volume.size_m) * M_TO_MM
-        return cq.Solid.makeBox(size.x, size.y, size.z, centre - size * 0.5)
+        box = cq.Solid.makeBox(size.x, size.y, size.z, centre - size * 0.5)
+        if volume.shape == "box":
+            return box
+        return cq.Workplane("XY").add(box).edges(f"|{volume.axis.upper()}").fillet(volume.corner_radius_m * M_TO_MM).val()
     if volume.shape == "cylinder":
         axis = cq.Vector(*(1.0 if name == volume.axis else 0.0 for name in "xyz"))
         return cq.Solid.makeCylinder(volume.diameter_m / 2.0 * M_TO_MM, volume.length_m * M_TO_MM, centre - axis * (volume.length_m / 2.0 * M_TO_MM), axis)
@@ -522,7 +535,16 @@ def _bed_note(name: str, shape, bed_m: tuple[float, float, float]) -> str | None
 
 
 def build_printable_parts(resolved: ResolvedAirframe) -> list[tuple[str, object, list[str]]]:
-    """(name, cq.Shape, notes) of every printable part, front to back: sections S01.., then couplers C01.. (by cut)."""
+    """(name, cq.Shape, notes) of every printable part, front to back: sections S01.., then couplers C01.. (by cut).
+    Built once per airframe definition: the section export and the cutaway of the same design share them."""
+    key = repr(resolved.airframe)
+    if key not in _PRINTABLE_PARTS:
+        _PRINTABLE_PARTS.clear()  # one design at a time
+        _PRINTABLE_PARTS[key] = _build_printable_parts(resolved)
+    return _PRINTABLE_PARTS[key]
+
+
+def _build_printable_parts(resolved: ResolvedAirframe) -> list[tuple[str, object, list[str]]]:
     parts = []
     for index in range(len(section_bounds(resolved))):
         shape, notes = build_section_solid(resolved, index)

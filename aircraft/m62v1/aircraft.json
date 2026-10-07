@@ -29,8 +29,8 @@
             "wall_radial_m": 0.00125
         },
         "nose": {
-            "profile": "elliptical",
-            "length_m": 0.06,
+            "profile": "tangent_ogive",
+            "length_m": 0.08,
             "params": {}
         },
         "tail": {
@@ -58,7 +58,7 @@
     "surfaces": [
         {
             "name": "qrwing-7in",
-            "x_root_le_m": 0.245,
+            "x_root_le_m": 0.293,
             "layout": "X",
             "fin_position": "top",
             "dihedral_deg": 45.0,
@@ -78,6 +78,7 @@
                 "count": 2,
                 "spacing_m": 0.0075,
                 "x_offset_m": 0.095,
+                "y_offset_m": 0.0,
                 "carry_through": {
                     "stem_width_m": 0.01,
                     "length_m": 0.02,
@@ -103,14 +104,47 @@
             "incidence_mode": "symmetric",
             "airfoil": "naca0008",
             "mass_kg": 0.004
+        },
+        {
+            "name": "wing 1",
+            "x_root_le_m": 0.0764,
+            "layout": "X",
+            "fin_position": "top",
+            "dihedral_deg": 45.0,
+            "root_offset": 0.0,
+            "root": "body",
+            "span_m": 0.04,
+            "chord_root_m": 0.04,
+            "chord_tip_m": 0.015,
+            "sweep_le_deg": 20.0,
+            "incidence_deg": 0.0,
+            "incidence_mode": "symmetric",
+            "airfoil": "naca2412",
+            "control": {
+                "kind": "all_moving",
+                "roles": [
+                    "pitch",
+                    "yaw"
+                ],
+                "deflection_min_deg": -45.0,
+                "deflection_max_deg": 45.0,
+                "rate_deg_s": 300.0,
+                "servos": [
+                    "S1",
+                    "S2",
+                    "S3",
+                    "S4"
+                ],
+                "pivot": 0.25
+            }
         }
     ],
     "propulsion": {
         "motor": {
-            "manufacturer": "DYS",
-            "name": "X2807-1300"
+            "manufacturer": "Brother Hobby",
+            "name": "Avenger 3008-1300"
         },
-        "prop": "APC E 7x5",
+        "prop": "APC E 7x7",
         "battery": {
             "model": "commercial",
             "part": "CNHL-2200mah-6S",

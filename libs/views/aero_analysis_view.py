@@ -248,6 +248,12 @@ class AeroAnalysisMainView:
     def validate_numeric_text(self, proposed_text: str) -> bool:
         return re.fullmatch(r"[+-]?((\d+(\.\d*)?)|(\.\d*))?([eE][+-]?\d*)?", proposed_text) is not None
 
+    def reload_airfoils(self) -> None:
+        """The airframe changed (project created or loaded): select its airfoils and recompute."""
+        self.seed_selected_airfoils()
+        self.refresh_airfoil_listboxes()
+        self.recompute_airfoils()
+
     def seed_selected_airfoils(self) -> None:
         """Select the airframe's own airfoils, adding AeroSandbox-named ones the library file does not hold."""
         selected_names = []

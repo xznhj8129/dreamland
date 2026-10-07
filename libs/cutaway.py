@@ -20,6 +20,7 @@ from libs.geometry import ResolvedAirframe
 FAR_MM = 5000.0  # half-space and section plane size, bigger than any aircraft
 SMOOTH_SEAM_DEG = 20.0  # facet seams flatter than this are drawn as smooth surface, not as lines
 CURVE_STEP_MM = 0.5  # polyline step along drawn curves
+MIN_EDGE_MM = 1e-6
 SECTION_HATCHES = ("////", "\\\\\\\\")  # alternating from one section to the next
 KIND_HATCHES = {"coupler": "xxxx", "motor": "------", "component": "++++"}
 LINE_WIDTH = 0.7
@@ -82,7 +83,8 @@ def _visible_lines(shape) -> list:
     lines = []
     for compound in (hlr.VCompound(), hlr.OutLineVCompound()):
         if not compound.IsNull():
-            lines += [_points(edge)[:, :2] for edge in cq.Shape.cast(compound).Edges()]
+            # hidden-line removal leaves zero-length fragments where edges meet; they have no points to draw
+            lines += [_points(edge)[:, :2] for edge in cq.Shape.cast(compound).Edges() if edge.Length() > MIN_EDGE_MM]
     return lines
 
 
@@ -93,9 +95,13 @@ def drawing_parts(resolved: ResolvedAirframe) -> list[tuple[str, object, str]]:
     parts = [(name, shape, "coupler" if name.startswith("C") else "section") for name, shape, _notes in build_printable_parts(resolved)]
     parts += [(motor.name, build_motor_solid(motor).val(), "motor") for motor in resolved.motors]
     for part in resolved.airframe.parts:
-        if part.size_m is not None:
+        if part.size_m is not None:  # its box about the origin, turned roll, pitch then yaw about the body axes, then placed
             size = cq.Vector(*part.size_m) * M_TO_MM
-            parts.append((part.name, cq.Solid.makeBox(size.x, size.y, size.z, cq.Vector(*part.position_m) * M_TO_MM - size * 0.5), "component"))
+            box = cq.Solid.makeBox(size.x, size.y, size.z, size * -0.5)
+            yaw, pitch, roll = part.orientation_deg
+            for axis, angle in (((1, 0, 0), roll), ((0, 1, 0), pitch), ((0, 0, 1), yaw)):
+                box = box.rotate(cq.Vector(0, 0, 0), cq.Vector(*axis), angle)
+            parts.append((part.name, box.translate(cq.Vector(*part.position_m) * M_TO_MM), "component"))
     return sorted(parts, key=lambda item: item[1].BoundingBox().xmin)
 
 

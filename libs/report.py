@@ -2,7 +2,7 @@
 Usage:
 from libs.report import build_report_lines, build_report_text
 text = build_report_text(resolved, aero, problems, propulsion_summary(resolved, parts_data), sweep=True)  # propulsion None when unpowered
-lines = build_report_lines(resolved, aero, problems, propulsion, sweep=True)  # ReportLine (libs/reportline.py): warnings, problems marked
+lines = build_report_lines(resolved, aero, problems, propulsion, sweep=True)  # aero None = static report only (no lifting surfaces); ReportLine marks warnings
 
 Text reports of a resolved airframe and its aero results, shared by analyze_airframe.py and the GUI.
 """
@@ -17,12 +17,12 @@ from libs.reportline import ReportLine
 VERDICT_LEVELS = {"stable": "info", "marginal": "warning", "unstable": "problem"}  # libs.aero.stability_verdict
 
 
-def build_report_text(resolved: ResolvedAirframe, aero: AeroResult, problems: list[str], propulsion: PropulsionSummary | None, sweep: bool) -> str:
+def build_report_text(resolved: ResolvedAirframe, aero: AeroResult | None, problems: list[str], propulsion: PropulsionSummary | None, sweep: bool) -> str:
     return "\n".join(line.text for line in build_report_lines(resolved, aero, problems, propulsion, sweep))
 
 
-def build_report_lines(resolved: ResolvedAirframe, aero: AeroResult, problems: list[str], propulsion: PropulsionSummary | None, sweep: bool) -> list[ReportLine]:
-    """The report; plain strings are info, warnings and problems are ReportLines."""
+def build_report_lines(resolved: ResolvedAirframe, aero: AeroResult | None, problems: list[str], propulsion: PropulsionSummary | None, sweep: bool) -> list[ReportLine]:
+    """The report; plain strings are info, warnings and problems are ReportLines. aero None = mass, geometry, propulsion and layout only."""
     airframe = resolved.airframe
     lines: list[str | ReportLine] = []
     reference = resolved.reference
@@ -84,27 +84,28 @@ def build_report_lines(resolved: ResolvedAirframe, aero: AeroResult, problems: l
         lines.append(ReportLine("Layout problems", "problem"))
         for problem in problems:
             lines.append(ReportLine(f"  - {problem}", "problem"))
-    lines.append("")
-    lines.append("Aero (lifting-line wings + AeroBuildup bodies)")
-    lines.append(f"  Operating point  : AoA {aero.aoa_deg:.1f} deg  V {aero.airspeed_m_s:.1f} m/s  alt {aero.altitude_m:.0f} m  q {aero.dynamic_pressure_pa:.1f} Pa")
-    lines.append(f"  Lift             : {aero.lift_n:.3f} N  {aero.lift_n * GRAMS_FORCE_PER_NEWTON:.0f} g  {aero.lift_n / weight_n * 100.0:.1f} % weight")
-    lines.append(f"  Drag             : {aero.drag_n:.3f} N")
-    lines.append(f"  CL / CD / Cm     : {aero.cl:.4f} / {aero.cd:.4f} / {aero.cm:.4f}")
-    for force in aero.surfaces:
-        x_text = f"{force.x_lift_m:.4f}" if math.isfinite(force.x_lift_m) else "n/a"
-        lines.append(f"    {force.name:<16} lift {force.lift_n:7.3f} N  drag {force.drag_n:6.3f} N  CL {force.cl:6.3f}  x_lift {x_text}")
-    lines.append(f"    {'body + pods':<16} lift {aero.body_lift_n:7.3f} N  drag {aero.body_drag_n:6.3f} N")
-    lines.append("")
-    lines.append("Static stability")
-    margins = [(label, aero.x_np_m - cg_x) for label, cg_x in (("nominal CG", resolved.cg_m[0]), ("aft CG", resolved.cg_x_range_m[1]), ("forward CG", resolved.cg_x_range_m[0]))]
-    lines.append(f"  Neutral point    : {aero.x_np_m:.4f} m")
-    for label, margin in margins[: 1 if resolved.cg_x_range_m[0] == resolved.cg_x_range_m[1] else 3]:
-        verdict = stability_verdict(margin, reference.chord_m)
-        lines.append(ReportLine(f"  Margin, {label:<9}: {margin * 1000:6.1f} mm  {margin / reference.chord_m * 100.0:5.1f} % c_ref  {verdict}", VERDICT_LEVELS[verdict]))
-    lines.append(f"  Barrowman CP     : {aero.barrowman_cp_m:.4f} m (rocket-style cross-check)")
-    if sweep:
+    if aero is not None:
         lines.append("")
-        lines.append(f"  {'AoA':>5} {'CL':>8} {'CD':>8} {'Cm':>8} {'Lift N':>8} {'Weight %':>9} {'NP m':>8}  Pitch")
-        for row in aero.sweep:
-            lines.append(f"  {row.aoa_deg:5.0f} {row.cl:8.4f} {row.cd:8.4f} {row.cm:8.4f} {row.lift_n:8.3f} {row.lift_n / weight_n * 100.0:9.1f} {row.x_np_m:8.4f}  {row.pitch}")
+        lines.append("Aero (lifting-line wings + AeroBuildup bodies)")
+        lines.append(f"  Operating point  : AoA {aero.aoa_deg:.1f} deg  V {aero.airspeed_m_s:.1f} m/s  alt {aero.altitude_m:.0f} m  q {aero.dynamic_pressure_pa:.1f} Pa")
+        lines.append(f"  Lift             : {aero.lift_n:.3f} N  {aero.lift_n * GRAMS_FORCE_PER_NEWTON:.0f} g  {aero.lift_n / weight_n * 100.0:.1f} % weight")
+        lines.append(f"  Drag             : {aero.drag_n:.3f} N")
+        lines.append(f"  CL / CD / Cm     : {aero.cl:.4f} / {aero.cd:.4f} / {aero.cm:.4f}")
+        for force in aero.surfaces:
+            x_text = f"{force.x_lift_m:.4f}" if math.isfinite(force.x_lift_m) else "n/a"
+            lines.append(f"    {force.name:<16} lift {force.lift_n:7.3f} N  drag {force.drag_n:6.3f} N  CL {force.cl:6.3f}  x_lift {x_text}")
+        lines.append(f"    {'body + pods':<16} lift {aero.body_lift_n:7.3f} N  drag {aero.body_drag_n:6.3f} N")
+        lines.append("")
+        lines.append("Static stability")
+        margins = [(label, aero.x_np_m - cg_x) for label, cg_x in (("nominal CG", resolved.cg_m[0]), ("aft CG", resolved.cg_x_range_m[1]), ("forward CG", resolved.cg_x_range_m[0]))]
+        lines.append(f"  Neutral point    : {aero.x_np_m:.4f} m")
+        for label, margin in margins[: 1 if resolved.cg_x_range_m[0] == resolved.cg_x_range_m[1] else 3]:
+            verdict = stability_verdict(margin, reference.chord_m)
+            lines.append(ReportLine(f"  Margin, {label:<9}: {margin * 1000:6.1f} mm  {margin / reference.chord_m * 100.0:5.1f} % c_ref  {verdict}", VERDICT_LEVELS[verdict]))
+        lines.append(f"  Barrowman CP     : {aero.barrowman_cp_m:.4f} m (rocket-style cross-check)")
+        if sweep:
+            lines.append("")
+            lines.append(f"  {'AoA':>5} {'CL':>8} {'CD':>8} {'Cm':>8} {'Lift N':>8} {'Weight %':>9} {'NP m':>8}  Pitch")
+            for row in aero.sweep:
+                lines.append(f"  {row.aoa_deg:5.0f} {row.cl:8.4f} {row.cd:8.4f} {row.cm:8.4f} {row.lift_n:8.3f} {row.lift_n / weight_n * 100.0:9.1f} {row.x_np_m:8.4f}  {row.pitch}")
     return [line if isinstance(line, ReportLine) else ReportLine(line) for line in lines]

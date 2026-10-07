@@ -50,7 +50,7 @@ aircraft/<project>/
     controllers/    flight controller scripts: setup()/loop() against simulated hardware in raw units (libs/controller.py)
 ```
 
-The GUI's SITL view runs the same simulations with a live plot of the flight log; STEP/STL export is in its CAD view. Tube size presets (M62, M75: section, joints, rods) are loaded, saved and created in the Fuselage tab.
+The GUI's SIM view runs the same simulations with a live plot of the flight log; STEP/STL export is in its CAD view. Tube size presets (M62, M75: section, joints, rods) are loaded, saved and created in the Fuselage tab.
 
 ## Reading the results
 

@@ -86,6 +86,29 @@
                     "S4",
                     "S5"
                 ]
+            },
+            "spars": {
+                "material": "carbon_rod",
+                "diameter_m": 0.0064,
+                "count": 2,
+                "spacing_m": 0.0075,
+                "x_offset_m": 0.05,
+                "y_offset_m": 0.0,
+                "carry_through": {
+                    "stem_width_m": 0.01,
+                    "length_m": 0.02,
+                    "flare_radius_m": 0.02,
+                    "root_length_m": 0.04,
+                    "wall_fillet_m": 0.004
+                }
+            },
+            "root_base": {
+                "length_m": 0.096,
+                "width_m": 0.018,
+                "height_m": 0.0,
+                "forward_offset_m": 0.0,
+                "leading_cut_m": 0.01,
+                "trailing_cut_m": 0.06
             }
         },
         {
@@ -170,10 +193,10 @@
     ],
     "propulsion": {
         "motor": {
-            "manufacturer": "DYS",
-            "name": "X2812-900"
+            "manufacturer": "Brother Hobby",
+            "name": "Tornado T5 3115 PRO 900"
         },
-        "prop": "GWS HD 9x5",
+        "prop": "APC MR 9.5x5",
         "battery": {
             "model": "commercial",
             "part": "CNHL-2200mah-6S",
@@ -277,9 +300,9 @@
         ],
         "cut_joints": [
             "coupler",
-            "coupler",
-            "coupler",
-            "coupler",
+            "front_male",
+            "front_male",
+            "rear_male",
             "coupler"
         ]
     }

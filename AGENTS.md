@@ -18,10 +18,10 @@ Primary files:
 - `libs/graphics.py`: orthographic drawing on Tk canvas
 - `libs/library_editors.py`: main-window editor panel for the part library `data/parts/`
 - `libs/airfoil_analysis.py`: NeuralFoil 2D airfoil comparison and DAT import
-- `libs/views/configuration_view.py`: configuration main-view layout and definition editors
+- `libs/views/editor_view.py`: Editor main-view layout and definition editors
 - `libs/views/aero_analysis_view.py`: Aero Analysis main-view layout and NeuralFoil airfoil comparison
 - `libs/views/vlm_view.py`: VLM main-view layout and selectors
-- `libs/views/sitl_view.py`: SITL main-view: runs `sim_inav.py` or `sim_script.py`, streams its output, live flight-log plot
+- `libs/views/sim_view.py`: SIM main-view: runs `sim_inav.py` or `sim_script.py`, streams its output, live flight-log plot
 - `libs/views/cad_view.py`: CAD main-view with STEP/STL, printable section, cutaway and varset export controls
 - `libs/views/part_editor_view.py`: part-editor main-view mount
 - `libs/pointed_shapes.py`: pointed-profile geometry helpers
@@ -33,11 +33,11 @@ Primary files:
 - `libs/propulsion.py`: motor + prop model on motorlib, wiring resistance from the design, throttle as ESC duty
 - `sim_inav.py`: flies the JSBSim export in INAV SITL on `inav_development/inav-jsbsim-bench`
 - `sim_script.py`: flies the JSBSim export with a project's controller script, lockstep in simulated time
-- `libs/controller.py`: `Controller` script API: simulated SPI IMU, baro, mag, GPS, pitot, rangefinder in raw hardware units; ESC/servo pulses in us; `truth` (`TruthState`): the simulator's own state, for scripting around a flight, not for control
+- `libs/controller.py`: `Controller` script API: simulated SPI IMU (at the first fc part's position and axes), baro, mag, GPS, pitot, rangefinder in raw hardware units; ESC/servo pulses in us; `truth` (`TruthState`): the simulator's own state, for scripting around a flight, not for control
 - `libs/simrun.py`: shared by both runners: start conditions, vehicle build, ground rule, electrical model, plots
 - `airfoil_analysis_example.py`: simple non-GUI example of the airfoil comparison
 - `aircraft/<project>/`: one aircraft project (`aircraft/` is gitignored except `aircraft/example`, a copy of simpleplane): `aircraft.json` (airframe/2 definition), `inav/` (real FC diffs, SITL diffs; `generated/`: the diff written for each generated or real-FC run), `sitl/` (pinned SITL.elf, eeprom.bin, sitl.log), `jsbsim/` (export), `logs/` (SITL and script flight logs and plots), `cad/` (exports; `cutaway.svg/.png`; `sections/`: printable parts, `varsets/`: FreeCAD varsets), `controllers/` (flight controller scripts)
-- `data/parts/`: part library, one `<category>.json` per category (battery, esc, prop, material, connector)
+- `data/parts/`: part library: tables `<category>.json` (battery, prop, material, connector, mounting patterns) and role parts, one file each, `<role>/<name>.json` (fc, esc, camera, companion, vtx, receiver, gps, servo)
 - `data/airfoils.json`: imported airfoil coordinates
 - `data/inav/`: INAV settings templates (`sitl.txt` bench hardware, `plane.txt`, `tailsitter.txt` switches and modes) for generated SITL diffs
 - `data/presets/`: size presets (M62, M75), one file each, in the definition's own form (section, joints, rods, spars, limits, CAD)

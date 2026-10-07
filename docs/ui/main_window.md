@@ -26,10 +26,10 @@ GUIBuilderWindow [fill]
     * MenuBar [docked:top, arrange:row]
 
     * MainViewHost [fill, switchable]
-        ConfigurationView
+        EditorView
         AeroAnalysisView
         VLMView
-        SITLView
+        SimView
         CADView
         PartEditorView
 
@@ -43,7 +43,7 @@ Startup
     - window title = "quadrocketbuilder - <project> (<aircraft name>)"
     - default geometry = 1600x980
     - opens the project given on the command line, default aircraft/m62v2
-    - default visible view = Configuration
+    - default visible view = Editor
     - F5 triggers heavy recompute in most views
     - F5 reruns the current VLM sweep while VLM view is active
 ```
@@ -54,6 +54,8 @@ Startup
 MenuBar [docked:top]
 
     * FileMenu [ui:dropdown, arrange:column]
+        - New
+            on:click -> ask a new project name, create aircraft/<name>/ with a blank definition, continue there
         - Load
             on:click -> pick a project directory (starts in aircraft/), load it
         - Save
@@ -72,6 +74,7 @@ Project = aircraft/<project>/ with aircraft.json (the airframe/2 definition), in
 Load
     - a directory without aircraft.json -> error in the Log, nothing changes
     - aircraft.json not airframe/2 -> error in the Log, nothing changes
+    - a definition missing a top-level block the editors need -> error in the Log, nothing changes (an incomplete definition with all blocks still opens, so it can be repaired)
     - otherwise everything is recomputed from the definition
 
 Save
@@ -81,6 +84,12 @@ Save As
     - a name that is not a plain directory name, or an existing project -> error in the Log, nothing changes
     - cancel -> nothing changes
     - the old project stays as it was last saved
+
+New
+    - a name that is not a plain directory name, or an existing project -> error in the Log, nothing changes
+    - cancel -> nothing changes
+    - creates aircraft/<name>/ with the standard subdirectories and a blank definition: one default tube, no surfaces, volumes or parts, unpowered
+    - the Log starts empty; the summary shows the static report (mass, geometry, layout) and the status reads "No lifting surfaces" instead of failing aero
 ```
 
 ## Central View Host
@@ -96,10 +105,10 @@ MainViewHost [fill, switchable]
 ### Main-view mapping
 
 ```text
-Configuration  -> configuration_view.md
+Editor         -> editor_view.md
 Aero Analysis  -> aero_analysis_view.md
 VLM            -> vlm_view.md
-SITL           -> sitl_view.md
+SIM            -> sim_view.md
 CAD            -> cad_view.md
 Part Editor    -> part_editor_view.md
 ```
@@ -109,10 +118,10 @@ Part Editor    -> part_editor_view.md
 ```text
 BottomBar [docked:bottom, arrange:row]
 
-    - Configuration
+    - Editor
     - Aero Analysis
     - VLM
-    - SITL
+    - SIM
     - CAD
     - Part Editor
 ```
@@ -120,8 +129,8 @@ BottomBar [docked:bottom, arrange:row]
 ### Bottom-bar behavior
 
 ```text
-Configuration
-    - raises the configuration view
+Editor
+    - raises the Editor view
 
 Aero Analysis
     - raises the aero-analysis view
@@ -129,9 +138,9 @@ Aero Analysis
 VLM
     - raises the VLM sweep view
 
-SITL
+SIM
     - refreshes the scenario and INAV config lists
-    - raises the SITL simulation view
+    - raises the SIM view (INAV SITL and script simulations)
 
 CAD
     - raises the CAD view
@@ -145,6 +154,7 @@ Part Editor
 
 ```text
 Errors (unhandled callback errors with their traceback, aero failures, load / save / preset errors)
-    - are appended to the Configuration view's Log tab; the status bar says "<what> (see Log)"
+    - are appended to the Editor view's Log tab; the status bar says "<what> (see Log)"
+    - an unchanged repeat of the last logged error updates the status bar but adds no second line
     - never open a window
 ```

@@ -12,12 +12,14 @@ converts screen pixels to metres.
 import math
 import tkinter as tk
 
+from libs.airframe import BOX_SHAPES
 from libs.geometry import PROP_SHAFT_LEN_M, ResolvedAirframe, body_half_extents, deflected_outline, superellipse_radius
 
 PROP_SHAFT_DIAM_M = 0.005
 MOTOR_BASE_DIAM_FACTOR = 0.5
 MOTOR_BASE_LEN_M = 0.005
 SECTION_OUTLINE_SAMPLES = 72
+ROUNDED_CORNER_SAMPLES = 8
 POINT_MASS_MARK_PX = 5
 VOLUME_COLOR = "#ffcc33"
 PART_COLOR = "#ff9966"
@@ -65,7 +67,7 @@ def arm_point(arm, first_axis, along_first: float, along_arm: float) -> tuple[fl
 
 
 def volume_half_extents(resolved: ResolvedAirframe, volume) -> tuple[float, float, float]:
-    if volume.shape == "box":
+    if volume.shape in BOX_SHAPES:
         return volume.size_m[0] / 2.0, volume.size_m[1] / 2.0, volume.size_m[2] / 2.0
     if volume.shape == "cylinder":
         radius = volume.diameter_m / 2.0
@@ -75,6 +77,50 @@ def volume_half_extents(resolved: ResolvedAirframe, volume) -> tuple[float, floa
         wall = resolved.airframe.fuselage.section.wall_radial_m
         return volume.length_m / 2.0, max(half_w - wall, 0.0), max(half_h - wall, 0.0)
     return 0.0, 0.0, 0.0
+
+
+def part_corners(part) -> list[tuple[float, float, float]]:
+    """The 8 corners of a placed part's turned box, in the body frame."""
+    rotation = part.rotation()
+    corners = []
+    for sx in (-1, 1):
+        for sy in (-1, 1):
+            for sz in (-1, 1):
+                local = (sx * part.size_m[0] / 2.0, sy * part.size_m[1] / 2.0, sz * part.size_m[2] / 2.0)
+                corners.append(tuple(p + sum(row[k] * local[k] for k in range(3)) for p, row in zip(part.position_m, rotation)))
+    return corners
+
+
+def convex_hull(points: list[tuple[float, float]]) -> list[tuple[float, float]]:
+    """The convex outline of 2D points, anticlockwise (monotone chain)."""
+    points = sorted(set(points))
+    if len(points) < 3:
+        return points
+
+    def turn(o, a, b) -> float:
+        return (a[0] - o[0]) * (b[1] - o[1]) - (a[1] - o[1]) * (b[0] - o[0])
+
+    lower, upper = [], []
+    for point in points:
+        while len(lower) >= 2 and turn(lower[-2], lower[-1], point) <= 0.0:
+            lower.pop()
+        lower.append(point)
+    for point in reversed(points):
+        while len(upper) >= 2 and turn(upper[-2], upper[-1], point) <= 0.0:
+            upper.pop()
+        upper.append(point)
+    return lower[:-1] + upper[:-1]
+
+
+def rounded_rectangle(x_centre: float, y_centre: float, half_width: float, half_height: float, radius: float) -> list[float]:
+    """Screen points (flat x, y list) round a rounded rectangle, closed."""
+    points = []
+    for corner, (sx, sy) in enumerate(((1, -1), (-1, -1), (-1, 1), (1, 1))):
+        cx, cy = x_centre + sx * (half_width - radius), y_centre + sy * (half_height - radius)
+        for step in range(ROUNDED_CORNER_SAMPLES + 1):
+            angle = math.pi / 2.0 * (corner + step / ROUNDED_CORNER_SAMPLES)
+            points.extend((cx + radius * math.cos(angle), cy - radius * math.sin(angle)))
+    return points + points[:2]
 
 
 def volume_projected_half(resolved: ResolvedAirframe, volume, roll_rad: float) -> float:
@@ -238,11 +284,9 @@ def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, 
             mark = POINT_MASS_MARK_PX
             canvas.create_line(x_screen - mark, t_screen, x_screen + mark, t_screen, fill=PART_COLOR, width=2)
             canvas.create_line(x_screen, t_screen - mark, x_screen, t_screen + mark, fill=PART_COLOR, width=2)
-        else:
-            half_x, half_y, half_z = (size / 2.0 for size in part.size_m)
-            half_t = half_y * abs(math.sin(roll_rad)) + half_z * abs(math.cos(roll_rad))
-            canvas.create_rectangle(x_screen - half_x * scale, t_screen - half_t * scale, x_screen + half_x * scale, t_screen + half_t * scale,
-                                    outline=PART_COLOR, fill="", width=1)
+        else:  # the outline of its turned box
+            outline = convex_hull([(x_to_screen(cx), transverse_to_screen(longitudinal_transverse(cy, cz, roll_rad))) for cx, cy, cz in part_corners(part)])
+            canvas.create_polygon([value for point in outline for value in point], outline=PART_COLOR, fill="", width=1)
         canvas.create_text(x_screen, t_screen + POINT_MASS_MARK_PX + 2, anchor="n", text=part.name, fill=PART_COLOR, font=("TkDefaultFont", 8))
 
     if resolved.wires is not None:
@@ -365,6 +409,8 @@ def draw_front_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, ui_draw
         elif volume.shape == "cylinder" and volume.axis == "x":
             canvas.create_oval(x_screen - half_y * scale, y_screen - half_z * scale, x_screen + half_y * scale, y_screen + half_z * scale,
                                outline=VOLUME_COLOR, width=1, dash=(4, 2))
+        elif volume.shape == "rounded_box" and volume.axis == "x":  # the rounded section
+            canvas.create_line(rounded_rectangle(x_screen, y_screen, half_y * scale, half_z * scale, volume.corner_radius_m * scale), fill=VOLUME_COLOR, width=1, dash=(4, 2))
         else:
             canvas.create_rectangle(x_screen - half_y * scale, y_screen - half_z * scale, x_screen + half_y * scale, y_screen + half_z * scale,
                                     outline=VOLUME_COLOR, fill="", width=1, dash=(4, 2))
@@ -383,10 +429,9 @@ def draw_front_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, ui_draw
             mark = POINT_MASS_MARK_PX
             canvas.create_line(x_screen - mark, y_screen, x_screen + mark, y_screen, fill=PART_COLOR, width=2)
             canvas.create_line(x_screen, y_screen - mark, x_screen, y_screen + mark, fill=PART_COLOR, width=2)
-        else:
-            half_y, half_z = part.size_m[1] / 2.0, part.size_m[2] / 2.0
-            canvas.create_rectangle(x_screen - half_y * scale, y_screen - half_z * scale, x_screen + half_y * scale, y_screen + half_z * scale,
-                                    outline=PART_COLOR, fill="", width=1)
+        else:  # the outline of its turned box
+            outline = convex_hull([(center_x + cy * scale, center_y - cz * scale) for _cx, cy, cz in part_corners(part)])
+            canvas.create_polygon([value for point in outline for value in point], outline=PART_COLOR, fill="", width=1)
     if resolved.wires is not None:
         for route in (resolved.wires.battery, *resolved.wires.motors):
             canvas.create_line([value for _x, y, z in route for value in (center_x + y * scale, center_y - z * scale)], fill=WIRE_COLOR, width=2, dash=WIRE_DASH)

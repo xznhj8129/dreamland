@@ -1,8 +1,8 @@
 """
 Usage:
-from libs.views.sitl_view import SITLMainView
+from libs.views.sim_view import SimMainView
 
-SITL view: flies the project's saved airframe in INAV SITL on JSBSim by running sim_inav.py as a subprocess (the same path as
+SIM view: flies the project's saved airframe in INAV SITL on JSBSim by running sim_inav.py as a subprocess (the same path as
 the command line), streams its output into the summary and plots the bench's flight log (CSV) live while it runs.
 The plotted columns are picked on the right.
 """
@@ -50,10 +50,12 @@ DRAG_SPAN_COLOR = "#33ccff"
 PATH_COLUMNS = ("east_m", "north_m", "agl_m")  # the flight log's position, m from home and above ground
 PATH_VIEW = (25.0, -60.0)  # elevation, azimuth of the 3D view until it is rotated
 PATH_START_COLOR, PATH_END_COLOR = "#19ff19", "#ff4d4d"
+PATH_MIN_HALF_M = 50.0  # the 3D path view spans at least this either side of the start, east and north (and grows to fit)
+PATH_MIN_HEIGHT_M = 50.0  # and at least this high above the ground
 PATH_BOX_ZOOM = 0.85  # the 3D box a little smaller than its axes, so the axis labels fit
 
 
-class SITLMainView:
+class SimMainView:
     def __init__(self, app, parent) -> None:
         self.app = app
         self.process: subprocess.Popen | None = None
@@ -83,7 +85,7 @@ class SITLMainView:
         self.frame.grid(row=0, column=0, sticky="nsew")
         self.frame.columnconfigure(0, weight=1)
         self.frame.rowconfigure(0, weight=1)
-        app.sitl_view = self.frame
+        app.sim_view = self.frame
 
         panes = ttk.Panedwindow(self.frame, orient=tk.HORIZONTAL)
         panes.grid(row=0, column=0, sticky="nsew")
@@ -97,7 +99,7 @@ class SITLMainView:
         panes.add(right_frame, weight=1)
 
         left_frame.rowconfigure(1, weight=1)
-        controls_frame = ttk.LabelFrame(left_frame, text="SITL Run", padding=6)
+        controls_frame = ttk.LabelFrame(left_frame, text="Simulation run", padding=6)
         controls_frame.grid(row=0, column=0, sticky="ew")
         controls_frame.columnconfigure(1, weight=1)
         ttk.Label(controls_frame, text="Flight controller").grid(row=0, column=0, sticky="w")
@@ -478,8 +480,9 @@ class SITLMainView:
         self.draw_series()
 
     def draw_path(self) -> None:
-        """The flight path in 3D (east, north, height above ground), start and end marked, in a box just around it with
-        the ground (height 0) at the bottom; drag to rotate, which is kept across redraws."""
+        """The flight path in 3D (east, north, height above ground), start and end marked. The box starts at
+        PATH_MIN_HALF_M either side of the start (east and north, one scale for both) and PATH_MIN_HEIGHT_M high, with the
+        ground (height 0) at the bottom, and grows to fit the path; drag to rotate, which is kept across redraws."""
         app = self.app
         view = (self.path_axes.elev, self.path_axes.azim) if self.path_axes is not None else PATH_VIEW
         self.path_figure.clear()
@@ -493,19 +496,22 @@ class SITLMainView:
         axes.set_xlabel("east m")
         axes.set_ylabel("north m")
         axes.set_zlabel("height m")
+        centre, half, top = (0.0, 0.0), PATH_MIN_HALF_M, PATH_MIN_HEIGHT_M
         if self.rows and all(column in self.columns for column in PATH_COLUMNS):
             data = np.array(self.rows)
             east, north, height = (data[:, self.columns.index(column)] for column in PATH_COLUMNS)
             axes.plot(east, north, height, color=SERIES_COLORS[0], linewidth=1.2)
             axes.scatter(east[:1], north[:1], height[:1], color=PATH_START_COLOR, s=30, label="start")
             axes.scatter(east[-1:], north[-1:], height[-1:], color=PATH_END_COLOR, s=30, label="end")
-            for limits, values in ((axes.set_xlim, east), (axes.set_ylim, north)):
-                low, high = float(np.nanmin(values)), float(np.nanmax(values))
-                limits(low, high if high > low else low + 1.0)
-            axes.set_zlim(0.0, max(float(np.nanmax(height)), 1.0))  # the ground at the bottom, whatever the path
+            centre = (float(east[0]), float(north[0]))
+            half = max(half, float(np.nanmax(np.abs(east - centre[0]))), float(np.nanmax(np.abs(north - centre[1]))))
+            top = max(top, float(np.nanmax(height)))
             legend = axes.legend(loc="upper left", facecolor=app.ui_panel, edgecolor=app.ui_border)
             for text in legend.get_texts():
                 text.set_color(app.ui_fg)
+        axes.set_xlim(centre[0] - half, centre[0] + half)
+        axes.set_ylim(centre[1] - half, centre[1] + half)
+        axes.set_zlim(0.0, top)  # the ground at the bottom, whatever the path
         axes.view_init(*view)
         axes.set_box_aspect(None, zoom=PATH_BOX_ZOOM)
         self.path_canvas.draw_idle()

@@ -36,7 +36,8 @@ LAYOUTS = tuple(LAYOUT_PANEL_COUNTS)
 FIN_POSITIONS = ("top", "bottom")
 INCIDENCE_MODES = ("symmetric", "cant")  # incidence pitches XZ-mirror panels alike (lift, like AoA), or turns every panel the same way about the body axis (roll)
 SURFACE_ROOTS = ("body", "axis")  # span measured from the body surface at the root LE, or from the fuselage axis (fins joined at the centre)
-VOLUME_SHAPES = ("box", "cylinder", "bore", "point")
+VOLUME_SHAPES = ("box", "rounded_box", "cylinder", "bore", "point")
+BOX_SHAPES = ("box", "rounded_box")  # sized by size_m [x, y, z]; a rounded box has its edges along axis rounded by corner_radius_m
 BATTERY_MODELS = ("commercial", "custom_liion")  # a data/parts/battery.json pack, or one built from motorlib cells
 BATTERY_PART_NAME = "battery"  # the propulsion battery among the placed parts (the parts list must not use the name)
 CELL_FORMATS = {  # cylindrical cell formats in motorlib cell names: (diameter, length) in m
@@ -45,8 +46,15 @@ CELL_FORMATS = {  # cylindrical cell formats in motorlib cell names: (diameter, 
 }
 CELL_SPACING_M = 0.002  # custom pack: added to each cell's size along every axis (wrap, strip, gaps)
 NOMINAL_CELL_V = {"lipo": 3.7, "liion": 3.6}  # commercial packs, by type
-PART_CATEGORIES = ("battery", "esc")  # part library categories that can be placed (others are materials, prop masses, connectors)
+# Parts identified as a specific product with its own properties: one file each, data/parts/<role>/<name>.json (the role
+# is the folder). Common fields: mass (kg), dimensions {l, w, h} (mm, x/y/z in the part's own frame), mount (a
+# data/parts/mounting.json pattern, or null), wiring_origin_mm [x, y, z] (where its wires start, from its centre in its
+# own frame), generic (true = typical values for layout, not a real product), notes; role-specific fields beside them.
+PART_ROLES = ("fc", "esc", "camera", "companion", "vtx", "receiver", "gps", "servo")
+PART_TABLES = ("battery", "connector", "prop", "material", "mounting")  # data/parts/<table>.json: {name: entry}
+PART_CATEGORIES = ("battery", *PART_ROLES)  # what can be placed in an airframe (parts[], the battery)
 AXES = ("x", "y", "z")
+ORIENTATION_KEYS = ("yaw_deg", "pitch_deg", "roll_deg")  # a placed part's turn (PlacedPart), each optional (absent = 0)
 MOUNT_TARGETS = ("nose", "tail", "surface")
 THRUST_DIRECTIONS = ("tractor", "pusher")
 # Prop spin, seen from where the thrust points (from above in hover). A surface mount carries 2+ motors that spin in
@@ -209,13 +217,15 @@ class CarryThrough:
 class Spars:
     """Straight rods through every panel of a set along its span, in the chord plane: from where the panel's span line
     passes closest to the fuselage axis (through the body, into the mirror panel) out to the tip. The first is x_offset_m
-    aft of the root leading edge along the root chord, each further one spacing_m aft of it. Where the spar lines of
+    aft of the root leading edge along the root chord, each further one spacing_m aft of it; all y_offset_m off the chord
+    line through the thickness (+ towards the panel normal: up on a wing). Where the spar lines of
     several panel pairs cross (X, +), the first panel's pair runs through; the others stop at it."""
     material: str  # data/parts/material.json
     diameter_m: float
     count: int  # per panel
     spacing_m: float
     x_offset_m: float
+    y_offset_m: float  # off the chord line through the thickness, + towards the panel normal (up on a wing)
     carry_through: CarryThrough | None  # None = the rods only
 
 
@@ -333,16 +343,18 @@ class Volume:
     x_m: float  # centre
     y_m: float
     z_m: float
-    size_m: tuple[float, float, float] | None  # box
+    size_m: tuple[float, float, float] | None  # box, rounded_box
     diameter_m: float | None  # cylinder
     length_m: float | None  # cylinder, bore
-    axis: str | None  # cylinder
+    axis: str | None  # cylinder; rounded_box: the rounded edges run along it
+    corner_radius_m: float | None  # rounded_box
     mass_kg: tuple[float, float] | None  # its own mass (min, max), e.g. ballast; None = space only (parts carry theirs)
 
 
 @dataclass(frozen=True)
 class PlacedPart:
-    """A library component, sitting in a volume or placed on its own."""
+    """A library component, sitting in a volume or placed on its own, turned by orientation_deg (yaw about z, pitch about
+    y, roll about x, applied roll first, about the body axes; all 0 = its own l, w, h along the body x, y, z)."""
     name: str
     part: str  # <category>:<name> in data/parts/<category>.json
     volume: str | None  # None = placed at its own x_m, y_m, z_m
@@ -350,6 +362,21 @@ class PlacedPart:
     position_m: tuple[float, float, float]  # volume centre + offset, or its own position
     size_m: tuple[float, float, float] | None  # library dimensions (x = l, y = w, z = h); None = none in the library (a point)
     mass_kg: tuple[float, float]  # library mass or mass_kg; 0 = counted elsewhere (e.g. in a weighed section)
+    orientation_deg: tuple[float, float, float]  # yaw, pitch, roll
+
+    def rotation(self) -> tuple[tuple[float, float, float], ...]:
+        """Rows of the matrix turning the part's own axes into the body's: Rz(yaw) Ry(pitch) Rx(roll)."""
+        yaw, pitch, roll = (math.radians(angle) for angle in self.orientation_deg)
+        cy, sy, cp, sp, cr, sr = math.cos(yaw), math.sin(yaw), math.cos(pitch), math.sin(pitch), math.cos(roll), math.sin(roll)
+        return ((cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr),
+                (sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr),
+                (-sp, cp * sr, cp * cr))
+
+    def half_extents_m(self) -> tuple[float, float, float] | None:
+        """Half extents along the body axes of its turned box; None without library dimensions."""
+        if self.size_m is None:
+            return None
+        return tuple(sum(abs(value) * size / 2.0 for value, size in zip(row, self.size_m)) for row in self.rotation())
 
 
 @dataclass(frozen=True)
@@ -669,6 +696,7 @@ def _spars(data: dict, path: str, parts_data: dict) -> Spars:
         count=int(fields.number("count", minimum=1)),
         spacing_m=fields.number("spacing_m", minimum=0.0),
         x_offset_m=fields.number("x_offset_m", minimum=0.0),
+        y_offset_m=fields.number("y_offset_m"),
         carry_through=None if carry is None else _carry_through(carry, f"{path}.carry_through"),
     )
     fields.done()
@@ -753,12 +781,18 @@ def _volume(data: dict, path: str) -> Volume:
     y_m = fields.number("y_m") if "y_m" in fields.data else 0.0
     z_m = fields.number("z_m") if "z_m" in fields.data else 0.0
 
-    size_m = diameter_m = length_m = axis = None
-    if shape == "box":
+    size_m = diameter_m = length_m = axis = corner_radius_m = None
+    if shape in BOX_SHAPES:
         size = fields.required("size_m")
         if type(size) is not list or len(size) != 3:
             raise AirframeError(f"{fields.at('size_m')}: expected [x, y, z], got {size!r}")
         size_m = tuple(fields.number("size_m", minimum=0.0, exclusive=True, value=item) for item in size)
+    if shape == "rounded_box":
+        axis = fields.choice("axis", AXES)
+        corner_radius_m = fields.positive("corner_radius_m")
+        across = [value for name, value in zip(AXES, size_m) if name != axis]
+        if 2.0 * corner_radius_m > min(across):
+            raise AirframeError(f"{fields.at('corner_radius_m')}: {corner_radius_m} is more than half the {min(across)} m side across {axis}")
     elif shape == "cylinder":
         diameter_m = fields.positive("diameter_m")
         length_m = fields.positive("length_m")
@@ -770,7 +804,7 @@ def _volume(data: dict, path: str) -> Volume:
     fields.done()
     return Volume(
         name=name, shape=shape, x_m=x_m, y_m=y_m, z_m=z_m, size_m=size_m, diameter_m=diameter_m,
-        length_m=length_m, axis=axis, mass_kg=mass_kg,
+        length_m=length_m, axis=axis, corner_radius_m=corner_radius_m, mass_kg=mass_kg,
     )
 
 
@@ -786,6 +820,11 @@ def _placement(fields: "_Fields", volumes: dict[str, Volume]) -> tuple[str | Non
     return None, (0.0, 0.0, 0.0), (fields.number("x_m"), *(fields.number(key) if key in fields.data else 0.0 for key in ("y_m", "z_m")))
 
 
+def _orientation(fields: "_Fields") -> tuple[float, float, float]:
+    """yaw_deg, pitch_deg, roll_deg of a placed part (each absent = 0)."""
+    return tuple(fields.number(key) if key in fields.data else 0.0 for key in ORIENTATION_KEYS)
+
+
 def _part(data: dict, path: str, volumes: dict[str, Volume], parts_data: dict) -> PlacedPart:
     fields = _Fields(data, path)
     name = fields.text("name")
@@ -794,7 +833,10 @@ def _part(data: dict, path: str, volumes: dict[str, Volume], parts_data: dict) -
     if category not in PART_CATEGORIES or part_name not in parts_data[category]:
         raise AirframeError(f"{fields.at('part')}: {part!r} not found; use '<category>:<name>' from data/parts/<category>.json, category one of {PART_CATEGORIES}")
     part_data = parts_data[category][part_name]
+    if category in PART_ROLES:
+        _check_role_part(f"data/parts/{category}/{part_name}.json", part_data, parts_data["mounting"])
     volume_name, offset_m, position_m = _placement(fields, volumes)
+    orientation_deg = _orientation(fields)
     if "mass_kg" in fields.data:
         value = fields.required("mass_kg")
         mass_kg = _mass_range(value, fields.at("mass_kg")) if type(value) is list else (fields.number("mass_kg", minimum=0.0, value=value),) * 2
@@ -807,7 +849,7 @@ def _part(data: dict, path: str, volumes: dict[str, Volume], parts_data: dict) -
     return PlacedPart(
         name=name, part=part, volume=volume_name, offset_m=offset_m, position_m=position_m,
         size_m=None if dims is None else (dims["l"] * PARTS_DIMENSION_UNIT_M, dims["w"] * PARTS_DIMENSION_UNIT_M, dims["h"] * PARTS_DIMENSION_UNIT_M),
-        mass_kg=mass_kg,
+        mass_kg=mass_kg, orientation_deg=orientation_deg,
     )
 
 
@@ -871,6 +913,7 @@ def _battery(data: dict, path: str, volumes: dict[str, Volume], parts_data: dict
     fields = _Fields(data, path)
     model = fields.choice("model", BATTERY_MODELS)
     volume_name, offset_m, position_m = _placement(fields, volumes)
+    orientation_deg = _orientation(fields)
     if model == "commercial":
         name = fields.text("part")
         if name not in parts_data["battery"]:
@@ -897,7 +940,8 @@ def _battery(data: dict, path: str, volumes: dict[str, Volume], parts_data: dict
             model=model, label=name, chemistry=entry["type"], series=entry["s"], parallel=entry["p"], capacity_mah=entry["mah"] * entry["p"],
             cell_voltage_v=NOMINAL_CELL_V[entry["type"]], ir_ohm_per_cell=entry["ir_mohm_per_cell"] / 1000.0 if "ir_mohm_per_cell" in entry else None,
             connector=connector, lead_awg=entry["lead_awg"] if leads else None, lead_length_m=entry["lead_length_mm"] * PARTS_DIMENSION_UNIT_M if leads else None,
-            placed=PlacedPart(name=BATTERY_PART_NAME, part=f"battery:{name}", volume=volume_name, offset_m=offset_m, position_m=position_m, size_m=size_m, mass_kg=mass_kg),
+            placed=PlacedPart(name=BATTERY_PART_NAME, part=f"battery:{name}", volume=volume_name, offset_m=offset_m, position_m=position_m, size_m=size_m, mass_kg=mass_kg,
+                              orientation_deg=orientation_deg),
         )
     series, parallel = (fields.required(key) for key in ("s", "p"))
     for key, value in (("s", series), ("p", parallel)):
@@ -929,7 +973,7 @@ def _battery(data: dict, path: str, volumes: dict[str, Volume], parts_data: dict
         model=model, label=label, chemistry=cell_name, series=series, parallel=parallel, capacity_mah=cell.cap_mah * parallel,
         cell_voltage_v=cell.volt, ir_ohm_per_cell=cell.res_ohm, connector=connector, lead_awg=lead_awg, lead_length_m=lead_length_m,
         placed=PlacedPart(name=BATTERY_PART_NAME, part=f"battery:{label}", volume=volume_name, offset_m=offset_m, position_m=position_m, size_m=size_m,
-                          mass_kg=(mass_kg, mass_kg)),
+                          mass_kg=(mass_kg, mass_kg), orientation_deg=orientation_deg),
     )
 
 
@@ -1198,18 +1242,79 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
 
 
 def load_parts_data() -> dict[str, dict]:
-    """The part library as {category: {name: entry}}, from data/parts/<category>.json."""
-    return {path.stem: json.loads(path.read_text()) for path in sorted(PARTS_DIR.glob("*.json"))}
+    """The part library as {category: {name: entry}}: the tables from data/parts/<table>.json, each role's parts from
+    data/parts/<role>/<name>.json (named by the file). A role part is checked where an airframe places it."""
+    data = {path.stem: json.loads(path.read_text()) for path in sorted(PARTS_DIR.glob("*.json"))}
+    for role in PART_ROLES:
+        data[role] = {path.stem: json.loads(path.read_text()) for path in sorted((PARTS_DIR / role).glob("*.json"))}
+    return data
+
+
+def _check_role_part(path: str, entry: dict, mounting: dict) -> None:
+    """The common fields of a role part (PART_ROLES); a mass of 0 or null = not known."""
+    fields = _Fields(dict(entry), path)
+    if fields.optional("mass", None) is not None:
+        fields.number("mass", minimum=0.0, value=entry["mass"])
+    dims = _Fields(fields.required("dimensions"), fields.at("dimensions"))
+    for key in ("l", "w", "h"):
+        dims.positive(key)
+    dims.done()
+    mount = fields.required("mount")
+    if mount is not None and mount not in mounting:
+        raise AirframeError(f"{fields.at('mount')}: {mount!r} is not a pattern in data/parts/mounting.json {sorted(mounting)}")
+    origin = fields.required("wiring_origin_mm")
+    if type(origin) is not list or len(origin) != 3:
+        raise AirframeError(f"{fields.at('wiring_origin_mm')}: expected [x, y, z], got {origin!r}")
+    for value in origin:
+        fields.number("wiring_origin_mm", value=value)
 
 
 def save_parts_category(category: str, entries: dict) -> None:
-    (PARTS_DIR / f"{category}.json").write_text(json.dumps(entries, indent=4) + "\n")
+    """Write a category back: a role as one file per part (files of parts no longer listed removed), a table as its file."""
+    if category not in PART_ROLES:
+        (PARTS_DIR / f"{category}.json").write_text(json.dumps(entries, indent=4) + "\n")
+        return
+    folder = PARTS_DIR / category
+    folder.mkdir(exist_ok=True)
+    for path in folder.glob("*.json"):
+        if path.stem not in entries:
+            path.unlink()
+    for name, entry in entries.items():
+        (folder / f"{name}.json").write_text(json.dumps(entry, indent=4) + "\n")
 
 
 def load_airframe(path: Path, parts_data: dict) -> Airframe:
     with open(path, "r") as file:
         data = json.load(file)
     return parse_airframe(data, parts_data, path=path.name)
+
+
+def blank_definition(name: str) -> dict:
+    """The starting point for File > New: a valid airframe holding one default tube, with nothing on it yet.
+    Surfaces, volumes and parts start empty, so the editors open on an empty aircraft that still resolves."""
+    return {
+        "schema": SCHEMA,
+        "powered": False,
+        "vtol": False,
+        "tailsitter": False,
+        "name": name,
+        "operating_point": {"aoa_deg": 3.0, "airspeed_m_s": 20.0, "altitude_m": 0.0},
+        "print": {"material": "elegoo_pla_plus", "bulk_density_kg_m3": 318.3, "printer_bed_m": [0.24, 0.24, 0.25]},
+        "fuselage": {
+            "length_m": 0.4,
+            "section": {"width_m": 0.05, "height_m": 0.05, "shape": 2.0, "wall_radial_m": 0.00125},
+            "nose": {"profile": "elliptical", "length_m": 0.05, "params": {}},
+            "tail": {"profile": "parabolic", "length_m": 0.05, "params": {"k_prime": 1.0}},
+            "joints": {"type": "radial_screws", "count": 8, "screw": "M3", "insertion_depth_m": 0.01,
+                       "coupler_wall_m": 0.0045, "fit_clearance_m": 0.0003, "socket_wall_m": 0.00125,
+                       "hole_edge_dist_m": 0.006, "hole_diameter_m": 0.003, "hole_angle_offset_deg": 22.5},
+            "channels": [],
+        },
+        "surfaces": [],
+        "volumes": [],
+        "parts": [],
+        "sections": {"cuts_m": [], "per_section": [{"solid": False}], "cut_joints": []},
+    }
 
 
 def main() -> None:

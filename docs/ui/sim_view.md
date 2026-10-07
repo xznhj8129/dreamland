@@ -1,11 +1,11 @@
-# SITL View
+# SIM View
 
 This file covers flying the current project's airframe in simulation, with INAV SITL or one of the project's flight controller scripts, and watching its flight log.
 
 ## Layout
 
 ```text
-SITLView [fill, split:h]
+SimView [fill, split:h]
 
     * LeftPane [split:v]
         SITLRunPanel
@@ -23,7 +23,7 @@ SITLView [fill, split:h]
 ### Split behavior
 
 ```text
-SITLView split behavior
+SimView split behavior
     - startup split is roughly 2/7 left, 4/7 middle, 1/7 right
 ```
 
@@ -128,8 +128,8 @@ FlightPath3D [fill]
 
     - the flight path in 3D: east, north (m from home) and height above ground (m), from the log's
       east_m, north_m, agl_m; start marked green, end red
-    - the box fits the path: east and north span exactly the path, height runs from 0 (the ground) to its top
-      (a path below the ground is clipped); each axis scaled to its own range
+    - the box starts 50 m either side of the start point east and north (one scale for both) and 0-50 m high, also
+      before any data, and grows to fit the path; height runs from 0 (the ground) up (a path below the ground is clipped)
     - drag to rotate; the angle is kept across live updates and runs
     - drawn when shown, then updated live like the plots
 ```

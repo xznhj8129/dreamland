@@ -21,19 +21,19 @@ import tkinter as tk
 from pathlib import Path
 from tkinter import filedialog, simpledialog, ttk
 
-from libs.aero import OperatingPointError, analyze_aero, build_asb_airplane
-from libs.airframe import SCHEMA, AirframeError, load_parts_data, parse_airframe
+from libs.aero import NoLiftingSurfacesError, OperatingPointError, analyze_aero, build_asb_airplane
+from libs.airframe import SCHEMA, AirframeError, blank_definition, load_parts_data, parse_airframe
 from libs.geometry import resolve_airframe
 from libs.motorlib import MotorStalled
-from libs.project import BUILD_FILE, PROJECTS_DIR, Project, ProjectError, copy_project, open_project
+from libs.project import BUILD_FILE, PROJECTS_DIR, Project, ProjectError, copy_project, create_project, open_project
 from libs.propulsion import propulsion_summary
 from libs.report import build_report_lines
 from libs.reportline import ReportLine
 from libs.views.aero_analysis_view import AeroAnalysisMainView
 from libs.views.cad_view import CADMainView
-from libs.views.configuration_view import ConfigurationMainView
+from libs.views.editor_view import EditorMainView
 from libs.views.part_editor_view import PartEditorMainView
-from libs.views.sitl_view import SITLMainView
+from libs.views.sim_view import SimMainView
 from libs.views.vlm_view import VLMMainView
 
 DEFAULT_PROJECT = PROJECTS_DIR / "example"
@@ -48,6 +48,8 @@ UI_ACCENT = "#19ff19"
 UI_CANVAS = "#001000"
 UI_DRAW = "#2aff2a"
 AERO_QUEUE_POLL_MS = 100
+# Top-level blocks the Editor view indexes directly; a definition missing one cannot be shown (values may be incomplete).
+EDITOR_BLOCKS = ("name", "tailsitter", "vtol", "powered", "operating_point", "print", "fuselage", "surfaces", "volumes", "parts", "sections")
 
 
 class BuilderApp:
@@ -75,6 +77,7 @@ class BuilderApp:
         self.aero = None
         self.asb_airplane = None
         self.aero_generation = 0
+        self._last_log_entry: tuple[str, str] | None = None
         self.aero_queue: queue.Queue = queue.Queue()
         self.recompute_status_var = tk.StringVar(value="")
         self.view_mode_var = tk.StringVar(value="Longitudinal")
@@ -87,21 +90,21 @@ class BuilderApp:
         self.asb_figure = None
         self.asb_draw_busy = False
         self.asb_last_size = (0, 0)
-        self.configuration_view = None
+        self.editor_view = None
         self.airfoil_view = None
         self.vlm_view = None
-        self.sitl_view = None
+        self.sim_view = None
         self.cad_view = None
         self.part_editor_view = None
         self.part_editor_panel = None
-        self.configuration_main_view = None
+        self.editor_main_view = None
         self.airfoil_main_view = None  # created on first show, with the airframe's airfoils selected
         self.vlm_main_view = None
-        self.sitl_main_view = None
+        self.sim_main_view = None
         self.cad_main_view = None
         self.main_view_host = None
         self.part_editor_main_view = None
-        self.active_main_view = "Configuration"
+        self.active_main_view = "Editor"
         self.setup_theme()
         self.build_menu()
         self.build_layout()
@@ -110,7 +113,7 @@ class BuilderApp:
         self.root.protocol("WM_DELETE_WINDOW", self.shutdown)
         self.poll_after_id = self.root.after(AERO_QUEUE_POLL_MS, self.poll_aero_queue)
         self.recompute()
-        self.configuration_main_view.rebuild_editors()
+        self.editor_main_view.rebuild_editors()
 
     def set_title(self) -> None:
         self.root.title(f"quadrocketbuilder - {self.project.name} ({self.definition['name']})")
@@ -134,7 +137,11 @@ class BuilderApp:
                 self.log_error("Propulsion", str(error))
         self.aero = None
         self.vlm_main_view.mark_stale()
-        self.configuration_main_view.draw_active_view()
+        self.editor_main_view.draw_active_view()
+        if not resolved.surfaces:
+            self.write_summary(build_report_lines(resolved, None, self.problems, self.propulsion, sweep=True))
+            self.recompute_status_var.set("No lifting surfaces")
+            return
         if not run_aero:
             self.recompute_status_var.set("Aero pending")
             return
@@ -144,7 +151,7 @@ class BuilderApp:
     def run_aero(self, generation: int, resolved) -> None:
         try:
             self.aero_queue.put((generation, analyze_aero(resolved), None, None))
-        except OperatingPointError as error:  # show the reason, not a traceback
+        except (OperatingPointError, NoLiftingSurfacesError) as error:  # show the reason, not a traceback
             self.aero_queue.put((generation, None, str(error), None))
         except Exception:  # thread boundary: hand the traceback to the Tk thread for the summary
             self.aero_queue.put((generation, None, None, traceback.format_exc()))
@@ -162,12 +169,12 @@ class BuilderApp:
                 self.aero = aero
                 self.write_summary(build_report_lines(self.resolved, aero, self.problems, self.propulsion, sweep=True))
                 self.recompute_status_var.set("Up to date")
-                self.configuration_main_view.draw_active_view()
+                self.editor_main_view.draw_active_view()
         self.poll_after_id = self.root.after(AERO_QUEUE_POLL_MS, self.poll_aero_queue)
 
     def shutdown(self) -> None:
         self.root.after_cancel(self.poll_after_id)
-        self.sitl_main_view.shutdown()
+        self.sim_main_view.shutdown()
         self.root.destroy()
 
     def write_summary(self, lines: list[ReportLine]) -> None:
@@ -177,8 +184,12 @@ class BuilderApp:
             self.summary_text.insert(tk.END, line.text + "\n", line.level)
 
     def log_error(self, title: str, text: str) -> None:
-        """Errors go to the Log tab, never a window or the panels."""
+        """Errors go to the Log tab, never a window or the panels. An unchanged repeat is already in the Log (every
+        edit of an incomplete definition raises the same error once); only distinct problems add a line."""
         self.recompute_status_var.set(f"{title} (see Log)")
+        if (title, text) == self._last_log_entry:
+            return
+        self._last_log_entry = (title, text)
         self.log_text.insert(tk.END, f"{time.strftime('%H:%M:%S')}  {title}\n{text}\n\n", "problem")
         self.log_text.see(tk.END)
         self.left_notebook.select(self.log_tab)
@@ -197,12 +208,12 @@ class BuilderApp:
         if self.resolved is None:
             return
         self.asb_airplane = build_asb_airplane(self.resolved)
-        self.configuration_main_view.draw_asb_view(force=True)
+        self.editor_main_view.draw_asb_view(force=True)
 
     def reload_library_data(self) -> None:
         self.parts_data = load_parts_data()
         self.recompute()
-        self.configuration_main_view.rebuild_editors()
+        self.editor_main_view.rebuild_editors()
 
     def handle_callback_exception(self, exc_type, exc_value, exc_traceback) -> None:
         traceback_text = "".join(traceback.format_exception(exc_type, exc_value, exc_traceback))
@@ -279,6 +290,7 @@ class BuilderApp:
             activeforeground=UI_ACCENT,
             borderwidth=1,
         )
+        file_menu.add_command(label="New", command=self.new_project)
         file_menu.add_command(label="Load", command=self.load_project)
         file_menu.add_command(label="Save", command=self.save_project)
         file_menu.add_command(label="Save As", command=self.save_project_as)
@@ -298,21 +310,21 @@ class BuilderApp:
         main_view_host.rowconfigure(0, weight=1)
         self.main_view_host = main_view_host
 
-        self.configuration_main_view = ConfigurationMainView(self, main_view_host)
+        self.editor_main_view = EditorMainView(self, main_view_host)
         self.vlm_main_view = VLMMainView(self, main_view_host)
-        self.sitl_main_view = SITLMainView(self, main_view_host)
+        self.sim_main_view = SimMainView(self, main_view_host)
         self.cad_main_view = CADMainView(self, main_view_host)
         self.part_editor_main_view = PartEditorMainView(self, main_view_host)
 
         bottom_bar = ttk.Frame(self.root, padding=(8, 0, 8, 8))
         bottom_bar.grid(row=1, column=0, sticky="ew")
-        ttk.Button(bottom_bar, text="Configuration", command=lambda: self.show_main_view("Configuration")).pack(side="left")
+        ttk.Button(bottom_bar, text="Editor", command=lambda: self.show_main_view("Editor")).pack(side="left")
         ttk.Button(bottom_bar, text="Aero Analysis", command=lambda: self.show_main_view("Aero Analysis")).pack(side="left", padx=(8, 0))
         ttk.Button(bottom_bar, text="VLM", command=lambda: self.show_main_view("VLM")).pack(side="left", padx=(8, 0))
-        ttk.Button(bottom_bar, text="SITL", command=lambda: self.show_main_view("SITL")).pack(side="left", padx=(8, 0))
+        ttk.Button(bottom_bar, text="SIM", command=lambda: self.show_main_view("SIM")).pack(side="left", padx=(8, 0))
         ttk.Button(bottom_bar, text="CAD", command=lambda: self.show_main_view("CAD")).pack(side="left", padx=(8, 0))
         ttk.Button(bottom_bar, text="Part Editor", command=lambda: self.show_main_view("Part Editor")).pack(side="left", padx=(8, 0))
-        self.show_main_view("Configuration")
+        self.show_main_view("Editor")
 
     def show_main_view(self, view_name: str) -> None:
         self.active_main_view = view_name
@@ -324,9 +336,9 @@ class BuilderApp:
         if view_name == "VLM":
             self.vlm_view.tkraise()
             return
-        if view_name == "SITL":
-            self.sitl_main_view.refresh()
-            self.sitl_view.tkraise()
+        if view_name == "SIM":
+            self.sim_main_view.refresh()
+            self.sim_view.tkraise()
             return
         if view_name == "CAD":
             self.cad_view.tkraise()
@@ -335,7 +347,47 @@ class BuilderApp:
             self.part_editor_panel.refresh_from_disk()
             self.part_editor_view.tkraise()
             return
-        self.configuration_view.tkraise()
+        self.editor_view.tkraise()
+
+    def switch_project(self, project: Project, definition: dict) -> None:
+        """Point the app at another project's definition and refresh everything that shows aircraft data."""
+        self.project = project
+        self.definition = definition
+        self.resolved = None
+        self.problems = []
+        self.propulsion = None
+        self.aero = None
+        self._last_log_entry = None
+        self.summary_text.delete("1.0", tk.END)
+        self.editor_main_view.reset_definition_state()
+        self.set_title()
+        self.recompute()
+        self.editor_main_view.rebuild_editors()
+        self.editor_main_view.reset_view_transform()
+        if self.asb_canvas is not None:  # only redraw a 3-D view the user actually opened
+            self.update_asb_view()
+        if self.airfoil_main_view is not None:
+            self.airfoil_main_view.reload_airfoils()
+        self.sim_main_view.refresh()
+
+    def new_project(self) -> None:
+        """File > New: a fresh project with a blank airframe, loaded straight away."""
+        name = simpledialog.askstring("New Project", "Project name:", parent=self.root)
+        if not name:
+            return
+        definition = blank_definition(name)
+        try:  # fail before anything is written if the blank no longer matches the schema or the part library
+            resolve_airframe(parse_airframe(definition, self.parts_data, path=f"{name}/{BUILD_FILE}"), self.parts_data)
+        except AirframeError as error:
+            self.log_error("New Project", f"blank definition: {error}")
+            return
+        try:
+            project = create_project(name, definition)
+        except ProjectError as error:
+            self.log_error("New Project", str(error))
+            return
+        self.log_text.delete("1.0", tk.END)
+        self.switch_project(project, definition)
 
     def save_project(self) -> None:
         with open(self.project.build_path, "w") as file:
@@ -357,7 +409,7 @@ class BuilderApp:
             return
         self.project = project
         self.save_project()
-        self.sitl_main_view.refresh()
+        self.sim_main_view.refresh()
 
     def load_project(self) -> None:
         path = filedialog.askdirectory(parent=self.root, title="Load Project", initialdir=str(PROJECTS_DIR), mustexist=True)
@@ -373,12 +425,13 @@ class BuilderApp:
         if data.get("schema") != SCHEMA:
             self.log_error("Load Project", f"{project.build_path} is not an {SCHEMA} file (old module-stack configs are not supported).")
             return
-        self.definition = data
-        self.project = project
-        self.set_title()
-        self.recompute()
-        self.configuration_main_view.rebuild_editors()
-        self.sitl_main_view.refresh()
+        # The editors index these blocks directly; an incomplete definition with all of them can be opened and
+        # repaired, but a file missing one cannot be shown, so the open is refused and the current project stays.
+        missing = [key for key in EDITOR_BLOCKS if key not in data]
+        if missing:
+            self.log_error("Load Project", f"{project.build_path} has no {missing}; it is not an editable {SCHEMA} definition.")
+            return
+        self.switch_project(project, data)
 
 
 def main() -> None:
