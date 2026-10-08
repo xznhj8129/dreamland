@@ -69,13 +69,13 @@ NEW_SURFACE = {
 CONTROL_KIND_FIELDS = {"split": {"chord_start": 0.75, "span_start": 0.0, "span_end": 1.0}, "all_moving": {"pivot": 0.25}}
 NEW_CONTROL = {"kind": "split", "roles": [], "deflection_min_deg": -25.0, "deflection_max_deg": 25.0, "rate_deg_s": 300.0}  # + kind fields, servos
 NEW_POD = {"diameter_m": 0.035, "flat_length_m": 0.02, "curve_length_m": 0.05, "profile": "elliptical"}
-# Spars and carry-through for an aircraft without a preset to take them from (the M62 preset's values).
+# Spars and carry-through for an aircraft without a preset to take them from (the tube62 preset's values).
 NEW_SPARS = {"material": "carbon_rod", "diameter_m": 0.0064, "count": 2, "spacing_m": 0.0075, "x_offset_m": 0.02, "y_offset_m": 0.0}
 NEW_CARRY_THROUGH = {"stem_width_m": 0.01, "length_m": 0.02, "flare_radius_m": 0.02, "root_length_m": 0.04, "wall_fillet_m": 0.004}
 NEW_ROOT_BASE = {"length_m": 0.096, "width_m": 0.018, "height_m": 0.0, "forward_offset_m": 0.0, "leading_cut_m": 0.01, "trailing_cut_m": 0.06}
 NEW_MOTOR = {"manufacturer": "DYS", "name": "X2807-1300"}  # motorlib
 NEW_PROP = "APC E 7x5"  # motorlib
-# Rods for an aircraft without a preset to take them from: 4 x 2.5 mm carbon (the built M62 aircraft), touching the inner wall.
+# Rods for an aircraft without a preset to take them from: 4 x 2.5 mm carbon (the built 62 mm aircraft), touching the inner wall.
 NEW_ROD_PATTERN = {"type": "cf_rod", "material": "carbon_rod", "diameter_m": 0.0025, "polar_n": 4, "polar_offset_angle": 45.0, "polar_split": 0, "polar_split_angle": 0.0}
 NO_PRESET = "(none)"
 NO_VOLUME = "(none)"  # a part placed at its own x, y, z
@@ -743,7 +743,7 @@ class EditorMainView:
         self.changed(rebuild=True)
 
     def new_preset(self) -> None:
-        name = simpledialog.askstring("New preset", "Preset name (e.g. M62):", parent=self.frame)
+        name = simpledialog.askstring("New preset", "Preset name (e.g. tube62):", parent=self.frame)
         if not name:
             return
         if name in preset_names() or name == NO_PRESET:

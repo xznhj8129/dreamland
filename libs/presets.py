@@ -1,8 +1,8 @@
 """
 Usage:
 from libs.presets import apply_preset, preset_names, preset_status, save_preset
-apply_preset(definition, "M62")
-preset_status(definition)  # "M62" or "M62 (modified)"
+apply_preset(definition, "tube62")
+preset_status(definition)  # "tube62" or "tube62 (modified)"
 
 Size presets (data/presets/<name>.json, in the definition's own form) on a raw airframe/2 definition. A preset fills
 the fuselage blocks it drives (section, joints, rod pattern); the aircraft keeps its own values and the preset name as a

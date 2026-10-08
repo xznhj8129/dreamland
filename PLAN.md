@@ -9,15 +9,15 @@ Status: draft spec, awaiting approval. Supersedes the Lego module-stack model as
 - Printed structure mass: computed from geometry and print settings; any section or part can be overridden with a weighed value.
 - `m62v2.json` and `quadlancer62.json` (real built aircraft) are re-entered plane-first as validation cases.
 - Component data differences (e.g. battery weight) are data errors, not design variants.
-- Keep it parametric and define everything. Tube standards (M62, M75) are presets that fill parameters, not constraints.
+- Keep it parametric and define everything. Tube standards (tube62, tube75) are presets that fill parameters, not constraints.
 - Fuselage cross-section is not limited to circular (rectangular, octagonal, rounded corners later); circular first.
 - Reserved internal space as simple envelopes and channels. No cooling flow or insertion-path simulation.
-- Current joint: 8 radial screws into a coupler, plus longitudinal spar rods for stiffness (M62 standard in `data/specs.json`).
+- Current joint: 8 radial screws into a coupler, plus longitudinal spar rods for stiffness (tube62 standard in `data/presets/tube62.json`).
 - The builder's definition is the master. CAD (CadQuery, optionally FreeCAD) is a downstream consumer, not a second aircraft model.
 - Generating printable section bodies (shells, bulkheads, mounts, channel cuts) is later CAD work.
 - A motor-wing section (tube, X-wing arms, motor mounts) is printed in one piece (monocoque). Joining long wings: later.
 - Printed surface mass: solid airfoil volume x effective bulk density (owner's calibration from a weighed printed segment).
-- Main design driver after the overall shape: user-defined internal volumes (like battery and payload) with a size (e.g. 20x20x20 mm, or internal diameter x 50 mm), a mass (fixed, e.g. 20 g, or a range, e.g. 10-30 g), dragged to where they are needed. They drive and constrain everything else.
+- Main design driver after the overall shape: user-defined internal volumes (like battery and ballast) with a size (e.g. 20x20x20 mm, or internal diameter x 50 mm), a mass (fixed, e.g. 20 g, or a range, e.g. 10-30 g), dragged to where they are needed. They drive and constrain everything else.
 - CadQuery generates the bigger sections and volumes; final fine adjustments may be done in FreeCAD. Not every facet and cut is defined in spec files.
 - Old part sums are approximately accurate (m62v2 ~1.1 kg real).
 - 2026-10-03: Goal: a do-it-all design framework for new-generation drone designs: quadcopter, plane, quadplane, rocket boosted, any mix. JSBSim simulates all of it. Next propulsion type: rocket motors, with staging (OpenRocket logic).
@@ -34,7 +34,7 @@ powered, vtol, tailsitter   true/false; tailsitter needs vtol, vtol needs powere
                     tailsitter = hover + forward mixer profiles; not vtol = AIRPLANE profile, motors on throttle only;
                     other VTOL types and unpowered airframes are not exported. Hover numbers only for vtol.
 name, notes
-preset              optional: a data/presets/ preset name (M62, M75). Loading it fills section, joints (not coupler_mass_kg)
+preset              optional: a data/presets/ preset name (tube62, tube75). Loading it fills section, joints (not coupler_mass_kg)
                     and the reinforcement pattern (not from_x_m/to_x_m); values are always written out in full, and the
                     fuselage is checked against the preset's limits; the preset's spars are what a surface set starts with
 operating_point     aoa_deg, airspeed_m_s, altitude_m

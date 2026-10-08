@@ -40,7 +40,7 @@ Primary files:
 - `data/parts/`: part library: tables `<category>.json` (battery, prop, material, connector, mounting patterns) and role parts, one file each, `<role>/<name>.json` (fc, esc, camera, companion, vtx, receiver, gps, servo)
 - `data/airfoils.json`: imported airfoil coordinates
 - `data/inav/`: INAV settings templates (`sitl.txt` bench hardware, `plane.txt`, `tailsitter.txt` switches and modes) for generated SITL diffs
-- `data/presets/`: size presets (M62, M75), one file each, in the definition's own form (section, joints, rods, spars, limits, CAD)
+- `data/presets/`: size presets (tube62, tube75), one file each, in the definition's own form (section, joints, rods, spars, limits, CAD)
 - `data/specs.json`: shared specs: fasteners, printer, openings, signal wire paths (an early sketch, not authoritative)
 
 ## Rules

@@ -3,9 +3,9 @@
     "powered": true,
     "vtol": false,
     "tailsitter": false,
-    "name": "62mm Sneedwinder",
+    "name": "62mm Snek",
     "notes": "Pure dart: m62 with canards",
-    "preset": "M62",
+    "preset": "tube62",
     "operating_point": {
         "aoa_deg": 5.0,
         "airspeed_m_s": 25.0,

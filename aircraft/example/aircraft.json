@@ -4,7 +4,7 @@
     "vtol": false,
     "tailsitter": false,
     "name": "ezplane",
-    "preset": "M62",
+    "preset": "tube62",
     "operating_point": {
         "aoa_deg": 3.0,
         "airspeed_m_s": 20.0,

@@ -31,7 +31,7 @@ LENGTH_FIELD_KEYS_M = {
     "pod_len_flat",
     "pod_len_curve",
 }
-MASS_FIELD_KEYS_KG = {"mass", "payload_mass", "ballast_mass"}
+MASS_FIELD_KEYS_KG = {"mass"}
 PART_LIBRARY_FIELD_ORDER = [
     "type",
     "mass",

@@ -1,12 +1,14 @@
 # quadrocketbuilder (GUIBuilder)
 
-A design tool for small tube-bodied drone airframes: a fuselage tube made of modules, wing and fin sets bolted onto it, motors, props, battery and payload inside. You assemble the aircraft from parts you have (or intend to have), and the tool works out mass, balance, propulsion and aerodynamics, draws it, and exports geometry for CAD and printing.
+A design tool for small tube-bodied drone airframes: a fuselage tube made of modules, wing and fin sets bolted onto it, motors, props, battery and ballast inside. You assemble the aircraft from parts you have (or intend to have), and the tool works out mass, balance, propulsion and aerodynamics, draws it, and exports geometry for CAD and printing.
+
+Purpose: RC aircraft and VTOL tailsitters flown on INAV, recoverable and reusable, for hobby flying.
 
 It exists because OpenVSP is unusable for this: the interface is hostile and most of what it outputs is meaningless unless you are an aero engineer. Here the inputs are physical parts and the outputs are a few numbers that answer practical questions. Think OpenRocket, but for tubes with wings, motor pods and VTOL weirdness.
 
 ## Design premise: plane first, then cut into sections
 
-The original workflow was Lego-style: print tube sections, couplers, nosecones and endcaps in FreeCAD, then assemble aircraft from those parts. That is backwards. The intended way is to design the aircraft as a whole (tube, nose, tail, wings, motors, battery, payload) and then cut it into printable sections.
+The original workflow was Lego-style: print tube sections, couplers, nosecones and endcaps in FreeCAD, then assemble aircraft from those parts. That is backwards. The intended way is to design the aircraft as a whole (tube, nose, tail, wings, motors, battery, ballast) and then cut it into printable sections.
 
 The aircraft definition is now plane-first (schema `airframe/2`, `PLAN.md` section 1): the GUI, aero, drawing and CAD export read it. `aircraft/m62v2` and `aircraft/quadlancer62` are real aircraft, originally built the Lego way and re-entered plane-first. `aircraft/m62v1` is m62v2 without the horizontal main-wing section: a pure dart. The old module-stack model is retired.
 
@@ -50,7 +52,7 @@ aircraft/<project>/
     controllers/    flight controller scripts: setup()/loop() against simulated hardware in raw units (libs/controller.py)
 ```
 
-The GUI's SIM view runs the same simulations with a live plot of the flight log; STEP/STL export is in its CAD view. Tube size presets (M62, M75: section, joints, rods) are loaded, saved and created in the Fuselage tab.
+The GUI's SIM view runs the same simulations with a live plot of the flight log; STEP/STL export is in its CAD view. Tube size presets (tube62, tube75: section, joints, rods) are loaded, saved and created in the Fuselage tab.
 
 ## Reading the results
 

@@ -41,7 +41,7 @@
             "nose",
             "body",
             "battery",
-            "payload",
+            "ballast",
             "aero_mount",
             "aero_surface",
             "end"

@@ -5,7 +5,7 @@
     "tailsitter": true,
     "name": "62mm Quad 7in v0",
     "notes": "Pure dart: m62 with canards",
-    "preset": "M62",
+    "preset": "tube62",
     "operating_point": {
         "aoa_deg": 5.0,
         "airspeed_m_s": 20.0,
