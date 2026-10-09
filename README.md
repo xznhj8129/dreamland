@@ -14,11 +14,12 @@ The aircraft definition is now plane-first (schema `airframe/2`, `PLAN.md` secti
 
 ## Running it
 
-Dependencies (aerosandbox, neuralfoil, cadquery, pandas, numpy, threadpoolctl, Tk) live in the conda env `drone`.
+Dependencies (aerosandbox, neuralfoil, cadquery, pandas, numpy, threadpoolctl) live in the conda env `drone`.
 
 ```
-python guibuilder.py                                          # GUI, opens aircraft/example
-python guibuilder.py aircraft/quadlancer62
+cd web && npm install && npm run build                        # once, and after front-end edits
+python webbuilder.py aircraft/example                         # web UI
+python webbuilder.py aircraft/quadlancer62
 python analyze_airframe.py aircraft/m62v2                     # same analysis, text report
 python analyze_airframe.py aircraft/m62v2 --aoa 5 --airspeed 20 --sweep
 python analyze_airframe.py aircraft/m62v2 --export-step out.step --step-mode fused --export-stl out.stl

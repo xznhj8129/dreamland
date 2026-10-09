@@ -175,7 +175,7 @@ Converted examples: `aircraft/m62v2/` and `aircraft/quadlancer62/` reproduce the
 - **Checks**: volume envelopes vs each other, wall, spar rods and channels; sections vs printer bed; mass/CG.
 - **Mass ranges**: volumes with [min, max] mass give a CG range and a static margin range.
 
-Consumers, each a thin reader: AeroBuildup and VLM (`analysis.py`), Barrowman, Tk drawing (`graphics.py`), CadQuery export (`cad.py`), and later the JSBSim exporter.
+Consumers, each a thin reader: AeroBuildup and VLM (`analysis.py`), Barrowman, orthographic drawing (`graphics.py`), CadQuery export (`cad.py`), and later the JSBSim exporter.
 
 ## 4. Auto sectioning (then user adjusts)
 

@@ -1,9 +1,9 @@
 """Server API for the part-library editor (data/parts/), mirroring the Tk PartEditorFrame.
 
-The Tk editor is libs/views/part_editor_view.py + libs/library_editors.py; that module is never imported (it needs
-tkinter), so the field metadata and the save/delete semantics are ported here, with line references to it. The
-library itself is read/written through libs.airframe.load_parts_data / save_parts_category, which are the same
-functions the Tk panel uses, so a file is always round-tripped the same way.
+The Tk editor (libs/views/part_editor_view.py + libs/library_editors.py, removed with the Tk frontend) was never
+imported here, so the field metadata and the save/delete semantics were ported, with line references to it. The
+library itself is read/written through libs.airframe.load_parts_data / save_parts_category, so a file is always
+round-tripped the same way.
 """
 
 from __future__ import annotations

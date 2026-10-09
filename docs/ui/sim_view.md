@@ -48,14 +48,20 @@ SITLRunPanel [arrange:column]
     - Start [ui:dropdown, readonly]
         air      held level at 150 m: a fixed-wing at its operating airspeed, a tailsitter from rest (forward-flight scenarios)
         ground   take off and transition first (VTOL); hover always starts here
-        only the starts this aircraft and scenario can use are offered
+        catapult the bench's catapult: held and spun up, fired along its rail, then the ordinary air-start hold
+        rail     the bench's unpowered launch rail: the motor's own thrust runs it up, then the ordinary air-start hold
+        only the starts this aircraft and scenario can use are offered (catapult/rail: fixed wings; a tailsitter takes off standing)
 
-    - Start conditions [ui:textbox x9, blank = default]
+    - Start conditions [ui:textbox x13, blank = default]
         Altitude (m), Speed (m/s), Heading (deg), Latitude, Longitude, Pitch (deg), Roll (deg), Wind from (deg), Wind (m/s)
+        Launcher pitch (deg), Launcher length (m), Catapult speed (m/s), Launcher height (m)
         defaults: 150 m (glide 1000 m), the operating airspeed (tailsitter: from rest), heading 0, the bench's home
-        (Sneedville), level, still air
+        (Sneedville), level, still air; launcher defaults: catapult 10 deg / 2.0 m / 15 m/s / 1.5 m,
+        rail 20 deg / 3.0 m / 1.0 m (the rail is unpowered, so Catapult speed is catapult-only)
         Altitude, Speed, Pitch and Roll are greyed out on a ground start (standing on the tail, at rest)
-        a value that is not a number stops Run and says which
+        the launcher fields are greyed out unless a launcher start is chosen, and the selected launcher's
+        defaults show as placeholders; the resolved values appear in the summary's start line
+        a value that is not a number stops Run and says which; a non-positive launcher value stops it too
 
     - FC settings [ui:dropdown, readonly]
         values = "generated from the design", then for every .txt diff in the project's inav/:
@@ -92,9 +98,10 @@ Run
     - an INAV run takes real time: the simulation runs at wall-clock speed
     - a script run is in simulated time, as fast as the computer allows; it ends after Duration, when the script stops it, or on the ground
     - the scenario, start and FC settings lists refresh whenever the view is shown and after Load
-    - a run started on the ground logs to its own file, next to the air-start one
+    - a run started on the ground, catapult or rail logs to its own file, next to the air-start one
     - a script run logs to logs/script_<name>.csv
-    - closing the window during a run stops the simulation, as Abort does
+    - the run belongs to the server: every open tab shows it, and a page reload or a closed browser does not stop it
+    - stopping the server aborts a live run, as Abort does
 ```
 
 ## SummaryPanel

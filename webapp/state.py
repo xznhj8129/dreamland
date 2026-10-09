@@ -1,7 +1,7 @@
-"""Server-side state for the browser frontend: one project, mirroring guibuilder.BuilderApp.
+"""Server-side state for the browser frontend: one project, ported from the retired guibuilder.BuilderApp.
 
 Every mutation runs on the aiohttp event loop except the aero solve, which runs in a daemon thread and hands
-its result back through a queue drained on the loop (guibuilder.BuilderApp.poll_aero_queue).
+its result back through a queue drained on the loop (the retired guibuilder.BuilderApp.poll_aero_queue; see git history).
 """
 
 from __future__ import annotations

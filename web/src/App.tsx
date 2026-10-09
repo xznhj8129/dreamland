@@ -6,6 +6,7 @@ import type { View } from './components/TopBar'
 import { EditorView } from './views/EditorView'
 import { PartEditorView } from './parteditor/PartEditorView'
 import { CadView } from './views/CadView'
+import { SimView } from './views/SimView'
 import { PlaceholderView } from './views/PlaceholderView'
 
 export function App(): ReactElement {
@@ -42,6 +43,8 @@ export function App(): ReactElement {
           <PartEditorView />
         ) : view === 'CAD' ? (
           <CadView />
+        ) : view === 'SIM' ? (
+          <SimView />
         ) : (
           <PlaceholderView name={view} />
         )}

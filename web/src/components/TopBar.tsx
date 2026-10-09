@@ -16,8 +16,8 @@ interface TopBarProps {
 }
 
 /**
- * The Tk menu bar: File > New, Load, Save, Save As (guibuilder.BuilderApp.build_menu), with the main-view
- * buttons beside it instead of a separate bottom bar.
+ * The File menu: New, Load, Save, Save As, ported from the retired Tk menu bar (guibuilder.BuilderApp.build_menu;
+ * see git history), with the main-view buttons beside it instead of a separate bottom bar.
  */
 export function TopBar({ view, onView }: TopBarProps): ReactElement {
   const [menuOpen, setMenuOpen] = useState(false)

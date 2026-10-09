@@ -1,6 +1,6 @@
 """Longitudinal- and front-view enrichment for the browser drawing, applied after the scene has been recorded.
 
-libs/graphics.py still draws the Tk view exactly as before (flat panel quads and one slanted spar line per panel in
+libs/graphics.py still draws the side/front scene exactly as it did for the Tk view (flat panel quads and one slanted spar line per panel in
 the side view, one straight span line per panel in the front view); the browser views instead show the panel's real
 airfoil sections and the spar rods as projected cross-sections. Nothing in libs/ changes: webapp.drawing.draw records
 the same scene with RecordingCanvas and then appends these items / removes the recorded panel and spar lines. The

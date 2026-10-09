@@ -1,6 +1,7 @@
 """
 Usage:
 python sim_script.py aircraft/simpleplane level
+python sim_script.py aircraft/simpleplane level --start catapult       # or rail; a fixed wing leaves its launcher
 python sim_script.py aircraft/simpleplane level --duration 120 --alt 300 --heading 90 --wind-from 270 --wind-speed 5
 
 Flies an aircraft project's JSBSim export (libs/jsbsim.py, reused when nothing it depends on changed) with a flight
@@ -31,6 +32,7 @@ from libs.simrun import (
 
 DEFAULT_DURATION_S = 60.0
 ABORTED_EXIT_CODE = 130  # stopped by SIGINT, as a shell reports Ctrl-C
+LAUNCH_HOLD_S = 1.0  # the bench's default wait_s: a latched catapult fires only after its motor has run up
 
 
 def script_log_path(project: Project, name: str) -> Path:
@@ -72,7 +74,8 @@ def main() -> None:
           f"JSBSim model {'reused' if reused else 'exported'}; script {args.controller} ({controller_class.__name__}) at {controller_class.rate_hz:g} Hz")
     print(start_line(start, state))
 
-    plant = Plant(build_vehicle(export, "", start, state, airframe.tailsitter), heading_deg=state.heading_deg, home=(state.lat_deg, state.lon_deg))
+    plant = Plant(build_vehicle(export, "", start, state, airframe.tailsitter), heading_deg=state.heading_deg,
+                  home=(state.lat_deg, state.lon_deg), launcher=state.launcher)
     plant.hover_frame = False  # the script's IMU is fixed to the body, whatever the aircraft
     plant.set_wind(*state.wind_ned_m_s())
     controller = controller_class(motor_count, servo_count)
@@ -88,7 +91,7 @@ def main() -> None:
     rows = []
     started = time.monotonic()
     try:
-        fly(plant, controller, export, motor_count, args.duration, rows)
+        fly(plant, controller, export, motor_count, args.duration, rows, start)
     finally:
         if rows:
             write_log(run_log, rows)
@@ -96,12 +99,15 @@ def main() -> None:
             write_plots(run_log, resolved, f"{airframe.name}: script {args.controller}")
 
 
-def fly(plant: Plant, controller, export, motor_count: int, duration_s: float, rows: list[dict]) -> None:
+def fly(plant: Plant, controller, export, motor_count: int, duration_s: float, rows: list[dict], start: str) -> None:
     """The lockstep loop: sensors, the script's loop(), outputs to the plant, one step of 1 / rate_hz; a log row at
-    LOG_HZ. Appends the rows as it goes, so a run that ends in an error keeps its log."""
+    LOG_HZ. Appends the rows as it goes, so a run that ends in an error keeps its log. A catapult start is latched
+    until it fires at LAUNCH_HOLD_S simulated seconds (the bench's own wait_s): the script runs the motor up while
+    held. A launch rail needs no fire: the vehicle's own thrust runs it up the rail (Plant.advance / Rail)."""
     step_us = round(1e6 / controller.rate_hz)
     log_every_us = round(1e6 / LOG_HZ)
     time_us, next_log_us, highest_agl_m = 0, 0, 0.0
+    fired = start != "catapult"
     fdm = plant.fdm
     controller._sample(plant, time_us)
     controller.setup()
@@ -117,6 +123,10 @@ def fly(plant: Plant, controller, export, motor_count: int, duration_s: float, r
         if time_us >= next_log_us:
             next_log_us += log_every_us
             rows.append(log_row(plant, controller, export, motor_count, time_us, esc_us, servo_us))
+        if not fired and time_us >= LAUNCH_HOLD_S * 1e6:
+            plant.fire()
+            fired = True
+            print(f"catapult fired at {time_us / 1e6:.1f} s simulated")
         plant.advance(step_us / 1e6)
         time_us += step_us
         highest_agl_m = max(highest_agl_m, fdm["position/h-agl-ft"] * FT)

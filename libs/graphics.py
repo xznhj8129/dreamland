@@ -3,14 +3,14 @@ Usage:
 from libs.graphics import draw_canvas_view
 metrics = draw_canvas_view(canvas, resolved, aero, "Longitudinal", roll_deg, ui_draw, ui_bg)
 
-Orthographic Tk drawing of a resolved airframe (libs/geometry.py). Everything drawn comes from the resolved model.
+Orthographic drawing of a resolved airframe (drawn into a duck-typed canvas: a Tk canvas in the old UI, a recording canvas for the web). Everything drawn comes from the resolved model.
 Volumes carry the canvas tags ("drag", "volume:<index>"), wing sets ("drag", "surface:<index>"), a wing set's spars
 ("drag", "spars:<index>") and section cuts ("drag", "cut:<index>"), so the view can move them along x; metrics["scale"]
 converts screen pixels to metres.
 """
 
 import math
-import tkinter as tk
+from typing import Any
 
 from libs.airframe import BOX_SHAPES
 from libs.geometry import PROP_SHAFT_LEN_M, ResolvedAirframe, body_half_extents, deflected_outline, superellipse_radius
@@ -143,7 +143,7 @@ def marker_positions(resolved: ResolvedAirframe, aero) -> dict:
     return positions
 
 
-def draw_marker_guide(canvas: tk.Canvas, positions: dict) -> None:
+def draw_marker_guide(canvas: Any, positions: dict) -> None:
     """Legend; the CG, neutral point and lift centre with their x from the nose (marker_positions)."""
     guide = [(f"{MARKER_LABELS[key]}  x {positions[key] * 1000.0:.1f} mm" if not math.isnan(positions[key]) else f"{MARKER_LABELS[key]}  (aero pending)", color)
              for key, color in MARKER_COLORS.items()]
@@ -217,7 +217,7 @@ def measure_front_view(resolved: ResolvedAirframe, width: float, height: float) 
     }
 
 
-def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, roll_deg: float, ui_draw: str, zoom_scale: float, pan_x: float, pan_y: float,
+def draw_longitudinal_view(canvas: Any, resolved: ResolvedAirframe, aero, roll_deg: float, ui_draw: str, zoom_scale: float, pan_x: float, pan_y: float,
                            deflections: dict[int, float]) -> dict:
     canvas.delete("all")
     width = max(canvas.winfo_width(), 10)
@@ -372,7 +372,7 @@ def draw_longitudinal_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, 
     return metrics
 
 
-def draw_front_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, ui_draw: str, ui_bg: str, zoom_scale: float, pan_x: float, pan_y: float,
+def draw_front_view(canvas: Any, resolved: ResolvedAirframe, aero, ui_draw: str, ui_bg: str, zoom_scale: float, pan_x: float, pan_y: float,
                     deflections: dict[int, float]) -> dict:
     canvas.delete("all")
     width = max(canvas.winfo_width(), 10)
@@ -469,7 +469,7 @@ def draw_front_view(canvas: tk.Canvas, resolved: ResolvedAirframe, aero, ui_draw
 
 
 def draw_canvas_view(
-    canvas: tk.Canvas,
+    canvas: Any,
     resolved: ResolvedAirframe,
     aero,
     view_mode: str,

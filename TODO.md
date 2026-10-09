@@ -11,7 +11,6 @@ User added TODOs (do not remove/change unless done)
 - fuselage cross-sections with different shapes 
 
 - SIM:
-    * support catapult/rail launch
     * Re-design testing scenarios to be scripts with starting conditions, measurement points and goal/stop conditions
     * Scenario method of control for Flight Controller SITL is what a pilot would traditionally use: RC channels.  MSP/Mavlink commands (maybe complicated, not right now)
     * Center pane should have editor for the current INAV Diff
@@ -62,9 +61,6 @@ Agent added TODOs, freeform, remove done ones
 
 - D. Aero:
         - Let surfaces use imported DAT airfoils (data/airfoils.json); they take AeroSandbox names only.
-
-- E. GUI:
-        - Part Editor (libs/library_editors.py): rename to an existing name overwrites on disk; category change keeps old fields; unsaved edits discarded on selection or view change; own copies of length-field list, palette, ordered_keys, format_field_value, field_label, parsing; NEW_PART_LIBRARY_DEFAULTS hardcoded.
 
 - F. JSBSim export (libs/jsbsim.py, sim_inav.py), INAV SITL via inav_development/inav-jsbsim-bench:
         - FC part position and orientation not used in INAV SITL yet (the script controller's IMU uses them): bench change to read sensors at the FC (lever arm, axes) and matching board alignment in the generated diff.

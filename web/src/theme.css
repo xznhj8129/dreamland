@@ -1079,3 +1079,128 @@ button.danger:hover:not(:disabled) {
   border: 1px solid var(--ui-border);
   background: #ffffff;
 }
+
+/* SIM view (web/src/views/SimView.tsx, webapp/sim.py; docs/ui/sim_view.md) */
+.sim-left,
+.sim-centre,
+.sim-right {
+  gap: 8px;
+  padding: 8px;
+  overflow: auto;
+}
+
+.sim-field {
+  display: grid;
+  grid-template-columns: minmax(90px, 44%) minmax(0, 1fr);
+  align-items: center;
+  gap: 3px 8px;
+  min-width: 0;
+}
+
+.sim-field label {
+  color: var(--ui-fg);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sim-conditions {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 4px 10px;
+  margin: 2px 0 0 0;
+  padding: 6px 8px 8px 8px;
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+}
+
+.sim-conditions legend {
+  padding: 0 4px;
+  color: var(--ui-fg);
+}
+
+.sim-condition {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  align-items: center;
+  gap: 4px;
+  min-width: 0;
+}
+
+.sim-condition label {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.sim-buttons {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding-top: 2px;
+}
+
+.sim-status {
+  min-width: 0;
+}
+
+.sim-summary-card {
+  flex: 1 1 auto;
+  min-height: 200px;
+}
+
+.sim-summary {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 4px 6px;
+  overflow: auto;
+  background: var(--ui-bg);
+  border: 1px solid var(--ui-border);
+  border-radius: 4px;
+  font-family: "DejaVu Sans Mono", "Liberation Mono", monospace;
+  font-size: 13px;
+  line-height: 1.35;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.sim-y-list {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  overflow: auto;
+}
+
+.sim-plots {
+  display: flex;
+  flex-direction: column;
+  flex: 1;
+  min-height: 0;
+  padding: 4px 0; /* no horizontal padding: uPlot is sized to clientWidth */
+  overflow: auto;
+  background: var(--ui-bg);
+}
+
+.sim-subplot {
+  flex: 0 0 auto;
+}
+
+.sim-path {
+  position: relative;
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+  border: 1px solid var(--ui-border);
+}
+
+.sim-path canvas {
+  display: block;
+  background: #001000; /* guibuilder.py UI_CANVAS */
+  cursor: grab;
+  touch-action: none;
+}
+
+.sim-path canvas:active {
+  cursor: grabbing;
+}

@@ -1,8 +1,8 @@
 """Editor context and structural operations for the browser frontend.
 
-The constants and semantics here mirror the Tk editor, libs/views/editor_view.py, so the browser forms behave
-exactly like it; that module is never imported (it needs Tk). Line references are to editor_view.py unless noted.
-The structural operations are ported from the Tk methods named in each docstring.
+The constants and semantics here mirror the retired Tk editor (libs/views/editor_view.py, removed with the Tk
+frontend; see git history). Line references cite that file unless noted. The structural operations are ported
+from the Tk methods named in each docstring; docs/ui/editor_view.md documents the behavior.
 """
 
 from __future__ import annotations

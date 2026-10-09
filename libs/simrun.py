@@ -8,29 +8,48 @@ start conditions, the JSBSim vehicle at its start, the ground rule, the electric
 
 import csv
 import math
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from pathlib import Path
 
 import matplotlib
 import numpy as np
+from inavbench import Catapult, LaunchRail
 from inavbench.vehicles import HOME, Vehicle
 
 matplotlib.use("Agg")
 import matplotlib.pyplot as plt  # noqa: E402  (after choosing the non-GUI backend)
 
-# Start conditions a run may set (StartState); those marked air-only are fixed by standing on the ground for a ground start.
-START_OPTIONS = {  # option: (help, air-only)
-    "alt": ("start height above ground, m (default START_ALT_M; glide GLIDE_START_ALT_M)", True),
-    "speed": ("start airspeed, m/s (default: the operating airspeed; a tailsitter starts from rest)", True),
-    "heading": ("start heading, deg (default 0, north)", False),
-    "lat": ("start latitude, deg (default the bench's home)", False),
-    "lon": ("start longitude, deg (default the bench's home)", False),
-    "pitch": ("start pitch, deg (default 0)", True),
-    "roll": ("start roll, deg (default 0)", True),
-    "wind-from": ("direction the wind blows from, deg (default 0)", False),
-    "wind-speed": ("wind speed, m/s (default 0)", False),
+@dataclass(frozen=True)
+class StartOption:
+    """One --option of a start: its help text and the starts that use it. A launcher option on air or ground is
+    refused; launch-speed is catapult-only (the rail is unpowered)."""
+    help: str
+    air_only: bool = False
+    launcher_only: bool = False
+    catapult_only: bool = False
+
+
+# Start conditions a run may set (StartState); those marked air-only are fixed by a ground or launcher start.
+START_OPTIONS = {  # option: help and the starts that use it
+    "alt": StartOption("start height above ground, m (default START_ALT_M; glide GLIDE_START_ALT_M)", air_only=True),
+    "speed": StartOption("start airspeed, m/s (default: the operating airspeed; a tailsitter starts from rest)", air_only=True),
+    "heading": StartOption("start heading, deg (default 0, north)"),
+    "lat": StartOption("start latitude, deg (default the bench's home)"),
+    "lon": StartOption("start longitude, deg (default the bench's home)"),
+    "pitch": StartOption("start pitch, deg (default 0)", air_only=True),
+    "roll": StartOption("start roll, deg (default 0)", air_only=True),
+    "wind-from": StartOption("direction the wind blows from, deg (default 0)"),
+    "wind-speed": StartOption("wind speed, m/s (default 0)"),
+    "launch-pitch": StartOption("launcher pitch, deg (default: 10 catapult, 20 rail)", launcher_only=True),
+    "launch-length": StartOption("launcher length, m (default: 2.0 catapult, 3.0 rail)", launcher_only=True),
+    "launch-speed": StartOption("catapult speed, m/s (default 15.0)", launcher_only=True, catapult_only=True),
+    "launch-height": StartOption("launcher height above ground, m (default: 1.5 catapult, 1.0 rail)", launcher_only=True),
 }
-STARTS = ("air", "ground")
+STARTS = ("air", "ground", "catapult", "rail")
+# The launch starts use the bench's own plane recipe (inav-jsbsim-bench examples/launch.py): the Rascal's catapult,
+# and its rail. The LaunchRail dataclass default (85 deg) is a vertical rocket rail, wrong for a fixed wing.
+CATAPULT = Catapult()  # examples/launch.py:37
+RAIL = LaunchRail(pitch_deg=20.0, length_m=3.0, height_m=1.0)  # examples/launch.py:41
 START_ALT_M = 150.0  # forward-flight scenarios started in the air, held level here
 FT = 0.3048
 KNOT_M_S = 0.514444
@@ -47,7 +66,7 @@ class GroundHit(Exception):
 
 @dataclass(frozen=True)
 class StartState:
-    """Where and how a run starts."""
+    """Where and how a run starts, and (a launch start's) resolved launcher."""
     alt_m: float
     speed_m_s: float
     heading_deg: float
@@ -57,6 +76,7 @@ class StartState:
     roll_deg: float
     wind_from_deg: float
     wind_m_s: float
+    launcher: Catapult | LaunchRail | None = None
 
     def wind_ned_m_s(self) -> tuple[float, float]:
         """(north, east) of the air's motion: it blows towards wind_from_deg + 180."""
@@ -64,27 +84,79 @@ class StartState:
         return self.wind_m_s * math.cos(towards), self.wind_m_s * math.sin(towards)
 
 
+def launcher_defaults() -> dict[str, dict[str, float]]:
+    """What each launch start's panel fields show as their defaults, in START_OPTIONS keys (the bench's own recipe;
+    a rail has no launch speed)."""
+    return {
+        "catapult": {"launch-pitch": CATAPULT.pitch_deg, "launch-length": CATAPULT.length_m,
+                     "launch-speed": CATAPULT.speed_ms, "launch-height": CATAPULT.height_m},
+        "rail": {"launch-pitch": RAIL.pitch_deg, "launch-length": RAIL.length_m, "launch-height": RAIL.height_m},
+    }
+
+
+LAUNCHER_FIELDS = {  # the Catapult/LaunchRail dataclass field each launcher option overrides
+    "launch-pitch": "pitch_deg",
+    "launch-length": "length_m",
+    "launch-speed": "speed_ms",
+    "launch-height": "height_m",
+}
+
+
+def resolve_launcher(parser, start: str, given: dict[str, float | None]) -> Catapult | LaunchRail | None:
+    """The launcher a launch start leaves, built from the given --launch-* overrides on the bench's own recipe.
+
+    Air and ground use none and refuse the launcher options; a rail is unpowered and refuses launch-speed; every
+    given value must be positive.
+    """
+    launcher_given = [option for option, spec in START_OPTIONS.items() if spec.launcher_only and given[option] is not None]
+    if start not in ("catapult", "rail"):
+        if launcher_given:
+            parser.error(f"{', '.join(f'--{option}' for option in launcher_given)}: only a catapult or rail start uses it")
+        return None
+    if start == "rail" and given["launch-speed"] is not None:
+        parser.error("--launch-speed: the rail is unpowered")
+    overrides: dict[str, float] = {}
+    for option in launcher_given:
+        value = given[option]
+        if value <= 0.0:
+            parser.error(f"--{option}: must be positive, got {value:g}")
+        overrides[LAUNCHER_FIELDS[option]] = value
+    return replace(CATAPULT if start == "catapult" else RAIL, **overrides)
+
+
 def start_reasons(airframe) -> dict[str, str | None]:
     """Each start of the forward-flight scenarios: None when this airframe can use it, otherwise why not."""
     return {
         "air": None,
-        "ground": None if airframe.vtol else "a fixed-wing cannot take off yet: the exported model has structure contacts, no wheels or launcher",
+        "ground": None if airframe.vtol else "a fixed-wing cannot roll: use a catapult or rail launch",
+        "catapult": None if not airframe.vtol else "a tailsitter takes off standing",
+        "rail": None if not airframe.vtol else "a tailsitter takes off standing",
     }
 
 
 def add_start_arguments(parser) -> None:
     """--start and the START_OPTIONS, for any runner."""
-    parser.add_argument("--start", choices=list(STARTS), default=None, help="air (default, held in the air) or ground (standing on its tail, VTOL)")
-    for option, (text, air_only) in START_OPTIONS.items():
-        parser.add_argument(f"--{option}", type=float, default=None, help=text + ("; air start only" if air_only else ""))
+    parser.add_argument("--start", choices=list(STARTS), default=None,
+                        help="air (default, held in the air), ground (standing on its tail, VTOL), catapult or rail (fixed wing)")
+    for option, spec in START_OPTIONS.items():
+        if spec.air_only:
+            suffix = "; air start only"
+        elif spec.catapult_only:
+            suffix = "; catapult start only"
+        elif spec.launcher_only:
+            suffix = "; catapult or rail start only"
+        else:
+            suffix = ""
+        parser.add_argument(f"--{option}", type=float, default=None, help=spec.help + suffix)
 
 
 def resolve_start(parser, args, start: str, default_alt_m: float, default_speed_m_s: float) -> StartState:
-    """The StartState from the --options given and the runner's defaults; a ground start refuses the air-only ones."""
+    """The StartState from the --options given and the runner's defaults; any start but air refuses the air-only ones."""
     given = {option: getattr(args, option.replace("-", "_")) for option in START_OPTIONS}
-    fixed = [f"--{option}" for option, (_text, air_only) in START_OPTIONS.items() if air_only and given[option] is not None]
-    if start == "ground" and fixed:
-        parser.error(f"{', '.join(fixed)}: a ground start stands on its tail, at rest")
+    fixed = [f"--{option}" for option, spec in START_OPTIONS.items() if spec.air_only and given[option] is not None]
+    if fixed and start != "air":
+        reason = "a ground start stands on its tail, at rest" if start == "ground" else "a launcher start sits on the rail, at rest"
+        parser.error(f"{', '.join(fixed)}: {reason}")
 
     def chosen(option: str, default: float) -> float:
         return default if given[option] is None else given[option]
@@ -92,23 +164,38 @@ def resolve_start(parser, args, start: str, default_alt_m: float, default_speed_
     return StartState(
         alt_m=chosen("alt", default_alt_m), speed_m_s=chosen("speed", default_speed_m_s), heading_deg=chosen("heading", 0.0), lat_deg=chosen("lat", HOME[0]),
         lon_deg=chosen("lon", HOME[1]), pitch_deg=chosen("pitch", 0.0), roll_deg=chosen("roll", 0.0), wind_from_deg=chosen("wind-from", 0.0),
-        wind_m_s=chosen("wind-speed", 0.0),
+        wind_m_s=chosen("wind-speed", 0.0), launcher=resolve_launcher(parser, start, given),
     )
 
 
 def start_line(start: str, state: StartState) -> str:
+    """The run's start as one line; a launch start prints the launcher's own geometry and, for a catapult, its speed."""
+    launcher = state.launcher
+    if isinstance(launcher, Catapult):
+        return (f"start: catapult, {launcher.pitch_deg:g} deg, {launcher.length_m:.1f} m rail, {launcher.speed_ms:.1f} m/s, "
+                f"{launcher.height_m:.1f} m above ground")
+    if isinstance(launcher, LaunchRail):
+        return f"start: rail, {launcher.pitch_deg:g} deg, {launcher.length_m:.1f} m long, {launcher.height_m:.1f} m above ground"
     return (f"start: {start}" + ("" if start == "ground" else f", {state.alt_m:g} m, {state.speed_m_s:g} m/s, pitch {state.pitch_deg:g}, roll {state.roll_deg:g}")
             + f", heading {state.heading_deg:g}, {state.lat_deg:.6f} {state.lon_deg:.6f}, wind {state.wind_m_s:g} m/s from {state.wind_from_deg:g}")
 
 
 def build_vehicle(export, profile: str, start: str, state: StartState, tailsitter: bool) -> Vehicle:
-    """The JSBSim vehicle at its start: standing on the tail contacts, nose up (ground), or held in the air as the
-    StartState says. profile is the INAV CLI file (empty for a script controller)."""
+    """The JSBSim vehicle at its start: standing on the tail contacts, nose up (ground), held in the air as the
+    StartState says, or on its launcher (the Plant sets the rail's pitch and rest speed). profile is the INAV CLI
+    file (empty for a script controller)."""
     if start == "ground":
         return Vehicle(
             model=export.model_name, profile=profile, motors=export.motor_properties, servos=export.servo_properties,
             airborne=True, alt_m=export.stance_height_m + STANCE_CLEARANCE_M, speed_kts=0.0,
             init={"ic/theta-deg": 90.0}, model_dir=str(export.model_dir), tailsitter=True, hover_mixer_profile=HOVER_MIXER_PROFILE,
+        )
+    launcher = state.launcher
+    if launcher is not None:
+        return Vehicle(
+            model=export.model_name, profile=profile, motors=export.motor_properties, servos=export.servo_properties,
+            airborne=True, alt_m=launcher.height_m, speed_kts=0.0, init={}, model_dir=str(export.model_dir),
+            tailsitter=tailsitter, hover_mixer_profile=HOVER_MIXER_PROFILE,
         )
     return Vehicle(
         model=export.model_name, profile=profile, motors=export.motor_properties, servos=export.servo_properties,

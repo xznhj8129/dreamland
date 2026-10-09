@@ -1,8 +1,9 @@
 """Server-side drawing for the browser front end: the Tk drawing code, recorded as plain data.
 
 The Simple drawing is still produced by libs.graphics.draw_canvas_view, unchanged, drawn into a
-RecordingCanvas instead of a tk.Canvas. ViewState ports the view fields and commands of the Tk Editor
-(libs/views/editor_view.py), so mode, roll, zoom, pan and the scrollbars behave as in the Tk view.
+RecordingCanvas instead of a live Tk canvas. ViewState ports the view fields and commands of the retired Tk
+Editor (libs/views/editor_view.py, removed with the Tk frontend), so mode, roll, zoom, pan and the
+scrollbars behave as in the Tk view.
 """
 
 from __future__ import annotations
@@ -42,7 +43,7 @@ def _plain(value: Any) -> Any:
 
 
 class RecordingCanvas:
-    """A tk.Canvas stand-in that records create_* calls as JSON-safe scene items.
+    """A duck-typed canvas stand-in that records create_* calls as JSON-safe scene items.
 
     Only the calls libs.graphics makes are implemented: winfo_width/winfo_height, delete("all") and
     create_line/polygon/rectangle/oval/text. Options are recorded exactly as passed; none are invented.

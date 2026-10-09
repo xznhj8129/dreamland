@@ -4,7 +4,7 @@ python webbuilder.py
 python webbuilder.py aircraft/example
 python webbuilder.py aircraft/example --port 8765
 
-Browser front end for plane-first airframes (the same projects as guibuilder.py):
+Browser front end for plane-first airframes (it replaced the Tk guibuilder.py):
 serve the built React app from web/dist, open one aircraft project and run
 the shared libs on the server; recompute is the Editor's F5.
 """
@@ -19,6 +19,7 @@ from pathlib import Path
 from aiohttp import web
 
 from libs.project import PROJECTS_DIR, open_project
+from webapp import sim as sim_backend
 from webapp.server import close_websockets, create_app
 from webapp.state import AppState
 
@@ -38,6 +39,7 @@ async def serve(app: web.Application, host: str, port: int) -> None:
         await asyncio.Event().wait()
     finally:
         await close_websockets(app)  # never wait on a connected browser
+        sim_backend.shutdown()  # a live SIM run must not outlive the server (the SITL bench holds fixed ports)
         await runner.cleanup()
 
 

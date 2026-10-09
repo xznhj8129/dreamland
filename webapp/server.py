@@ -14,6 +14,7 @@ from libs.airframe import SCHEMA, AirframeError, blank_definition, parse_airfram
 from libs.geometry import resolve_airframe
 from libs.project import BUILD_FILE, PROJECTS_DIR, ProjectError, copy_project, create_project, open_project
 from webapp import cad as cad_export
+from webapp import sim as sim_backend
 from webapp.drawing import ViewState, draw, ensure_view
 from webapp.editor import OpFailed, SessionMismatch, apply_move, apply_op, apply_set, check_session, context
 from webapp.library import delete_part, library_payload, save_part
@@ -21,8 +22,8 @@ from webapp.model3d import build_model3d
 from webapp.serialize import snapshot
 from webapp.state import AppState
 
-# guibuilder.py EDITOR_BLOCKS: the definition blocks the editors index directly. Load refuses a definition missing
-# any of them. Kept local so the server does not import the Tk frontend; keep in step with guibuilder.py.
+# The definition blocks the editors index directly (formerly guibuilder.py EDITOR_BLOCKS). Load refuses a
+# definition missing any of them.
 EDITOR_BLOCKS = ("name", "tailsitter", "vtol", "powered", "operating_point", "print", "fuselage", "surfaces", "volumes", "parts", "sections")
 
 
@@ -69,6 +70,10 @@ def create_app(state: AppState, dist_dir: Path) -> web.Application:
     app.router.add_post("/api/cad/sections", handle_cad_sections)
     app.router.add_post("/api/cad/drawings", handle_cad_drawings)
     app.router.add_post("/api/cad/varsets", handle_cad_varsets)
+    app.router.add_get("/api/sim/options", handle_sim_options)
+    app.router.add_post("/api/sim/run", handle_sim_run)
+    app.router.add_post("/api/sim/abort", handle_sim_abort)
+    app.router.add_get("/api/sim/state", handle_sim_state)
     app.router.add_get("/files/{tail:.*}", handle_project_file)  # the active project's own outputs, read-only
     app.router.add_get("/ws/events", handle_events)
     app.router.add_get("/{tail:.*}", handle_dist)  # after the API routes: SPA fallback
@@ -518,6 +523,47 @@ async def handle_cad_drawings(request: web.Request) -> web.Response:
 async def handle_cad_varsets(request: web.Request) -> web.Response:
     """POST /api/cad/varsets: one FreeCAD varset JSON per varset into cad/varsets/."""
     return await _run_cad_export(_state(request), cad_export.export_varsets)
+
+
+async def handle_sim_options(request: web.Request) -> web.Response:
+    """GET /api/sim/options: what the SIM panel offers for the current project (webapp.sim.options)."""
+    return web.json_response(sim_backend.options(_state(request)))
+
+
+async def handle_sim_run(request: web.Request) -> web.Response:
+    """POST /api/sim/run: save the definition, then start one runner subprocess; the client polls /api/sim/state.
+
+    A refusal (bad field, a live run, a failed save) is 400 with the message and starts nothing.
+    """
+    body = await _json_object(request)
+    ok, message = sim_backend.start_run(_state(request), body)
+    if not ok:
+        return web.json_response({"ok": False, "message": message}, status=400)
+    return web.json_response({"ok": True})
+
+
+async def handle_sim_abort(request: web.Request) -> web.Response:
+    """POST /api/sim/abort: SIGINT the live run (killed if it outlives the runner's own stop); true when signalled."""
+    return web.json_response({"ok": sim_backend.abort_run()})
+
+
+def _query_int(request: web.Request, name: str, default: int | None) -> int | None:
+    """An optional integer query parameter: absent or empty is the default, anything else must parse."""
+    text = request.query.get(name)
+    if text is None or text == "":
+        return default
+    try:
+        return int(text)
+    except ValueError:
+        raise web.HTTPBadRequest(text=f"{name} must be an integer") from None
+
+
+async def handle_sim_state(request: web.Request) -> web.Response:
+    """GET /api/sim/state: the run status, stdout lines and flight-log rows since the client's offsets."""
+    stdout_offset = _query_int(request, "stdout_offset", 0)
+    log_offset = _query_int(request, "log_offset", 0)
+    run_id = _query_int(request, "run_id", None)
+    return web.json_response(sim_backend.state_payload(stdout_offset, log_offset, run_id))
 
 
 async def handle_project_file(request: web.Request) -> web.StreamResponse:

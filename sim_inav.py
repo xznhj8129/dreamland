@@ -31,8 +31,9 @@ controls:   any. Right roll, pull up and right yaw on the sticks in turn; each p
 glide:      any. Motors off from GLIDE_START_ALT_M; a pilot aims at airspeeds with pitch from fast to slow until the
             ground: sink rate and glide ratio per step, the smallest sink rate and the best glide of the steady steps.
 The forward-flight scenarios start held in the air (--start air: level at START_ALT_M, a fixed-wing at its operating
-airspeed, a tailsitter from rest), or take off and transition first (--start ground, VTOL); controls holds the operating
-airspeed. --alt, --speed, --heading, --lat, --lon, --pitch, --roll, --wind-from and --wind-speed set the start (START_OPTIONS). Level flight is held by ForwardFlight, the only airframe-type-specific part:
+airspeed, a tailsitter from rest), take off and transition first (--start ground, VTOL), or leave a launcher (--start
+catapult / rail, fixed wing: the bench's own plane recipe, in ACRO, then the ordinary air-start hold once it is off
+the rail); controls holds the operating airspeed. --alt, --speed, --heading, --lat, --lon, --pitch, --roll, --wind-from and --wind-speed set the start (START_OPTIONS); --launch-pitch, --launch-length, --launch-speed and --launch-height set the launcher a catapult or rail start leaves. Level flight is held by ForwardFlight, the only airframe-type-specific part:
 a fixed-wing flies INAV ANGLE + NAV ALTHOLD, a tailsitter its forward mixer profile in ACRO with the script pilot.
 """
 
@@ -44,14 +45,14 @@ import sys
 from dataclasses import dataclass
 from pathlib import Path
 
-from inavbench import Bench
+from inavbench import Bench, Catapult
 
 from libs.airframe import load_airframe, load_parts_data
 from libs.geometry import resolve_airframe
 from libs.jsbsim import INAV_THROTTLE_IDLE_PCT, reuse_or_export
 from libs.project import Project, open_project
 from libs.simrun import (
-    FT, START_ALT_M, GroundHit, StartState, add_start_arguments, battery_power_w, build_vehicle,
+    FT, KNOT_M_S, START_ALT_M, GroundHit, StartState, add_start_arguments, battery_power_w, build_vehicle,
     electrical_columns, ground_hit_text, hit_ground, resolve_start, start_line, start_reasons, write_plots,
 )
 
@@ -87,6 +88,9 @@ GLIDE_STEADY_M_S = 0.5  # a step counts when its airspeed changed less than this
 GLIDE_SPEED_GAIN_DEG_PER_M_S = 3.0  # the gliding pilot's pitch per m/s of airspeed above its target
 TAKEOFF_CLIMB_STICK_ABOVE_HOVER = 0.15
 TAKEOFF_MAX_S = 30.0
+LAUNCH_WAIT_S = 1.0  # the bench's own launch recipe: arm and run the motor up while held (examples/launch.py:51)
+LAUNCH_THROTTLE_CATAPULT = 0.8  # examples/launch.py:51
+LAUNCH_THROTTLE_RAIL = 1.0
 CLIMB_STOP_S = 1.0  # hover throttle before the transition, so it does not carry the climb into the pitch-over
 TRANSITION_DONE_PITCH_DEG = 20.0
 TRANSITION_DONE_CLIMB_M_S = 1.0
@@ -197,8 +201,10 @@ def tests_for(airframe) -> list[str]:
 
 
 def flight_log_path(project: Project, scenario: str, start: str) -> Path:
-    """The bench's flight log (CSV) of a run; a forward-flight scenario started on the ground gets its own."""
-    return project.logs_dir / f"sim_inav_{scenario}{'_ground' if start == 'ground' and scenario != 'hover' else ''}.csv"
+    """The bench's flight log (CSV) of a run; a forward-flight scenario started anywhere but the air gets its own
+    (hover is the ground start)."""
+    suffix = "" if start == "air" or scenario == "hover" else f"_{start}"
+    return project.logs_dir / f"sim_inav_{scenario}{suffix}.csv"
 
 
 def pinned_sitl(project: Project) -> Path:
@@ -387,19 +393,40 @@ class ForwardFlight:
         if not self.tailsitter and self.powered:
             bench.mode("NAV ALTHOLD", on=not on)
 
-    def start_airborne(self, bench: Bench) -> None:
-        """From the held start (level at START_ALT_M and the start airspeed): arm, take up the hold, release."""
+    def hold_airborne(self, bench: Bench) -> None:
+        """Take up the hold of an air start, without arming (a launcher hand-over is already armed): a fixed-wing in
+        INAV ANGLE, plus NAV ALTHOLD when powered; a tailsitter in its forward mixer profile in ACRO with the script
+        pilot holding altitude and heading."""
         if self.tailsitter:
-            enter_forward_profile(bench)
-            bench.arm()
             fdm = bench.plant.fdm
             self.pilot = AltitudePilot(target_alt_m=bench.truth()["agl_m"], target_heading_deg=fdm["attitude/psi-deg"])
         else:
             bench.mode("ANGLE")
-            bench.arm()
             if self.powered:
                 bench.mode("NAV ALTHOLD")
+
+    def start_airborne(self, bench: Bench) -> None:
+        """From the held start (level at START_ALT_M and the start airspeed): arm, take up the hold, release."""
+        if self.tailsitter:
+            enter_forward_profile(bench)
+        bench.arm()
+        self.hold_airborne(bench)
         bench.release()
+
+    def launch_off(self, bench: Bench) -> None:
+        """A fixed wing on its launcher, the bench's own plane recipe (examples/launch.py): launch() arms and runs
+        the motor up while held, the catapult fires or the rail's own thrust runs it up, and it is off. Off the rail
+        it hands straight to the ordinary air-start hold (hold_airborne; arm() is not run again, it would zero the
+        launch throttle)."""
+        launcher = bench.plant.rail.launcher
+        bench.launch(throttle=LAUNCH_THROTTLE_CATAPULT if isinstance(launcher, Catapult) else LAUNCH_THROTTLE_RAIL,
+                     wait_s=LAUNCH_WAIT_S, modes=())
+        truth = bench.truth()
+        print(f"{bench.elapsed:5.1f}s off the {'catapult' if isinstance(launcher, Catapult) else 'rail'}: "
+              f"airspeed {truth['ias_kts'] * KNOT_M_S:.1f} m/s, height {truth['agl_m']:.1f} m")
+        # bench.launch(..., modes=()) keeps it in ACRO through the hold and the rail run; never switch to ANGLE
+        # before the vehicle is off the rail: ANGLE would wind up trying to right itself against the rail attitude.
+        self.hold_airborne(bench)
 
     def take_off(self, bench: Bench, export) -> None:
         """Tailsitter, standing: arm, climb in ANGLE straight to TAKEOFF_ALT_M, switch to the forward profile in ACRO;
@@ -668,7 +695,7 @@ def main() -> None:
     if reason is not None:
         parser.error(f"{args.project}: {args.scenario} {reason}")
     if args.scenario == "hover":
-        if args.start == "air":
+        if args.start not in (None, "ground"):
             parser.error("hover starts standing on the ground")
         start = "ground"
     else:
@@ -712,12 +739,14 @@ def run_scenario(scenario: str, start: str, state: StartState, args, flight: For
     powered = bool(export.motors)
     with FlightBench(vehicle, sitl=str(sitl_path), workdir=str(workdir), log=str(log_path), log_fc=True, heading_deg=state.heading_deg,
                      home=(state.lat_deg, state.lon_deg), log_extra=electrical_log(export, motor_count) if powered else None,
-                     battery=pack_state(export, motor_count) if powered else None) as bench:
+                     battery=pack_state(export, motor_count) if powered else None, launcher=state.launcher) as bench:
         bench.wind(*state.wind_ned_m_s())
         if scenario == "hover":
             hover_test(bench, export, motor_count, args.hover_s)
             return
-        if start == "ground":
+        if state.launcher is not None:
+            flight.launch_off(bench)
+        elif start == "ground":
             flight.take_off(bench, export)
         else:
             flight.start_airborne(bench)

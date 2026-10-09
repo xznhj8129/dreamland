@@ -1,6 +1,6 @@
 # GUIBuilder Main Window
 
-This file covers the persistent shell of `guibuilder.py`: top bar, central view host, and bottom bar.
+This file covers the persistent shell of the web front end (`web/src/App.tsx`, `web/src/components/TopBar.tsx`): the top bar with the File menu and the main-view buttons, and the central view host.
 
 ## Theme
 
@@ -23,7 +23,9 @@ Theme
 ```text
 GUIBuilderWindow [fill]
 
-    * MenuBar [docked:top, arrange:row]
+    * TopBar [docked:top, arrange:row]
+        - File menu
+        - main-view buttons
 
     * MainViewHost [fill, switchable]
         EditorView
@@ -32,8 +34,6 @@ GUIBuilderWindow [fill]
         SimView
         CADView
         PartEditorView
-
-    * BottomBar [docked:bottom, arrange:row]
 ```
 
 ### Window behavior
@@ -41,29 +41,29 @@ GUIBuilderWindow [fill]
 ```text
 Startup
     - window title = "quadrocketbuilder - <project> (<aircraft name>)"
-    - default geometry = 1600x980
-    - opens the project given on the command line, default aircraft/m62v2
+    - opens the project given on the command line (`webbuilder.py <project>`)
     - default visible view = Editor
-    - F5 triggers heavy recompute in most views
-    - F5 reruns the current VLM sweep while VLM view is active
+    - F5 triggers heavy recompute while the Editor view is active
 ```
 
 ## Top Bar
 
 ```text
-MenuBar [docked:top]
+TopBar [docked:top, arrange:row]
 
     * FileMenu [ui:dropdown, arrange:column]
         - New
             on:click -> ask a new project name, create aircraft/<name>/ with a blank definition, continue there
         - Load
-            on:click -> pick a project directory (starts in aircraft/), load it
+            on:click -> pick a project from the list under aircraft/, load it
         - Save
             on:click -> write the project's aircraft.json
         - Save As
             on:click -> ask a new project name, copy the whole project to aircraft/<name>/, save there, continue there
-        - Exit
-            on:click -> close application
+
+    * ViewButtons [arrange:row]
+        - Editor, Aero Analysis, VLM, SIM, CAD, Part Editor
+            on:click -> raise the view; the visible view's button is highlighted
 ```
 
 ### Load / Save behavior
@@ -97,9 +97,8 @@ New
 ```text
 MainViewHost [fill, switchable]
 
-    - one main view frame exists for each bottom-bar mode
-    - all view frames are gridded into the same parent
-    - switching view raises the requested frame
+    - one main view exists for each top-bar view button
+    - only the visible view is rendered
 ```
 
 ### Main-view mapping
@@ -113,48 +112,14 @@ CAD            -> cad_view.md
 Part Editor    -> part_editor_view.md
 ```
 
-## Bottom Bar
-
-```text
-BottomBar [docked:bottom, arrange:row]
-
-    - Editor
-    - Aero Analysis
-    - VLM
-    - SIM
-    - CAD
-    - Part Editor
-```
-
-### Bottom-bar behavior
-
-```text
-Editor
-    - raises the Editor view
-
-Aero Analysis
-    - raises the aero-analysis view
-
-VLM
-    - raises the VLM sweep view
-
-SIM
-    - refreshes the scenario and INAV config lists
-    - raises the SIM view (INAV SITL and script simulations)
-
-CAD
-    - raises the CAD view
-
-Part Editor
-    - refreshes the part library (data/parts/) from disk
-    - raises the part-library editor view
-```
+Aero Analysis, VLM and SIM are placeholder views in the web front end; their engines
+(VLM sweep, NeuralFoil airfoil comparison, INAV/script simulation) run headless.
 
 ## Error handling
 
 ```text
-Errors (unhandled callback errors with their traceback, aero failures, load / save / preset errors)
-    - are appended to the Editor view's Log tab; the status bar says "<what> (see Log)"
-    - an unchanged repeat of the last logged error updates the status bar but adds no second line
-    - never open a window
+Errors (aero failures, load / save / preset errors)
+    - are appended to the Editor view's Log tab
+    - an unchanged repeat of the last logged error adds no second line
+    - a failed save also shows its message in the top bar; a failed load in its dialog
 ```
