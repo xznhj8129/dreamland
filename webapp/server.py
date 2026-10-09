@@ -69,7 +69,6 @@ def create_app(state: AppState, dist_dir: Path) -> web.Application:
     app.router.add_post("/api/cad/sections", handle_cad_sections)
     app.router.add_post("/api/cad/drawings", handle_cad_drawings)
     app.router.add_post("/api/cad/varsets", handle_cad_varsets)
-    app.router.add_get("/api/cad/files", handle_cad_files)
     app.router.add_get("/files/{tail:.*}", handle_project_file)  # the active project's own outputs, read-only
     app.router.add_get("/ws/events", handle_events)
     app.router.add_get("/{tail:.*}", handle_dist)  # after the API routes: SPA fallback
@@ -519,11 +518,6 @@ async def handle_cad_drawings(request: web.Request) -> web.Response:
 async def handle_cad_varsets(request: web.Request) -> web.Response:
     """POST /api/cad/varsets: one FreeCAD varset JSON per varset into cad/varsets/."""
     return await _run_cad_export(_state(request), cad_export.export_varsets)
-
-
-async def handle_cad_files(request: web.Request) -> web.Response:
-    """GET /api/cad/files: every existing output under the project's cad/, newest first."""
-    return web.json_response({"files": cad_export.list_files(_state(request).project)})
 
 
 async def handle_project_file(request: web.Request) -> web.StreamResponse:

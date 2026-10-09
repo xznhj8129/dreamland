@@ -23,7 +23,7 @@
             "Type": "App::PropertyString",
             "Value": "'axis'"
         },
-        "RootOffset": {
+        "VerticalOffset": {
             "Type": "App::PropertyFloat",
             "Value": 0.0
         },

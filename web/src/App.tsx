@@ -2,13 +2,11 @@ import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import { recompute, startClient, useSnapshot } from './store'
 import { TopBar } from './components/TopBar'
+import type { View } from './components/TopBar'
 import { EditorView } from './views/EditorView'
 import { PartEditorView } from './parteditor/PartEditorView'
 import { CadView } from './views/CadView'
 import { PlaceholderView } from './views/PlaceholderView'
-
-const VIEWS = ['Editor', 'Aero Analysis', 'VLM', 'SIM', 'CAD', 'Part Editor'] as const
-type View = (typeof VIEWS)[number]
 
 export function App(): ReactElement {
   const snapshot = useSnapshot()
@@ -36,7 +34,7 @@ export function App(): ReactElement {
 
   return (
     <div className="app">
-      <TopBar />
+      <TopBar view={view} onView={setView} />
       <main className="view-host">
         {view === 'Editor' ? (
           <EditorView snapshot={snapshot} />
@@ -48,18 +46,6 @@ export function App(): ReactElement {
           <PlaceholderView name={view} />
         )}
       </main>
-      <nav className="view-bar">
-        {VIEWS.map((name) => (
-          <button
-            key={name}
-            type="button"
-            className={name === view ? 'view-button active' : 'view-button'}
-            onClick={() => setView(name)}
-          >
-            {name}
-          </button>
-        ))}
-      </nav>
     </div>
   )
 }

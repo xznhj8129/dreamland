@@ -90,19 +90,6 @@ export function exportVarsets(): Promise<CadAnswer> {
   return post('/api/cad/varsets')
 }
 
-/** GET /api/cad/files: every existing output under the project's cad/, project-relative and newest first. */
-export async function listCadFiles(): Promise<string[] | null> {
-  try {
-    const response = await fetch('/api/cad/files')
-    if (!response.ok) return null
-    const payload = (await response.json()) as { files?: unknown }
-    if (!Array.isArray(payload.files)) return null
-    return payload.files.filter((file): file is string => typeof file === 'string')
-  } catch {
-    return null
-  }
-}
-
 /** The read-only URL for a project-relative output path (GET /files/<tail>). */
 export function filesUrl(relative: string): string {
   return '/files/' + relative.split('/').map(encodeURIComponent).join('/')

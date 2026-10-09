@@ -292,7 +292,8 @@ SurfacesTab [arrange:column]
 
     - Add surface set [ui:button]
     * one card per surface set: its planform fields, mass (blank = computed), Delete
-      control surface [ui:checkbox] with its fields
+      control surface [ui:checkbox] with its fields: kind (split: chord start, span start, span end; all-moving: pivot, span start),
+        roles, deflection min/max, rate, gap (blank = 0), hinge rod diameter (blank = no rod)
       spars [ui:checkbox] (ticking fills them from the aircraft's preset): material [ui:dropdown], diameter, count, spacing, x offset, y offset (up),
         carry-through [ui:checkbox]: stem width, length, flare radius, root length, wall fillet
       root base (not built yet) [ui:checkbox]: length, width, height, forward offset, leading cut, trailing cut

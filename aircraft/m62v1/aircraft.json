@@ -21,7 +21,7 @@
         ]
     },
     "fuselage": {
-        "length_m": 0.522,
+        "length_m": 0.52,
         "section": {
             "width_m": 0.062,
             "height_m": 0.062,
@@ -29,9 +29,11 @@
             "wall_radial_m": 0.00125
         },
         "nose": {
-            "profile": "tangent_ogive",
+            "profile": "spherically_blunted_tangent_ogive",
             "length_m": 0.08,
-            "params": {}
+            "params": {
+                "nose_radius": 0.01
+            }
         },
         "tail": {
             "profile": "parabolic",
@@ -58,11 +60,11 @@
     "surfaces": [
         {
             "name": "qrwing-7in",
-            "x_root_le_m": 0.293,
+            "x_root_le_m": 0.25019,
             "layout": "X",
             "fin_position": "top",
             "dihedral_deg": 45.0,
-            "root_offset": 0.0,
+            "vertical_offset": 0.0,
             "root": "body",
             "span_m": 0.1,
             "chord_root_m": 0.12,
@@ -70,14 +72,13 @@
             "sweep_le_deg": 25.0,
             "incidence_deg": 0.0,
             "incidence_mode": "symmetric",
-            "airfoil": "naca0008",
-            "mass_kg": 0.1,
+            "airfoil": "naca0012",
             "spars": {
                 "material": "carbon_rod",
                 "diameter_m": 0.0064,
                 "count": 2,
                 "spacing_m": 0.0075,
-                "x_offset_m": 0.095,
+                "x_offset_m": 0.06509999999999999,
                 "y_offset_m": 0.0,
                 "carry_through": {
                     "stem_width_m": 0.01,
@@ -94,7 +95,7 @@
             "layout": "+",
             "fin_position": "top",
             "dihedral_deg": 0.0,
-            "root_offset": 0.0,
+            "vertical_offset": 0.0,
             "root": "axis",
             "span_m": 0.055,
             "chord_root_m": 0.1,
@@ -104,39 +105,6 @@
             "incidence_mode": "symmetric",
             "airfoil": "naca0008",
             "mass_kg": 0.004
-        },
-        {
-            "name": "wing 1",
-            "x_root_le_m": 0.0764,
-            "layout": "X",
-            "fin_position": "top",
-            "dihedral_deg": 45.0,
-            "root_offset": 0.0,
-            "root": "body",
-            "span_m": 0.04,
-            "chord_root_m": 0.04,
-            "chord_tip_m": 0.015,
-            "sweep_le_deg": 20.0,
-            "incidence_deg": 0.0,
-            "incidence_mode": "symmetric",
-            "airfoil": "naca2412",
-            "control": {
-                "kind": "all_moving",
-                "roles": [
-                    "pitch",
-                    "yaw"
-                ],
-                "deflection_min_deg": -45.0,
-                "deflection_max_deg": 45.0,
-                "rate_deg_s": 300.0,
-                "servos": [
-                    "S1",
-                    "S2",
-                    "S3",
-                    "S4"
-                ],
-                "pivot": 0.25
-            }
         }
     ],
     "propulsion": {
@@ -156,7 +124,7 @@
                 "on": "surface",
                 "surface": "qrwing-7in",
                 "span_position_m": 0.1,
-                "x_offset_m": 0.12,
+                "x_offset_m": 0.11,
                 "direction": "pusher",
                 "spin": "out",
                 "thrust_axis_tilt_deg": 0.0,
@@ -213,7 +181,7 @@
         {
             "name": "battery",
             "shape": "box",
-            "x_m": 0.135,
+            "x_m": 0.14875,
             "size_m": [
                 0.11,
                 0.0355,
@@ -237,7 +205,7 @@
     ],
     "sections": {
         "cuts_m": [
-            0.06,
+            0.08248,
             0.23,
             0.38,
             0.452

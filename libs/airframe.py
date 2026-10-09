@@ -190,14 +190,16 @@ class Fuselage:
 class ControlSurface:
     kind: str  # CONTROL_KINDS
     chord_start: float | None  # split: hinge line, fraction of the local chord from the leading edge
-    span_start: float | None  # split: fractions of the panel span from the root
-    span_end: float | None
+    span_start: float | None  # split: moving-surface inboard span fraction; all_moving: where the moving surface starts (0 = the root)
+    span_end: float | None  # split: moving-surface outboard span fraction; all_moving: always None
     pivot: float | None  # all_moving: pivot line, fraction of the local chord from the leading edge
     roles: tuple[str, ...]
     deflection_min_deg: float  # positive = trailing edge away from the panel normal (down on a wing)
     deflection_max_deg: float
     rate_deg_s: float  # placeholder, not used yet
     servos: tuple[str, ...]  # one SERVO_OUTPUTS entry per panel, in panel order; outputs may be shared
+    gap_m: float  # material removed between the fixed and the moving surface (the moving surface's edges are inset by it); 0 = none
+    spar_diameter_m: float | None  # the hinge rod the surface turns on, outer diameter; None = no rod
 
 
 @dataclass(frozen=True)
@@ -247,7 +249,7 @@ class Surface:
     layout: str
     fin_position: str
     dihedral_deg: float
-    root_offset: float  # root height on the body, -1 bottom .. 0 equator .. 1 top (X: root angle)
+    vertical_offset: float  # root height on the body, -1 bottom .. 0 equator .. 1 top (X: root angle)
     root: str  # "body" or "axis", see SURFACE_ROOTS
     span_m: float  # per panel, from the root (body surface at the root LE, or the axis) along the panel
     chord_root_m: float
@@ -653,7 +655,15 @@ def _control(data: dict, path: str, panel_count: int) -> ControlSurface:
         if span_end <= span_start:
             raise AirframeError(f"{fields.at('span_end')}: {span_end} must be greater than span_start {span_start}")
     else:
+        span_start = _fraction(fields, "span_start") if "span_start" in fields.data else 0.0
+        if not 0.0 <= span_start < 1.0:
+            raise AirframeError(f"{fields.at('span_start')}: {span_start} must be within [0, 1)")
         pivot = _fraction(fields, "pivot")
+    gap_m = fields.optional("gap_m", 0.0)
+    gap_m = fields.number("gap_m", minimum=0.0, value=gap_m)
+    spar_diameter_m = fields.optional("spar_diameter_m", None)
+    if spar_diameter_m is not None:
+        spar_diameter_m = fields.number("spar_diameter_m", minimum=0.0, exclusive=True, value=spar_diameter_m)
     roles = fields.required("roles")
     if type(roles) is not list or any(role not in CONTROL_ROLES for role in roles) or len(set(roles)) != len(roles):
         raise AirframeError(f"{fields.at('roles')}: expected a list of distinct roles from {CONTROL_ROLES}, got {roles!r}")
@@ -669,6 +679,7 @@ def _control(data: dict, path: str, panel_count: int) -> ControlSurface:
     return ControlSurface(
         kind=kind, chord_start=chord_start, span_start=span_start, span_end=span_end, pivot=pivot, roles=tuple(roles),
         deflection_min_deg=deflection_min_deg, deflection_max_deg=deflection_max_deg, rate_deg_s=rate_deg_s, servos=tuple(servos),
+        gap_m=gap_m, spar_diameter_m=spar_diameter_m,
     )
 
 
@@ -736,7 +747,7 @@ def _surface(data: dict, path: str, fuselage_length_m: float, parts_data: dict) 
         layout=layout,
         fin_position=fields.choice("fin_position", FIN_POSITIONS),
         dihedral_deg=fields.number("dihedral_deg"),
-        root_offset=fields.number("root_offset"),
+        vertical_offset=fields.number("vertical_offset"),
         root=fields.choice("root", SURFACE_ROOTS),
         span_m=fields.positive("span_m"),
         chord_root_m=fields.positive("chord_root_m"),
@@ -751,8 +762,8 @@ def _surface(data: dict, path: str, fuselage_length_m: float, parts_data: dict) 
         root_base=None if root_base is None else _root_base(root_base, f"{path}.root_base"),
     )
     fields.done()
-    if not -1.0 <= surface.root_offset <= 1.0:
-        raise AirframeError(f"{path}.root_offset: {surface.root_offset} must be within [-1, 1]")
+    if not -1.0 <= surface.vertical_offset <= 1.0:
+        raise AirframeError(f"{path}.vertical_offset: {surface.vertical_offset} must be within [-1, 1]")
     if surface.x_root_le_m >= fuselage_length_m:
         raise AirframeError(f"{path}.x_root_le_m: {surface.x_root_le_m} is not on the fuselage (length {fuselage_length_m}); chords may overhang the tail, roots may not")
     if asb.Airfoil(surface.airfoil).coordinates is None:

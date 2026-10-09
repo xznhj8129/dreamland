@@ -19,22 +19,26 @@
                 "head_d": 5.5,
                 "nut_w": 5.5
             }
-        }
+        },
+        "shapes": [
+            "circle",
+            "ellipse",
+            "slot",
+            "square",
+            "rounded_square",
+            "rectangle",
+            "rounded_rectangle",
+            "polygon",
+            "rounded_polygon"
+        ]
     },
-    "3dp": {
-        "constraints": {
-            "x": 240,
-            "y": 240,
-            "z": 250
-        },
-        "resolution": {
-            "layer_height": 0.2,
-            "nozzle_size": 0.4
-        },
-        "filament": {
-            "brand": "Elegoo",
-            "type": "PLA+"
-        }
+    "construction": {
+        "airframe": [
+            "3d_print",
+            "molded_shell",
+            "material_tube",
+            "material_plate"
+        ]
     },
     "types": {
         "modules": [
@@ -84,7 +88,20 @@
             "hole": "M3",
             "hole_n": 4,
             "pattern": "radial",
-            "dist_center": 19
+            "diam_center": 19
+        },
+        "fpv_mount_s": {
+            "hole": "M3",
+            "hole_n": 4,
+            "pattern": "radial",
+            "diam_inner": 16,
+            "diam_outer": 19
+        },
+        "fpv_mount_l": {
+            "hole": "M4",
+            "hole_n": 4,
+            "pattern": "radial",
+            "diam_center": 30
         }
     },
     "sockets": {

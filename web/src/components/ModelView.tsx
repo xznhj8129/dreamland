@@ -125,6 +125,12 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
     controls.enableDamping = true
     controls.dampingFactor = 0.12
     controls.target.set(0, 0, 0)
+    // OrbitControls consumes a wheel zoom with its own update() (zoom-to-cursor), so by the animation frame the
+    // update() there reports no movement; its change event is what marks the wheel's camera move for a repaint.
+    const onControlsChange = (): void => {
+      dirtyRef.current = true
+    }
+    controls.addEventListener('change', onControlsChange)
     scene.add(new THREE.HemisphereLight(0xd8ffe0, 0x0a2a0a, 1.4))
     const sun = new THREE.DirectionalLight(0xffffff, 2.0)
     sun.position.set(2, -3, 4)
@@ -166,6 +172,7 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
     return () => {
       observer.disconnect()
       renderer.setAnimationLoop(null)
+      controls.removeEventListener('change', onControlsChange)
       controls.dispose()
       disposeGroupContents(group)
       disposeGroupContents(markerGroup)

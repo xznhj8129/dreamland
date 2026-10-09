@@ -6,8 +6,20 @@ import { Modal } from './Modal'
 
 type DialogKind = 'new' | 'load' | 'saveAs'
 
-/** The Tk menu bar: File > New, Load, Save, Save As (guibuilder.BuilderApp.build_menu). */
-export function TopBar(): ReactElement {
+/** The main views, in order (App renders the matching one). */
+export const VIEWS = ['Editor', 'Aero Analysis', 'VLM', 'SIM', 'CAD', 'Part Editor'] as const
+export type View = (typeof VIEWS)[number]
+
+interface TopBarProps {
+  view: View
+  onView: (view: View) => void
+}
+
+/**
+ * The Tk menu bar: File > New, Load, Save, Save As (guibuilder.BuilderApp.build_menu), with the main-view
+ * buttons beside it instead of a separate bottom bar.
+ */
+export function TopBar({ view, onView }: TopBarProps): ReactElement {
   const [menuOpen, setMenuOpen] = useState(false)
   const [dialog, setDialog] = useState<DialogKind | null>(null)
   const [notice, setNotice] = useState('')
@@ -74,6 +86,18 @@ export function TopBar(): ReactElement {
           </div>
         )}
       </div>
+      <nav className="view-tabs">
+        {VIEWS.map((name) => (
+          <button
+            key={name}
+            type="button"
+            className={name === view ? 'view-button active' : 'view-button'}
+            onClick={() => onView(name)}
+          >
+            {name}
+          </button>
+        ))}
+      </nav>
       {notice !== '' && <span className="top-notice">{notice}</span>}
       {dialog === 'new' && <NameModal title="New Project" submitLabel="Create" action={newProject} onClose={() => setDialog(null)} />}
       {dialog === 'saveAs' && <NameModal title="Save Project As" submitLabel="Save As" action={saveProjectAs} onClose={() => setDialog(null)} />}

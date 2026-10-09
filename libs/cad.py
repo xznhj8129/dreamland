@@ -12,10 +12,10 @@ cadquery is imported lazily so the GUI starts light. FreeCAD varsets: libs/varse
 
 import math
 
-from libs.airframe import BOX_SHAPES
+from libs.airframe import BOX_SHAPES, ControlSurface
 from libs.geometry import (
     Body, CarryThroughArm, Panel, ResolvedAirframe, body_half_extents, build_body, carry_through_front_profile, carry_through_side_profile,
-    chord_direction, section_index, superellipse_radius, thickness_direction,
+    chord_direction, control_cut_frames, section_index, superellipse_radius, thickness_direction,
 )
 
 M_TO_MM = 1000.0
@@ -26,9 +26,9 @@ PROP_DISC_THICKNESS_MM = 1.0
 GEOM_EPS_MM = 1e-4
 LOFT_TIP_MM = 0.05  # non-circular bodies loft to a tiny section instead of a point
 FLAT_PLATE_SECTION = ((0.0, 0.01), (1.0, 0.01), (1.0, -0.01), (0.0, -0.01))  # chord fractions, for an airfoil with no thickness
-FUSE_ROOT_EXTEND_FRACTION = 0.75  # of the body half width: body-rooted panels reach this far into the body when fused
 CUT_OVERSHOOT_MM = 0.5  # holes and bores reach this far past the material they cut, so no skin is left
 CARRY_THROUGH_WALL_EMBED = 0.5  # of the wall: carry-through arms reach this far into the tube wall, fusing to it
+ROOT_EMBED_MARGIN_M = 0.001  # the root airfoil ends up this far inside the outer body surface
 _PRINTABLE_PARTS: dict[str, list] = {}  # the last design's printable parts, by its definition (build_printable_parts)
 SPIGOT_WALL_EMBED = 0.5  # of the wall: a male spigot's root ring reaches this far into the carrying section's wall, fusing to it
 
@@ -114,11 +114,61 @@ def build_body_solid(resolved: ResolvedAirframe, x0: float, x1: float, inset_m: 
     return cq.Workplane("XY").newObject([cq.Solid.makeLoft(wires, ruled=True)])
 
 
-def build_wing_solid(panel: Panel, root_extend_m: float = 0.0):
+def _root_le(panel: Panel, coordinates, body: Body) -> tuple[float, float, float]:
+    """The panel's root leading edge with the root airfoil slid inward along the panel axis (root to tip) until no
+    part of the section pokes through the outer body (plus ROOT_EMBED_MARGIN_M). The panel stays a straight loft
+    between this root and the tip, so the body boolean crosses its surfaces instead of meeting the root at a
+    tangential seam. Axis-rooted panels sit on the fuselage axis already; a root the body cannot contain (over a
+    tapered tip) keeps its placed position; a chord overhanging the body keeps the points outside it as they are.
+    """
+    root = panel.attach_le
+    if math.hypot(root[1], root[2]) <= 1e-9:
+        return root
+    axis = tuple(tip - point for tip, point in zip(panel.tip_le, root))
+    axis_length = math.sqrt(sum(value * value for value in axis))
+    if axis_length <= 1e-12:
+        return root
+    axis = tuple(value / axis_length for value in axis)
+    chord_dir = chord_direction(panel)
+    thick_dir = thickness_direction(panel)
+    section = [tuple(point + panel.chord_root_m * (x * cd + y * td) for point, cd, td in zip(root, chord_dir, thick_dir))
+               for x, y in coordinates]
+    section = [point for point in section if body_half_extents(body, point[0])[0] > 0.0]
+    if not section:
+        return root
+
+    def inside(point, depth: float) -> bool:
+        x, y, z = (value - depth * direction for value, direction in zip(point, axis))
+        half_w, half_h = body_half_extents(body, x)
+        if half_w <= 0.0 or half_h <= 0.0:
+            return False
+        return math.hypot(y, z) <= superellipse_radius(half_w, half_h, body.shape, math.atan2(z, y)) - ROOT_EMBED_MARGIN_M
+
+    def depth_for(point) -> float:
+        low = 0.0
+        if inside(point, low):
+            return 0.0
+        high = math.hypot(point[1], point[2])  # sliding further would cross the axis
+        while not inside(point, high) and high < 1.0:
+            high *= 2.0
+        for _ in range(40):
+            middle = (low + high) / 2.0
+            if inside(point, middle):
+                high = middle
+            else:
+                low = middle
+        return high
+
+    depth = max(depth_for(point) for point in section)
+    return tuple(value - depth * direction for value, direction in zip(root, axis))
+
+
+def build_wing_solid(panel: Panel, body: Body):
     """Loft one panel between its root and tip airfoil sections, in the panel's own chord/normal frame.
 
-    Body-rooted panels start at their true root leading edge and reach into the body far enough to meet a
-    tapering cone under the root chord (plus root_extend_m for fused exports); axis-rooted panels start on the axis.
+    A body-rooted panel's root airfoil is slid inward along the panel axis until it lies inside the outer body
+    (_root_le), so the loft runs straight through the skin and a boolean against the body crosses the panel's
+    surfaces instead of meeting the root at a tangential seam. Axis-rooted panels already start on the axis.
     """
     import cadquery as cq
 
@@ -141,13 +191,61 @@ def build_wing_solid(panel: Panel, root_extend_m: float = 0.0):
             points = points[:-1]
         return cq.Wire.assembleEdges([cq.Edge.makeSpline(points), cq.Edge.makeLine(points[-1], points[0])])
 
-    root_drop = max(0.0, math.hypot(panel.attach_le[1], panel.attach_le[2]) - math.hypot(panel.attach_te[1], panel.attach_te[2]))
-    extend = root_drop + root_extend_m
-    wires = [section_wire(panel.attach_le, panel.chord_root_m), section_wire(panel.tip_le, panel.chord_tip_m)]
-    if extend > 0.0:
-        inner = tuple(point - extend * direction for point, direction in zip(panel.attach_le, panel.span_dir))
-        wires.insert(0, section_wire(inner, panel.chord_root_m))
+    wires = [section_wire(_root_le(panel, coordinates, body), panel.chord_root_m), section_wire(panel.tip_le, panel.chord_tip_m)]
     return cq.Workplane("XY").newObject([cq.Solid.makeLoft(wires, ruled=True)])
+
+
+def _side_box(origin_m, normal, size_mm: float = 3000.0):
+    """The half-space box on the +normal side of the plane through origin_m (m), big enough to cover a panel: the
+    solid a boolean is intersected with to stop a cut at that plane."""
+    import cadquery as cq
+
+    return cq.Workplane(cq.Plane(origin=cq.Vector(*origin_m) * M_TO_MM, normal=cq.Vector(*normal))).rect(size_mm, size_mm).extrude(size_mm)
+
+
+def build_panel_solids(resolved: ResolvedAirframe, panel: Panel, control: ControlSurface | None) -> tuple[object | None, tuple[object, ...]]:
+    """One panel split into its fixed solid and its moving control surface(s), from control_cut_frames: the control's
+    opening is cut out of the fixed side; the moving side is bordered by the gap (and the hinge rod hole, when the
+    control has one), and any root buried in the body is cut off the moving side. No control: the whole panel is fixed.
+    Fixed is None when the whole panel moves (all_moving from the root)."""
+    if control is None:
+        return build_wing_solid(panel, resolved.body).val(), ()
+    frames = control_cut_frames(panel, control)
+    panel_solid = build_wing_solid(panel, resolved.body).val()
+    gap_m = frames["gap_m"]
+    span_dir = frames["span_dir"]
+    back = tuple(-value for value in span_dir)
+
+    def offset(point, distance_m, direction):
+        return tuple(value + distance_m * d for value, d in zip(point, direction))
+
+    if frames["kind"] == "split":
+        opening = panel_solid.intersect(_side_box(frames["hinge_point"], frames["hinge_dir"]).val())
+        if control.span_start > 0.0:
+            opening = opening.intersect(_side_box(frames["span_start_point"], span_dir).val())
+        if control.span_end < 1.0:
+            opening = opening.intersect(_side_box(frames["span_end_point"], back).val())
+        fixed = panel_solid.cut(opening)
+        moving = panel_solid.intersect(_side_box(offset(frames["hinge_point"], gap_m, frames["hinge_dir"]), frames["hinge_dir"]).val())
+        if control.span_start > 0.0:
+            moving = moving.intersect(_side_box(offset(frames["span_start_point"], gap_m, span_dir), span_dir).val())
+        if control.span_end < 1.0:
+            moving = moving.intersect(_side_box(offset(frames["span_end_point"], -gap_m, span_dir), back).val())
+    elif control.span_start > 0.0:  # all_moving: an inboard fixed base, the rest moves
+        fixed = panel_solid.intersect(_side_box(frames["span_start_point"], back).val())
+        moving = panel_solid.intersect(_side_box(offset(frames["span_start_point"], gap_m, span_dir), span_dir).val())
+    else:  # all_moving from the root: the whole panel moves
+        fixed, moving = None, panel_solid
+    body = build_body_solid(resolved, 0.0, resolved.body.length_m)
+    if body is not None:  # a control rooted in the body keeps no buried root stub
+        moving = moving.cut(body.val())
+    if frames["spar_diameter_m"] is not None:
+        clearance = resolved.airframe.fuselage.joints.fit_clearance_m  # as spar holes: a fit clearance all round
+        hole = _rod(frames["rod_start"], frames["rod_end"], frames["spar_diameter_m"] + 2.0 * clearance)
+        moving = moving.cut(hole)
+        if fixed is not None:
+            fixed = fixed.cut(hole)
+    return (None if fixed is None else fixed.clean()), (moving.clean(),)
 
 
 def build_motor_solid(motor):
@@ -209,17 +307,24 @@ def section_bounds(resolved: ResolvedAirframe) -> list[tuple[float, float]]:
 
 def build_airframe_assembly(resolved: ResolvedAirframe, include_prop_discs: bool = False):
     """Nested CadQuery assembly: one sub-assembly per fuselage section with its body piece and the surfaces,
-    motors and pods whose root or position lies in it."""
+    motors and pods whose root or position lies in it. Body-rooted panels are carried through the body to the
+    axis (build_wing_solid), so they overlap the body piece instead of only touching it. A panel with a control
+    contributes its fixed side, and the moving surface(s) as separate children named S<n>_CS<number>."""
     import cadquery as cq
 
     assembly = cq.Assembly(name=resolved.airframe.name or "airframe")
     children = {index: cq.Assembly(name=f"S{index + 1:02d}") for index in range(len(section_bounds(resolved)))}
     for index, (x0, x1) in enumerate(section_bounds(resolved)):
         children[index].add(build_body_solid(resolved, x0, x1), name=f"S{index + 1:02d}_body")
+    placements = {(control.surface, control.panel_index): control.number for control in resolved.controls}
     for surface_set in resolved.surfaces:
         for panel in surface_set.panels:
             index = section_index(resolved.airframe.sections.cuts_m, panel.attach_le[0])
-            children[index].add(build_wing_solid(panel), name=f"S{index + 1:02d}_{surface_set.name}_{panel.index + 1}")
+            fixed, moving = build_panel_solids(resolved, panel, surface_set.definition.control)
+            if fixed is not None:
+                children[index].add(cq.Workplane("XY").newObject([fixed]), name=f"S{index + 1:02d}_{surface_set.name}_{panel.index + 1}")
+            for solid in moving:
+                children[index].add(cq.Workplane("XY").newObject([solid]), name=f"S{index + 1:02d}_CS{placements[(surface_set.name, panel.index)]}")
     for motor_index, motor in enumerate(resolved.motors, start=1):
         index = section_index(resolved.airframe.sections.cuts_m, motor.position[0])
         children[index].add(build_motor_solid(motor), name=f"S{index + 1:02d}_motor_{motor_index}")
@@ -232,11 +337,16 @@ def build_airframe_assembly(resolved: ResolvedAirframe, include_prop_discs: bool
     return assembly
 
 
-def _airframe_solids(resolved: ResolvedAirframe, include_prop_discs: bool, root_extend_m: float) -> list:
+def _airframe_solids(resolved: ResolvedAirframe, include_prop_discs: bool) -> list:
+    import cadquery as cq
+
     solids = [build_body_solid(resolved, 0.0, resolved.body.length_m)]
     for surface_set in resolved.surfaces:
-        extend = 0.0 if surface_set.definition.root == "axis" else root_extend_m
-        solids += [build_wing_solid(panel, extend) for panel in surface_set.panels]
+        for panel in surface_set.panels:
+            fixed, moving = build_panel_solids(resolved, panel, surface_set.definition.control)  # the gap keeps a control a separate solid
+            if fixed is not None:
+                solids.append(cq.Workplane("XY").newObject([fixed]))
+            solids += [cq.Workplane("XY").newObject([solid]) for solid in moving]
     for motor in resolved.motors:
         solids.append(build_motor_solid(motor))
         if motor.pod_stations:
@@ -249,12 +359,11 @@ def _airframe_solids(resolved: ResolvedAirframe, include_prop_discs: bool, root_
 def _fuse_airframe(resolved: ResolvedAirframe, include_prop_discs: bool = False) -> tuple[object, str]:
     """Boolean-union all solids into one shape; fall back to a compound if the fuse fails.
 
-    Body-rooted panels are extended into the fuselage so they merge with it instead of only touching.
+    Body-rooted panels are carried through the fuselage to its axis, so they merge with it instead of only touching.
     """
     import cadquery as cq
 
-    root_extend_m = FUSE_ROOT_EXTEND_FRACTION * resolved.airframe.fuselage.section.width_m / 2.0
-    shapes = [workplane.val() for workplane in _airframe_solids(resolved, include_prop_discs, root_extend_m)]
+    shapes = [workplane.val() for workplane in _airframe_solids(resolved, include_prop_discs)]
     try:
         fused = shapes[0]
         for shape in shapes[1:]:
@@ -433,38 +542,57 @@ def _spigot(resolved: ResolvedAirframe, cut_m: float, direction: float):
     return _ring(*out_x, outside, inside, shape).fuse(root)
 
 
-def build_section_solid(resolved: ResolvedAirframe, index: int) -> tuple[object, list[str]]:
-    """One printable fuselage section (cq.Shape) and notes on it: the body between its cuts with the surface sets and pods
-    attached in it fused on, which stop at the outer surface wherever they run over another section (an axis-rooted fin
-    keeps its planform; only what lies inside the body is removed); hollowed to the wall (or, printed solid, less its
-    volumes), so a surface goes through its own section's wall and no further; the carry-through of the surface sets in it;
-    a socket at each female end
-    (where a coupler or a mating spigot enters), a spigot at each male end; screw, rod and spar holes cut."""
+def _clip_x(solid, x0_m: float, x1_m: float):
+    """solid cut to the slab between two x stations (the section's cuts); None when nothing or a sliver is left."""
+    box = solid.BoundingBox()
+    if box.xmax <= x0_m * M_TO_MM or box.xmin >= x1_m * M_TO_MM:
+        return None
+    try:
+        piece = solid.cut(_side_box((x0_m, 0.0, 0.0), (-1.0, 0.0, 0.0)).val())
+        piece = piece.cut(_side_box((x1_m, 0.0, 0.0), (1.0, 0.0, 0.0)).val())
+    except ValueError:  # the boolean emptied: the solid lies wholly on a removed side
+        return None
+    return None if piece.Volume() <= 1e-3 else piece
+
+
+def _panel_attachments(resolved: ResolvedAirframe) -> tuple[list[tuple[str, object]], list[tuple[str, object]]]:
+    """(fixed section attachments, moving control parts) for every panel, each built once: each panel's fixed side
+    and every pod is clipped to a section's x-range when that section is built; the moving surfaces are separate
+    parts named CS1.. after their control numbers."""
+    fixed: list[tuple[str, object]] = []
+    controls: list[tuple[str, object]] = []
+    numbers = {(control.surface, control.panel_index): control.number for control in resolved.controls}
+    for surface_set in resolved.surfaces:
+        for panel in surface_set.panels:
+            fixed_solid, moving = build_panel_solids(resolved, panel, surface_set.definition.control)
+            if fixed_solid is not None:
+                fixed.append((f"surface {surface_set.name!r} panel {panel.index + 1}", fixed_solid))
+            if moving:
+                controls.append((f"CS{numbers[(surface_set.name, panel.index)]}", moving[0]))
+    for motor_index, motor in enumerate(resolved.motors, start=1):
+        if motor.pod_stations:
+            fixed.append((f"pod {motor_index}", build_pod_solid(motor).val()))
+    return fixed, controls
+
+
+def build_section_solid(resolved: ResolvedAirframe, index: int, attachments: list[tuple[str, object]]) -> tuple[object, list[str]]:
+    """One printable fuselage section (cq.Shape) and notes on it: the body between its cuts with every attachment
+    (each panel's fixed side, each pod) clipped to the section's x-range and fused on, so a surface or pod crossing
+    a cut is divided between the sections and gets flat faces at the cuts (a control's opening is carried in its
+    panel's fixed side; the moving surfaces are separate parts, CS1..); hollowed to the wall (or, printed solid,
+    less its volumes), so a surface goes through its own section's wall and no further; the carry-through of the
+    surface sets in it; a socket at each female end (where a coupler or a mating spigot enters), a spigot at each
+    male end; screw, rod and spar holes cut."""
     airframe = resolved.airframe
     sections, joints = airframe.sections, airframe.fuselage.joints
     cuts = sections.cuts_m
     x0, x1 = section_bounds(resolved)[index]
-    notes = []
+    notes: list[str] = []
     shape = build_body_solid(resolved, x0, x1).val()
-    root_extend_m = FUSE_ROOT_EXTEND_FRACTION * airframe.fuselage.section.width_m / 2.0
-    for surface_set in resolved.surfaces:
-        definition = surface_set.definition
-        if section_index(cuts, surface_set.exposed_x_root_le_m) != index:
-            continue
-        extend = 0.0 if definition.root == "axis" else root_extend_m
-        for panel in surface_set.panels:
-            shape = shape.fuse(build_wing_solid(panel, extend).val())
-        root_start = surface_set.exposed_x_root_le_m
-        root_end = max(max(panel.attach_le[0], panel.attach_te[0]) for panel in surface_set.panels)
-        if (index > 0 and root_start < x0) or (index < len(cuts) and root_end > x1):  # over a neighbouring section, not past a body end
-            notes.append(f"surface {surface_set.name!r} root chord {root_start * 1000:.1f}-{root_end * 1000:.1f} mm runs past the section ends "
-                         f"{x0 * 1000:.1f}-{x1 * 1000:.1f} mm")
-    for motor in resolved.motors:
-        if motor.pod_stations and section_index(cuts, motor.mount_x_m) == index:
-            shape = shape.fuse(build_pod_solid(motor).val())
-    for a, b in ((0.0, x0), (x1, resolved.body.length_m)):  # surfaces and pods stop at the other sections' outer surface
-        if b > a:
-            shape = shape.cut(build_body_solid(resolved, a, b).val())
+    for _label, solid in attachments:
+        piece = _clip_x(solid, x0, x1)
+        if piece is not None:
+            shape = shape.fuse(piece)
 
     wall = airframe.fuselage.section.wall_radial_m
     if not sections.per_section[index].solid:
@@ -529,13 +657,21 @@ def build_volume_solid(resolved: ResolvedAirframe, volume):
 
 
 def build_rod_solids(resolved: ResolvedAirframe) -> list[tuple[str, object]]:
-    """The carbon rods at their own diameter: (name, cq.Solid) for each longitudinal rod and each wing spar."""
+    """The carbon rods at their own diameter: (name, cq.Solid) for each longitudinal rod, each wing spar, and each
+    control's hinge rod (named after its control, CS1..)."""
     rods = []
     reinforcement = resolved.airframe.fuselage.reinforcement
     if reinforcement is not None:
         rods += [("rods", _rod((reinforcement.from_x_m, y, z), (reinforcement.to_x_m, y, z), reinforcement.pattern.diameter_m))
                  for y, z in reinforcement.pattern.positions_m()]
     rods += [(f"spars {spar.surface}", _rod(spar.start, spar.end, spar.diameter_m)) for spar in resolved.spars]
+    surface_sets = {surface_set.name: surface_set for surface_set in resolved.surfaces}
+    for control in resolved.controls:
+        surface_set = surface_sets[control.surface]
+        panel = next(panel for panel in surface_set.panels if panel.index == control.panel_index)
+        frames = control_cut_frames(panel, surface_set.definition.control)
+        if frames["spar_diameter_m"] is not None:
+            rods.append((f"spars CS{control.number}", _rod(frames["rod_start"], frames["rod_end"], frames["spar_diameter_m"])))
     return rods
 
 
@@ -550,8 +686,9 @@ def _bed_note(name: str, shape, bed_m: tuple[float, float, float]) -> str | None
 
 
 def build_printable_parts(resolved: ResolvedAirframe) -> list[tuple[str, object, list[str]]]:
-    """(name, cq.Shape, notes) of every printable part, front to back: sections S01.., then couplers C01.. (by cut).
-    Built once per airframe definition: the section export and the drawings of the same design share them."""
+    """(name, cq.Shape, notes) of every printable part: sections S01.., then couplers C01.. (by cut), then control
+    surfaces CS1.. (the moving panel, by control number). Built once per airframe definition: the section export and
+    the drawings of the same design share them."""
     key = repr(resolved.airframe)
     if key not in _PRINTABLE_PARTS:
         _PRINTABLE_PARTS.clear()  # one design at a time
@@ -560,20 +697,23 @@ def build_printable_parts(resolved: ResolvedAirframe) -> list[tuple[str, object,
 
 
 def _build_printable_parts(resolved: ResolvedAirframe) -> list[tuple[str, object, list[str]]]:
+    attachments, controls = _panel_attachments(resolved)
     parts = []
     for index in range(len(section_bounds(resolved))):
-        shape, notes = build_section_solid(resolved, index)
+        shape, notes = build_section_solid(resolved, index, attachments)
         parts.append((f"S{index + 1:02d}", shape, notes))
     for cut_index, joint in enumerate(resolved.airframe.sections.cut_joints):
         if joint == "coupler":
             parts.append((f"C{cut_index + 1:02d}", build_coupler_solid(resolved, cut_index), []))
+    parts += [(name, solid, []) for name, solid in controls]  # the moving surfaces, by control number
     return parts
 
 
 def export_sections(resolved: ResolvedAirframe, directory) -> tuple[list[str], list[str]]:
-    """Write every printable part as STEP and STL: sections S01.. and couplers C01.. (numbered by their cut). Returns one
-    line per part written, and the problems found (root chords past a section end, parts larger than the printer bed, parts
-    that come out in pieces or as an invalid solid)."""
+    """Write every printable part as STEP and STL: sections S01.., couplers C01.. (numbered by their cut) and control
+    surfaces CS1.. (numbered front to back like their placements). Returns one line per part written, and the problems
+    found (root chords past a section end, parts larger than the printer bed, parts that come out in pieces or as an
+    invalid solid)."""
     import cadquery as cq
     from pathlib import Path
 

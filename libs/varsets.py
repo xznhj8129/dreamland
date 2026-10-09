@@ -91,7 +91,7 @@ def airframe_varset(airframe: Airframe) -> dict:
 def surface_varset(surface: Surface) -> dict:
     groups = {
         "Planform": {"XRootLE": length(surface.x_root_le_m), "Layout": text(surface.layout), "FinPosition": text(surface.fin_position),
-                     "Root": text(surface.root), "RootOffset": number(surface.root_offset), "Span": length(surface.span_m),
+                     "Root": text(surface.root), "VerticalOffset": number(surface.vertical_offset), "Span": length(surface.span_m),
                      "ChordRoot": length(surface.chord_root_m), "ChordTip": length(surface.chord_tip_m), "SweepLE": angle(surface.sweep_le_deg),
                      "Dihedral": angle(surface.dihedral_deg), "Incidence": angle(surface.incidence_deg), "IncidenceMode": text(surface.incidence_mode)},
         "Airfoil": {"Name": text(surface.airfoil)},

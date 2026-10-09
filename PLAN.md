@@ -61,7 +61,7 @@ fuselage
                     rods inside the outer surface and strictly inside their quadrant
   channels[]        name, diameter_m, from_x_m, to_x_m, angle_deg
 surfaces[]          name, x_root_le_m (must be on the body; chords may overhang the tail),
-                    layout (H X + 1 3), fin_position (top/bottom), dihedral_deg, root_offset (-1..1),
+                    layout (H X + 1 3), fin_position (top/bottom), dihedral_deg, vertical_offset (-1..1),
                     root (body: span from the body surface at the root LE; axis: span from the fuselage axis,
                     panels meet in the centre, e.g. delta tail fins), span_m (per panel, along the panel),
                     chord_root_m, chord_tip_m, sweep_le_deg, incidence_deg, incidence_mode (symmetric: XZ-mirror
@@ -88,7 +88,12 @@ surfaces[]          name, x_root_le_m (must be on the body; chords may overhang 
                     control (optional, absent = fixed; applies to every panel of the set):
                       kind split: chord_start (hinge, chord fraction from LE, 0..1 exclusive),
                         span_start, span_end (panel span fractions from the root, end > start)
-                      kind all_moving: pivot (chord fraction from LE)
+                      kind all_moving: pivot (chord fraction from LE), span_start (optional, 0.0: where the moving
+                        surface starts; > 0 leaves a fixed base inboard of it to blend/fillet into the body)
+                      gap_m (optional, 0.0 = none): material removed between the fixed and the moving surface: the
+                        moving surface's hinge edge and its span ends (where fixed material borders them) are inset
+                        by it, and the hinge rod, when there is one, sits centred in it
+                      spar_diameter_m (optional, none = no rod): the hinge rod the surface turns on, outer diameter
                       roles [pitch yaw roll flaps] (reference only), deflection_min_deg, deflection_max_deg
                       (positive = TE away from the panel normal, down on a wing), rate_deg_s (placeholder),
                       servos (S1..S12, one per panel in panel order, may be shared: a panel opposite to the others on its servo is exported reversed, a Y-cable reverser)

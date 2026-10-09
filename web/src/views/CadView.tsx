@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useState } from 'react'
+import { useCallback, useState } from 'react'
 import type { ReactElement } from 'react'
 import {
   exportDrawings,
@@ -7,7 +7,6 @@ import {
   exportStl,
   exportVarsets,
   filesUrl,
-  listCadFiles,
 } from '../cadApi'
 import type { CadAnswer, CadResult, StepMode } from '../cadApi'
 
@@ -46,47 +45,30 @@ function ExportResult({ result }: { result: CadResult }): ReactElement {
 /**
  * The web CAD view (libs/views/cad_view.py, docs/ui/cad_view.md): whole-airframe STEP/STL, printable sections,
  * drawings and FreeCAD varsets, each into its fixed place under the project's cad/. Exports are direct fetches;
- * a server-side lock serializes them, and the browser disables every button while one is in flight.
+ * a server-side lock serializes them, and the browser disables every button while one is in flight. Each card
+ * shows the files its own export just wrote; a failed export's message appears at the bottom of the view.
  */
 export function CadView(): ReactElement {
   const [mode, setMode] = useState<StepMode>('assembly')
   const [propDiscs, setPropDiscs] = useState(false)
   const [busy, setBusy] = useState(false)
+  const [error, setError] = useState('')
   const [stepResult, setStepResult] = useState<CadResult | null>(null)
   const [stlResult, setStlResult] = useState<CadResult | null>(null)
   const [sectionsResult, setSectionsResult] = useState<CadResult | null>(null)
   const [drawingsResult, setDrawingsResult] = useState<CadResult | null>(null)
   const [varsetsResult, setVarsetsResult] = useState<CadResult | null>(null)
-  const [status, setStatus] = useState('')
-  const [failed, setFailed] = useState(false)
-  const [outputs, setOutputs] = useState<string[]>([])
-
-  const refreshOutputs = useCallback(async (): Promise<void> => {
-    const files = await listCadFiles()
-    setOutputs(files ?? [])
-  }, [])
-
-  useEffect(() => {
-    void refreshOutputs()
-  }, [refreshOutputs])
 
   const run = useCallback(
     async (task: () => Promise<CadAnswer>, apply: (result: CadResult) => void): Promise<void> => {
       setBusy(true)
-      setFailed(false)
-      setStatus('Exporting…')
+      setError('')
       const answer = await task()
       setBusy(false)
-      if (answer.ok && answer.result !== null) {
-        apply(answer.result)
-        setStatus(answer.result.detail)
-        void refreshOutputs()
-      } else {
-        setFailed(true)
-        setStatus(answer.message)
-      }
+      if (answer.ok && answer.result !== null) apply(answer.result)
+      else setError(answer.message)
     },
-    [refreshOutputs],
+    [],
   )
 
   const cutaway = drawingsResult?.files.find((file) => file.endsWith('cutaway.svg')) ?? null
@@ -176,28 +158,8 @@ export function CadView(): ReactElement {
         {varsetsResult !== null && <ExportResult result={varsetsResult} />}
       </div>
 
-      <div className="form-card">
-        <div className="form-card-header">
-          <h3>Outputs</h3>
-          <button type="button" disabled={busy} onClick={() => void refreshOutputs()}>
-            Refresh
-          </button>
-        </div>
-        <div className={failed ? 'status draw-error' : 'status'}>{status !== '' ? status : 'Ready.'}</div>
-        {outputs.length === 0 ? (
-          <p className="form-hint">No files under cad/ yet.</p>
-        ) : (
-          <ul className="cad-files">
-            {outputs.map((file) => (
-              <li key={file}>
-                <a href={filesUrl(file)} target="_blank" rel="noreferrer">
-                  {file}
-                </a>
-              </li>
-            ))}
-          </ul>
-        )}
-      </div>
+      {busy && <div className="status">Exporting…</div>}
+      {error !== '' && <div className="status draw-error">{error}</div>}
     </section>
   )
 }

@@ -11,7 +11,12 @@
             "l": 108,
             "h": 32,
             "w": 34
-        }
+        },
+        "h": 32,
+        "l": 108,
+        "w": 34,
+        "lead_awg": 14,
+        "lead_length_mm": 40
     },
     "CNHL-2200mah-6S": {
         "type": "lipo",
@@ -20,13 +25,18 @@
         "p": 1,
         "mah": 2200,
         "c": 70,
-        "ir_mohm_per_cell": 10.0,
+        "ir_mohm_per_cell": 10,
         "connector": "XT60",
         "dimensions": {
             "l": 110,
             "h": 49,
             "w": 35.5
-        }
+        },
+        "h": 49,
+        "l": 110,
+        "w": 35.5,
+        "lead_awg": 14,
+        "lead_length_mm": 40
     },
     "GNB-5300mah-6S": {
         "type": "lipo",

@@ -38,16 +38,6 @@ def _files_in(project: Project, directory: Path, suffixes: tuple[str, ...]) -> l
     ]
 
 
-def list_files(project: Project) -> list[str]:
-    """Every existing file under the project's cad/, project-relative and newest first (GET /api/cad/files)."""
-    directory = project.cad_dir
-    if not directory.is_dir():
-        return []
-    files = [path for path in directory.rglob("*") if path.is_file()]
-    files.sort(key=lambda path: (-path.stat().st_mtime, path.relative_to(directory).as_posix()))
-    return [_relative(project, path) for path in files]
-
-
 def export_step(resolved: ResolvedAirframe, project: Project, mode: str = "assembly", include_prop_discs: bool = False) -> dict[str, Any]:
     """STEP of the whole airframe to cad/<project>.step; returns the mode actually written ("assembly"/"fused"/"compound")."""
     from libs.cad import export_step as write_step

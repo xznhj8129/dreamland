@@ -1,0 +1,62 @@
+{
+    "Base": {
+        "Label": {
+            "Type": "App::PropertyString",
+            "Value": "'Mount1'"
+        }
+    },
+    "Mount": {
+        "On": {
+            "Type": "App::PropertyString",
+            "Value": "'surface'"
+        },
+        "Direction": {
+            "Type": "App::PropertyString",
+            "Value": "'pusher'"
+        },
+        "Spin": {
+            "Type": "App::PropertyString",
+            "Value": "'out'"
+        },
+        "ThrustTilt": {
+            "Type": "App::PropertyAngle",
+            "Value": 0.0,
+            "Unit": "deg"
+        },
+        "Surface": {
+            "Type": "App::PropertyString",
+            "Value": "'qrwing-7in'"
+        },
+        "SpanPosition": {
+            "Type": "App::PropertyLength",
+            "Value": 100.0,
+            "Unit": "mm"
+        },
+        "XOffset": {
+            "Type": "App::PropertyDistance",
+            "Value": 120.0,
+            "Unit": "mm"
+        }
+    },
+    "Pod": {
+        "Diameter": {
+            "Type": "App::PropertyLength",
+            "Value": 35.0,
+            "Unit": "mm"
+        },
+        "FlatLength": {
+            "Type": "App::PropertyLength",
+            "Value": 20.0,
+            "Unit": "mm"
+        },
+        "CurveLength": {
+            "Type": "App::PropertyLength",
+            "Value": 50.0,
+            "Unit": "mm"
+        },
+        "Profile": {
+            "Type": "App::PropertyString",
+            "Value": "'elliptical'"
+        }
+    }
+}

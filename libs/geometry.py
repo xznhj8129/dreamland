@@ -22,7 +22,7 @@ from dataclasses import dataclass
 
 import aerosandbox as asb
 
-from libs.airframe import AXES, BOX_SHAPES, Airframe, AirframeError, CarryThrough, Mount, PlacedPart, Reinforcement, Surface, Volume
+from libs.airframe import AXES, BOX_SHAPES, Airframe, AirframeError, CarryThrough, ControlSurface, Mount, PlacedPart, Reinforcement, Surface, Volume
 from libs.pointed_shapes import sample_pointed_profile
 
 END_PROFILE_SAMPLES = 14
@@ -142,9 +142,13 @@ class ControlPlacement:
     surface: str
     panel_index: int
     servo: str
-    outline: tuple[Vec, Vec, Vec, Vec]  # moving part: root hinge (LE when all-moving), root TE, outer TE, outer hinge
-    hinge: tuple[Vec, Vec]  # hinge line, or the pivot line of an all-moving panel
+    outline: tuple[Vec, Vec, Vec, Vec]  # moving part (after the gap): root hinge (LE when all-moving), root TE, outer TE, outer hinge
+    hinge: tuple[Vec, Vec]  # hinge rod line: the opening hinge line shifted gap_m/2 aft (split), or the pivot line (all_moving)
     axis: Vec  # unit hinge direction: a right-hand rotation about it is a positive deflection (TE away from the normal)
+    opening: tuple[Vec, Vec, Vec, Vec]  # the region cut out of the fixed panel (on the panel surface)
+    moving: tuple[Vec, Vec, Vec, Vec]  # the moving surface region after the gap (on the panel surface)
+    gap_m: float  # material removed between the fixed and the moving surface
+    spar_diameter_m: float | None  # the hinge rod's outer diameter; None = no rod
 
 
 @dataclass(frozen=True)
@@ -236,17 +240,17 @@ def surface_panel_layout(
     root_radius: float,
     span: float,
     dihedral_deg: float,
-    y_offset: float = 0.0,
+    vertical_offset: float = 0.0,
     fin_pos: str = "top",
     centerline_root: bool = False,
 ) -> list[dict]:
     """
     Layout defines the wing configuration:
-      H  — 2 horizontal wings, roots positioned by y_offset (-1=bottom, 0=equator, 1=top)
+      H  — 2 horizontal wings, roots positioned by vertical_offset (-1=bottom, 0=equator, 1=top)
       1  — single fin, position set by fin_pos ("top" or "bottom")
       3  — H pair + single fin at fin_pos
       +  — H pair + top and bottom fins
-      X  — 4 wings mirrored about the equator; y_offset sets the root angle on the
+      X  — 4 wings mirrored about the equator; vertical_offset sets the root angle on the
            tube (-1=equator, 0=45 deg, 1=top/bottom), dihedral tilts each pair
            away from the equator (45 = symmetric X)
 
@@ -257,7 +261,7 @@ def surface_panel_layout(
     d = math.radians(dihedral_deg)
     cos_d = math.cos(d)
     sin_d = math.sin(d)
-    oz = max(-root_radius, min(root_radius, y_offset * root_radius))
+    oz = max(-root_radius, min(root_radius, vertical_offset * root_radius))
     oy = math.sqrt(max(0.0, root_radius ** 2 - oz ** 2))
     fin_z = root_radius if fin_pos == "top" else -root_radius
     fin_dz = 1.0 if fin_pos == "top" else -1.0
@@ -272,7 +276,7 @@ def surface_panel_layout(
         specs = [(+oy, oz, +cos_d, +sin_d, "primary"), (-oy, oz, -cos_d, +sin_d, "copy"),
                  (0.0, +root_radius, 0.0, +1.0, None), (0.0, -root_radius, 0.0, -1.0, None)]
     elif layout == "X":
-        root_ang = math.radians((max(-1.0, min(1.0, y_offset)) + 1.0) * 45.0)
+        root_ang = math.radians((max(-1.0, min(1.0, vertical_offset)) + 1.0) * 45.0)
         xy = root_radius * math.cos(root_ang)
         xz = root_radius * math.sin(root_ang)
         specs = [(+xy, +xz, +cos_d, +sin_d, "primary"), (-xy, +xz, -cos_d, +sin_d, "copy"),
@@ -372,7 +376,7 @@ def build_surface(surface: Surface, body: Body) -> SurfaceSet:
     chord_root = surface.chord_root_m
     layout = surface_panel_layout(
         layout=surface.layout, root_radius=1.0, span=surface.span_m, dihedral_deg=surface.dihedral_deg,
-        y_offset=surface.root_offset, fin_pos=surface.fin_position, centerline_root=on_axis,
+        vertical_offset=surface.vertical_offset, fin_pos=surface.fin_position, centerline_root=on_axis,
     )
     panels = []
     mean_radii = []
@@ -426,30 +430,82 @@ def panel_point(panel: Panel, span_fraction: float, chord_fraction: float) -> Ve
     return tuple(a + (b - a) * chord_fraction for a, b in zip(le, te))
 
 
+def control_cut_frames(panel: Panel, control: ControlSurface) -> dict:
+    """Plane frames for cutting one panel's control: hinge point+normal (chord_direction) for split, span
+    start/end points+normal (panel.span_dir), the gap, and the rod endpoints (m). The opening region is what
+    is cut out of the fixed panel; the moving region starts one gap aft of it (and one gap inboard at each
+    span end where fixed material borders it)."""
+    if control.kind == "split":
+        span_start, span_end = control.span_start, control.span_end
+    else:
+        span_start, span_end = control.span_start, 1.0  # all_moving: from span_start (0 = the root) to the tip
+    gap_m = control.gap_m
+    chord_dir = chord_direction(panel)
+    span_dir = panel.span_dir
+
+    def chord_at(span_fraction: float) -> float:
+        return panel.chord_root_m + (panel.chord_tip_m - panel.chord_root_m) * span_fraction
+
+    def along(point: Vec, distance_m: float, direction: Vec) -> Vec:
+        return tuple(value + distance_m * d for value, d in zip(point, direction))
+
+    span_start_point = panel_point(panel, span_start, 0.0)
+    span_end_point = panel_point(panel, span_end, 0.0)
+    moving_start = span_start + gap_m / panel.span_m if span_start > 0.0 else span_start
+    moving_end = span_end - gap_m / panel.span_m if span_end < 1.0 else span_end
+    if control.kind == "split":
+        hinge_point = panel_point(panel, span_start, control.chord_start)
+        opening = (hinge_point, panel_point(panel, span_start, 1.0), panel_point(panel, span_end, 1.0), panel_point(panel, span_end, control.chord_start))
+        moving = (panel_point(panel, moving_start, control.chord_start + gap_m / chord_at(moving_start)),
+                  panel_point(panel, moving_start, 1.0),
+                  panel_point(panel, moving_end, 1.0),
+                  panel_point(panel, moving_end, control.chord_start + gap_m / chord_at(moving_end)))
+        rod_start = along(hinge_point, gap_m / 2.0, chord_dir)  # the rod sits centred in the gap
+        rod_end = along(panel_point(panel, span_end, control.chord_start), gap_m / 2.0, chord_dir)
+    else:
+        hinge_point = panel_point(panel, span_start, control.pivot)
+        opening = (span_start_point, panel_point(panel, span_start, 1.0), panel_point(panel, span_end, 1.0), span_end_point)
+        moving = (panel_point(panel, moving_start, 0.0), panel_point(panel, moving_start, 1.0), panel_point(panel, span_end, 1.0), span_end_point)
+        rod_start, rod_end = hinge_point, panel_point(panel, span_end, control.pivot)
+    return {
+        "kind": control.kind,
+        "hinge_point": hinge_point if control.kind == "split" else None,
+        "hinge_dir": chord_dir,
+        "gap_m": gap_m,
+        "span_start_point": span_start_point,
+        "span_end_point": span_end_point,
+        "span_dir": span_dir,
+        "spar_diameter_m": control.spar_diameter_m,
+        "rod_start": rod_start,
+        "rod_end": rod_end,
+        "opening": opening,
+        "moving": moving,
+    }
+
+
 def build_controls(surfaces: tuple[SurfaceSet, ...]) -> tuple[ControlPlacement, ...]:
     found = []
     for order, surface_set in enumerate(surfaces):
         control = surface_set.definition.control
         if control is None:
             continue
-        if control.kind == "split":
-            span_start, span_end, outline_chord, line_chord = control.span_start, control.span_end, control.chord_start, control.chord_start
-        else:
-            span_start, span_end, outline_chord, line_chord = 0.0, 1.0, 0.0, control.pivot
         for panel in surface_set.panels:
+            frames = control_cut_frames(panel, control)
+            outline = frames["moving"]  # the placement outline (2D view) is the moving surface, after its gap
+            opening, moving = frames["opening"], frames["moving"]
+            hinge = (frames["rod_start"], frames["rod_end"])
             clockwise_deg = math.degrees(math.atan2(panel.span_dir[1], panel.span_dir[2])) % 360.0  # 0 top, 90 right
-            outline = (panel_point(panel, span_start, outline_chord), panel_point(panel, span_start, 1.0),
-                       panel_point(panel, span_end, 1.0), panel_point(panel, span_end, outline_chord))
-            hinge = (panel_point(panel, span_start, line_chord), panel_point(panel, span_end, line_chord))
             axis = unit(tuple(b - a for a, b in zip(*hinge)))
             aft = tuple(b - a for a, b in zip(hinge[0], outline[1]))  # hinge to root TE
             if dot(cross(axis, aft), panel.normal) > 0.0:
                 axis = tuple(-value for value in axis)
-            found.append(((surface_set.definition.x_root_le_m, round(clockwise_deg, 6), order), surface_set.name, panel.index, control.servos[panel.index], outline, hinge, axis))
+            found.append(((surface_set.definition.x_root_le_m, round(clockwise_deg, 6), order), surface_set.name, panel.index,
+                          control.servos[panel.index], outline, hinge, axis, opening, moving, control.gap_m, control.spar_diameter_m))
     found.sort(key=lambda item: item[0])
     return tuple(
-        ControlPlacement(number=number, surface=name, panel_index=index, servo=servo, outline=outline, hinge=hinge, axis=axis)
-        for number, (_key, name, index, servo, outline, hinge, axis) in enumerate(found, start=1)
+        ControlPlacement(number=number, surface=name, panel_index=index, servo=servo, outline=outline, hinge=hinge, axis=axis,
+                         opening=opening, moving=moving, gap_m=gap_m, spar_diameter_m=spar_diameter_m)
+        for number, (_key, name, index, servo, outline, hinge, axis, opening, moving, gap_m, spar_diameter_m) in enumerate(found, start=1)
     )
 
 

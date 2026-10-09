@@ -131,7 +131,7 @@ interface ControlFieldsProps {
   onOp: (body: Record<string, unknown>) => Promise<void>
 }
 
-/** editor_view.build_control (867-897): kind and its fields, roles, deflection limits, one servo per panel. */
+/** editor_view.build_control (867-903): kind and its fields, roles, deflection limits, the gap and hinge rod, one servo per panel. */
 function ControlFields({ index, surfaceName, control, numbers, onOp }: ControlFieldsProps): ReactElement {
   const api = useFormApi()
   const context = api.context
@@ -166,6 +166,12 @@ function ControlFields({ index, surfaceName, control, numbers, onOp }: ControlFi
       </div>
       {['deflection_min_deg', 'deflection_max_deg', 'rate_deg_s'].map((key) => (
         <EntryField key={key} path={[...path, key]} unitKey={key} />
+      ))}
+      {[
+        ['gap_m', 'blank = 0'],
+        ['spar_diameter_m', 'blank = no rod'],
+      ].map(([key, blankHint]) => (
+        <EntryField key={key} path={[...path, key]} unitKey={key} optional blankHint={blankHint} />
       ))}
       {servos.map((servo, panel) => {
         const number = numbers.get(`${surfaceName}#${panel}`)
