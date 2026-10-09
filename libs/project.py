@@ -13,7 +13,7 @@ aircraft/<project>/
     sitl/           SITL.elf (pinned), eeprom.bin, sitl.log: the bench's workdir
     jsbsim/         JSBSim export
     logs/           SITL and script flight logs and plots
-    cad/            STEP / STL exports, cutaway.svg / .png
+    cad/            STEP / STL exports, drawings: cutaway, threeview, xray (.svg / .png)
       sections/     printable sections S01.. and couplers C01.., STEP and STL
       varsets/      FreeCAD varsets, one JSON per varset (Varset_FROM_JSON.FCMacro)
     controllers/    flight controller scripts (libs/controller.py)

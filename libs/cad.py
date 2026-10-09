@@ -524,6 +524,17 @@ def build_volume_solid(resolved: ResolvedAirframe, volume):
     raise ValueError(f"volume {volume.name!r}: a {volume.shape} has no solid")
 
 
+def build_rod_solids(resolved: ResolvedAirframe) -> list[tuple[str, object]]:
+    """The carbon rods at their own diameter: (name, cq.Solid) for each longitudinal rod and each wing spar."""
+    rods = []
+    reinforcement = resolved.airframe.fuselage.reinforcement
+    if reinforcement is not None:
+        rods += [("rods", _rod((reinforcement.from_x_m, y, z), (reinforcement.to_x_m, y, z), reinforcement.pattern.diameter_m))
+                 for y, z in reinforcement.pattern.positions_m()]
+    rods += [(f"spars {spar.surface}", _rod(spar.start, spar.end, spar.diameter_m)) for spar in resolved.spars]
+    return rods
+
+
 def _bed_note(name: str, shape, bed_m: tuple[float, float, float]) -> str | None:
     """A part whose bounding box does not fit the printer bed in any axis-aligned orientation."""
     box = shape.BoundingBox()
@@ -536,7 +547,7 @@ def _bed_note(name: str, shape, bed_m: tuple[float, float, float]) -> str | None
 
 def build_printable_parts(resolved: ResolvedAirframe) -> list[tuple[str, object, list[str]]]:
     """(name, cq.Shape, notes) of every printable part, front to back: sections S01.., then couplers C01.. (by cut).
-    Built once per airframe definition: the section export and the cutaway of the same design share them."""
+    Built once per airframe definition: the section export and the drawings of the same design share them."""
     key = repr(resolved.airframe)
     if key not in _PRINTABLE_PARTS:
         _PRINTABLE_PARTS.clear()  # one design at a time

@@ -24,7 +24,7 @@ python analyze_airframe.py aircraft/m62v2 --aoa 5 --airspeed 20 --sweep
 python analyze_airframe.py aircraft/m62v2 --export-step out.step --step-mode fused --export-stl out.stl
 python analyze_airframe.py aircraft/m62v2 --export-sections   # printable sections and couplers into cad/sections/
 python analyze_airframe.py aircraft/m62v2 --export-varsets     # FreeCAD varsets into cad/varsets/
-python analyze_airframe.py aircraft/m62v2 --export-cutaway     # blueprint cutaway drawing, cad/cutaway.svg and .png
+python analyze_airframe.py aircraft/m62v2 --export-drawings    # blueprint drawings: cad/cutaway, threeview, xray (.svg and .png)
 python aero_check.py                                          # live lifting line vs asb.LiftingLine, per-surface info
 python sim_inav.py hover aircraft/m62v1                       # INAV SITL on JSBSim: hover (VTOL)
 python sim_inav.py efficiency aircraft/quadlancer62           # speed sweep: Wh/km, slowest level speed, range, endurance
@@ -46,7 +46,7 @@ aircraft/<project>/
     sitl/           SITL.elf (copied in from inav_development on the first run, then pinned), eeprom.bin, sitl.log
     jsbsim/         JSBSim export
     logs/           SITL and script flight logs and plots
-    cad/            STEP / STL exports, cutaway.svg / .png (blueprint side cutaway)
+    cad/            STEP / STL exports, blueprint drawings: cutaway, threeview, xray (.svg / .png)
       sections/     printable sections S01.. and couplers C01.., STEP and STL
       varsets/      FreeCAD varsets, one JSON per varset
     controllers/    flight controller scripts: setup()/loop() against simulated hardware in raw units (libs/controller.py)
@@ -93,7 +93,7 @@ Other views:
 
 - **Aero Analysis.** 2D airfoil comparison (NeuralFoil).
 - **VLM.** AeroSandbox vortex-lattice sweep and 3D view, solved once per AoA (airspeed and altitude only scale the forces). Wings only: VLM ignores the fuselage, so wings mounted on the tube read about half their real lift there; use it for trends and pictures, not absolute numbers.
-- **CAD.** STEP/STL export of the outer shape; the printable parts (each section with what is attached in it, hollowed, with joint, rod and spar holes; the couplers); a blueprint side cutaway of those parts, cut faces hatched; FreeCAD varsets.
+- **CAD.** STEP/STL export of the outer shape; the printable parts (each section with what is attached in it, hollowed, with joint, rod and spar holes; the couplers); blueprint drawings of those parts: a side cutaway (cut faces hatched), a three-view (side, top, front) and an x-ray view from above, ahead and to the left (skin see-through, parts, rods and spars inside); FreeCAD varsets.
 
 ## How far to trust it
 

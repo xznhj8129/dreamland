@@ -2,8 +2,8 @@
 Usage:
 from libs.views.cad_view import CADMainView
 
-CAD view: STEP/STL solid export of the current resolved airframe, printable sections and couplers, the cutaway drawing and
-FreeCAD varsets.
+CAD view: STEP/STL solid export of the current resolved airframe, printable sections and couplers, the drawings (cutaway,
+three-view, x-ray) and FreeCAD varsets.
 """
 
 from __future__ import annotations
@@ -13,7 +13,7 @@ import tkinter as tk
 from tkinter import filedialog, ttk
 
 from libs.cad import export_sections, export_step, export_stl
-from libs.cutaway import export_cutaway
+from libs.drawings import export_drawings
 from libs.varsets import export_varsets
 
 
@@ -56,7 +56,7 @@ class CADMainView:
         ttk.Button(button_bar, text="Export STEP", command=self.on_export_step).grid(row=0, column=0, padx=(0, 8))
         ttk.Button(button_bar, text="Export STL", command=self.on_export_stl).grid(row=0, column=1, padx=(0, 8))
         ttk.Button(button_bar, text="Export printable sections", command=self.on_export_sections).grid(row=0, column=2, padx=(0, 8))
-        ttk.Button(button_bar, text="Export cutaway drawing", command=self.on_export_cutaway).grid(row=0, column=3, padx=(0, 8))
+        ttk.Button(button_bar, text="Export drawings", command=self.on_export_drawings).grid(row=0, column=3, padx=(0, 8))
         ttk.Button(button_bar, text="Export FreeCAD varsets", command=self.on_export_varsets).grid(row=0, column=4)
 
         self.status_var = tk.StringVar(value="")
@@ -138,19 +138,19 @@ class CADMainView:
             self.app.log_error("Section export", "\n".join(problems))
         self.status_var.set(f"{len(written)} parts written to {directory}" + (f"; {len(problems)} problems in the Log tab" if problems else ""))
 
-    def on_export_cutaway(self) -> None:
+    def on_export_drawings(self) -> None:
         if self.app.resolved is None:
             self.status_var.set("No valid airframe yet; fix the definition first.")
             return
-        self.status_var.set("Drawing the cutaway...")
+        self.status_var.set("Drawing the cutaway, three-view and x-ray...")
         self.frame.update_idletasks()
         try:
-            written = export_cutaway(self.app.resolved, self.app.project.cad_dir)
+            written = export_drawings(self.app.resolved, self.app.project.cad_dir)
         except Exception as error:
             traceback.print_exc()
-            self.status_var.set(f"Cutaway failed: {error}")
+            self.status_var.set(f"Drawings failed: {error}")
             return
-        self.status_var.set(f"Cutaway written: {', '.join(str(path) for path in written)}")
+        self.status_var.set(f"Drawings written: {', '.join(str(path) for path in written)}")
 
     def on_export_varsets(self) -> None:
         if self.app.resolved is None:

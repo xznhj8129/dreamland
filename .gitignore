@@ -3,3 +3,5 @@ __pycache__/
 exports/
 *.pyc
 aircraft/*/logs/*
+web/node_modules/
+web/dist/

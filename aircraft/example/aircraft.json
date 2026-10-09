@@ -6,7 +6,7 @@
     "name": "ezplane",
     "preset": "tube62",
     "operating_point": {
-        "aoa_deg": 3.0,
+        "aoa_deg": 3,
         "airspeed_m_s": 20.0,
         "altitude_m": 0.0
     },
@@ -60,13 +60,13 @@
             "x_root_le_m": 0.3184,
             "layout": "H",
             "fin_position": "top",
-            "dihedral_deg": 0.0,
+            "dihedral_deg": 5.0,
             "root_offset": 0.0,
             "root": "body",
             "span_m": 0.3,
             "chord_root_m": 0.1,
             "chord_tip_m": 0.07,
-            "sweep_le_deg": 5.0,
+            "sweep_le_deg": 3,
             "incidence_deg": 3.0,
             "incidence_mode": "symmetric",
             "airfoil": "naca2412",
@@ -91,9 +91,9 @@
                 "material": "carbon_rod",
                 "diameter_m": 0.0064,
                 "count": 2,
-                "spacing_m": 0.0075,
-                "x_offset_m": 0.05,
-                "y_offset_m": 0.0,
+                "spacing_m": 0.02,
+                "x_offset_m": 0.03,
+                "y_offset_m": 0.002,
                 "carry_through": {
                     "stem_width_m": 0.01,
                     "length_m": 0.02,
@@ -135,7 +135,7 @@
                 "deflection_max_deg": 45.0,
                 "rate_deg_s": 300.0,
                 "chord_start": 0.5,
-                "span_start": 0.0,
+                "span_start": 0.05,
                 "span_end": 1.0,
                 "servos": [
                     "S1",
@@ -167,7 +167,7 @@
                 "deflection_max_deg": 45.0,
                 "rate_deg_s": 300.0,
                 "chord_start": 0.6,
-                "span_start": 0.0,
+                "span_start": 0.05,
                 "span_end": 1.0,
                 "servos": [
                     "S3"
@@ -196,7 +196,7 @@
             "manufacturer": "Brother Hobby",
             "name": "Tornado T5 3115 PRO 900"
         },
-        "prop": "APC MR 9.5x5",
+        "prop": "APC SF 9x6",
         "battery": {
             "model": "commercial",
             "part": "CNHL-2200mah-6S",
@@ -208,7 +208,13 @@
                 "on": "tail",
                 "direction": "pusher",
                 "spin": "cw",
-                "thrust_axis_tilt_deg": 0.0
+                "thrust_axis_tilt_deg": 0.0,
+                "pod": {
+                    "diameter_m": 0.035,
+                    "flat_length_m": 0.02,
+                    "curve_length_m": 0.02,
+                    "profile": "elliptical"
+                }
             }
         ],
         "wiring": {
@@ -234,13 +240,15 @@
     "volumes": [
         {
             "name": "battery",
-            "shape": "box",
-            "x_m": 0.2517,
+            "shape": "rounded_box",
+            "x_m": 0.2388,
             "size_m": [
-                0.11,
-                0.0355,
-                0.049
-            ]
+                0.125,
+                0.04,
+                0.0495
+            ],
+            "axis": "x",
+            "corner_radius_m": 0.002
         },
         {
             "name": "ballast",
@@ -248,20 +256,44 @@
             "x_m": 0.1119,
             "mass_kg": 0.02,
             "length_m": 0.05
-        },
-        {
-            "name": "ESC",
-            "shape": "bore",
-            "x_m": 0.5217,
-            "length_m": 0.05
         }
     ],
     "parts": [
         {
             "name": "ESC",
-            "part": "esc:esc-4in1-60a",
-            "volume": "ESC",
-            "mass_kg": 0.0
+            "part": "esc:esc-single-40a",
+            "mass_kg": 0.0,
+            "x_m": 0.5817,
+            "y_m": 0.0,
+            "z_m": 0.0
+        },
+        {
+            "name": "cam",
+            "part": "camera:camera-generic-micro",
+            "x_m": 0.02,
+            "y_m": 0.0,
+            "z_m": 0.0
+        },
+        {
+            "name": "fc",
+            "part": "fc:fc-generic-wing",
+            "x_m": 0.45,
+            "y_m": 0.0,
+            "z_m": 0.0
+        },
+        {
+            "name": "vtx",
+            "part": "vtx:vtx-generic-20x20",
+            "x_m": 0.5,
+            "y_m": 0.0,
+            "z_m": 0.0
+        },
+        {
+            "name": "gps",
+            "part": "gps:gps-generic",
+            "x_m": 0.4,
+            "y_m": 0.0,
+            "z_m": 0.03
         }
     ],
     "sections": {
@@ -282,8 +314,7 @@
                 "empty_mass_kg": 0.065
             },
             {
-                "solid": false,
-                "empty_mass_kg": 0.05
+                "solid": true
             },
             {
                 "solid": false,
@@ -303,7 +334,7 @@
             "front_male",
             "front_male",
             "rear_male",
-            "coupler"
+            "rear_male"
         ]
     }
 }

@@ -13,7 +13,7 @@ CADView [fill]
         - Export STEP button
         - Export STL button
         - Export printable sections button
-        - Export cutaway drawing button
+        - Export drawings button
         - Export FreeCAD varsets button
         - status line
 ```
@@ -35,8 +35,12 @@ SolidGeometryExportPanel
       attached in it) and every coupler (C01.., by cut) as STEP and STL into cad/sections/;
       the status line gives the part count; problems (a root chord past a section end, a part
       larger than the printer bed, a part in several pieces) go to the Log tab
-    - Export cutaway drawing draws the side cutaway (near half removed, cut faces hatched, far half
-      in hidden-line view, parts numbered with a key) into cad/cutaway.svg and cad/cutaway.png;
+    - Export drawings draws, each as .svg and .png in cad/:
+        cutaway: the side cutaway (near half removed, cut faces hatched, far half in hidden-line
+          view, parts numbered with a key)
+        threeview: side, top and front views as seen from outside, name and a 100 mm scale bar
+        xray: from above, ahead and to the left, the printed skin see-through (grey, far side
+          faint), the parts, rods, spars and motors inside drawn over it, parts labelled
       the status line gives the paths
     - Export FreeCAD varsets writes one JSON per varset into cad/varsets/ (Airframe, one per
       surface set, Propulsion, one per motor mount); the status line lists them
