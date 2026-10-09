@@ -1,13 +1,18 @@
 :root {
-  --ui-bg: #000000;
-  --ui-panel: #031a03;
-  --ui-border: #0a5f0a;
-  --ui-fg: #67ff67;
-  --ui-accent: #19ff19;
-  --ui-dim: #2a7a2a;
-  --ui-info: #67ff67;
+  color-scheme: dark;
+  --ui-bg: #141517;
+  --ui-panel: #1c1e21;
+  --ui-raised: #25282c;
+  --ui-input: #16181b;
+  --ui-hover: #313539;
+  --ui-border: #3b4045;
+  --ui-fg: #ccebb9;
+  --ui-accent: #b4ed91;
+  --ui-dim: #a2af9b;
+  --ui-info: #c0d9b1;
   --ui-warning: #ffd23f;
-  --ui-problem: #ff4d4d;
+  --ui-problem: #ff8585;
+  --ui-mono: "DejaVu Sans Mono", "Liberation Mono", Consolas, monospace;
 }
 
 * {
@@ -24,8 +29,29 @@ body,
 body {
   background: var(--ui-bg);
   color: var(--ui-fg);
-  font-family: "DejaVu Sans Mono", "Liberation Mono", Consolas, monospace;
+  font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
   font-size: 13px;
+  line-height: 1.45;
+}
+
+button,
+input,
+select {
+  font: inherit;
+}
+
+input[type="checkbox"],
+input[type="radio"] {
+  accent-color: var(--ui-accent);
+  width: 15px;
+  height: 15px;
+  flex-shrink: 0;
+  margin: 0;
+}
+
+* {
+  scrollbar-width: thin;
+  scrollbar-color: #50565c transparent;
 }
 
 .app {
@@ -37,16 +63,61 @@ body {
 .view-host {
   flex: 1;
   min-height: 0;
-  padding: 8px;
+  padding: 12px;
 }
 
 .top-bar {
   display: flex;
   align-items: center;
   position: relative;
-  padding: 4px 8px;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  min-height: 60px;
+  padding: 10px 20px;
   background: var(--ui-panel);
   border-bottom: 1px solid var(--ui-border);
+}
+
+.app-name {
+  font-size: 14px;
+  font-weight: 650;
+  letter-spacing: -0.03em;
+  white-space: nowrap;
+}
+
+.project-context {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  margin-left: auto;
+  color: var(--ui-dim);
+}
+
+.project-name {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-fg);
+  font-weight: 500;
+}
+
+.menu-button {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  background: transparent;
+  border-color: transparent;
+}
+
+.menu-button::after {
+  content: "";
+  width: 5px;
+  height: 5px;
+  margin-top: -3px;
+  border-right: 1.5px solid currentColor;
+  border-bottom: 1.5px solid currentColor;
+  transform: rotate(45deg);
 }
 
 .menu-root {
@@ -55,36 +126,40 @@ body {
 
 .menu-button.active {
   color: var(--ui-accent);
-  border-color: var(--ui-accent);
+  background: var(--ui-hover);
 }
 
 .menu-dropdown {
   position: absolute;
   top: 100%;
   left: 0;
-  margin-top: 4px;
-  min-width: 170px;
+  margin-top: 8px;
+  min-width: 200px;
   display: flex;
   flex-direction: column;
-  background: var(--ui-panel);
+  padding: 6px;
+  background: var(--ui-raised);
   border: 1px solid var(--ui-border);
+  border-radius: 10px;
+  box-shadow: 0 16px 40px rgba(0, 0, 0, 0.45);
   z-index: 30;
 }
 
 .menu-dropdown button {
   border: none;
   text-align: left;
-  padding: 6px 10px;
+  padding: 9px 12px;
   background: transparent;
 }
 
 .menu-dropdown button:hover:not(:disabled) {
-  background: var(--ui-border);
+  background: var(--ui-hover);
 }
 
 .panel {
   background: var(--ui-panel);
   border: 1px solid var(--ui-border);
+  border-radius: 10px;
   min-height: 0;
   min-width: 0;
 }
@@ -112,7 +187,7 @@ body {
 
 .split-divider {
   position: relative;
-  flex: 0 0 8px;
+  flex: 0 0 12px;
   cursor: col-resize;
   touch-action: none;
 }
@@ -120,10 +195,11 @@ body {
 .split-divider::before {
   content: "";
   position: absolute;
-  top: 0;
-  bottom: 0;
+  top: calc(50% - 20px);
+  height: 40px;
   left: 50%;
-  width: 2px;
+  width: 3px;
+  border-radius: 2px;
   transform: translateX(-50%);
   background: var(--ui-border);
 }
@@ -148,8 +224,10 @@ body {
 .pane-header {
   display: flex;
   align-items: center;
-  gap: 8px;
-  padding: 6px;
+  flex-wrap: wrap;
+  gap: 8px 12px;
+  min-height: 60px;
+  padding: 12px;
   border-bottom: 1px solid var(--ui-border);
 }
 
@@ -158,43 +236,86 @@ body {
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;
+  font-size: 12px;
 }
 
 button {
-  background: var(--ui-bg);
+  background: var(--ui-raised);
   color: var(--ui-fg);
   border: 1px solid var(--ui-border);
-  padding: 4px 8px;
+  min-height: 34px;
+  padding: 6px 12px;
+  border-radius: 6px;
+  font-weight: 500;
+  line-height: 1.4;
   font: inherit;
   cursor: pointer;
+  transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
 
 button:hover:not(:disabled) {
-  color: var(--ui-accent);
-  border-color: var(--ui-accent);
+  background: var(--ui-hover);
+  border-color: #60676e;
+}
+
+button:focus-visible,
+.field-input:focus-visible,
+.modal input:focus-visible {
+  outline: 2px solid var(--ui-accent);
+  outline-offset: 3px;
 }
 
 button:disabled {
   color: var(--ui-dim);
   cursor: default;
+  opacity: 0.5;
 }
 
 .action {
-  color: var(--ui-accent);
+  color: #1b2116;
+  background: var(--ui-accent);
+  border-color: var(--ui-accent);
+  font-weight: 600;
+}
+
+.action:hover:not(:disabled) {
+  color: #1b2116;
+  background: #ccf5b2;
+  border-color: #ccf5b2;
+}
+
+.action:disabled {
+  color: #1b2116;
 }
 
 .tab-row {
   display: flex;
-  gap: 2px;
-  padding: 4px 4px 0 4px;
+  flex-wrap: wrap;
+  gap: 16px;
+  padding: 0 16px;
   border-bottom: 1px solid var(--ui-border);
+}
+
+.tab {
+  min-height: 44px;
+  padding: 10px 0;
+  color: var(--ui-dim);
+  border: none;
+  border-bottom: 2px solid transparent;
+  border-radius: 0;
+  background: transparent;
+}
+
+.tab:hover:not(:disabled) {
+  color: var(--ui-fg);
+  border-color: transparent;
+  background: transparent;
 }
 
 .tab.active {
   color: var(--ui-accent);
-  border-color: var(--ui-accent);
-  border-bottom-color: var(--ui-panel);
-  background: var(--ui-panel);
+  border-bottom-color: var(--ui-accent);
+  background: transparent;
 }
 
 .report-panel {
@@ -204,16 +325,156 @@ button:disabled {
   min-height: 0;
 }
 
-.report-text {
+.report-content {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 6px;
-  white-space: pre-wrap;
-  line-height: 1.35;
-  /* guibuilder.py summary/log use font=("TkFixedFont", 10) */
-  font-family: "DejaVu Sans Mono", "Liberation Mono", monospace;
-  font-size: 13px;
+  padding: 16px;
+  line-height: 1.5;
+}
+
+.report-content[hidden] {
+  display: none;
+}
+
+.report-tabs {
+  gap: 14px;
+  flex-shrink: 0;
+}
+
+.report-section {
+  padding: 0 0 18px;
+  margin: 0 0 18px;
+  border-bottom: 1px solid var(--ui-border);
+}
+
+.report-section:last-child {
+  margin-bottom: 0;
+  border-bottom: none;
+}
+
+.report-section h3,
+.report-section summary {
+  margin: 0 0 12px;
+  color: var(--ui-accent);
+  font-size: 14px;
+  font-weight: 600;
+  overflow-wrap: anywhere;
+}
+
+.report-section summary {
+  cursor: pointer;
+}
+
+.report-count {
+  margin-left: 10px;
+  color: var(--ui-dim);
+  font-size: 11px;
+  font-weight: normal;
+  white-space: nowrap;
+}
+
+.report-metrics {
+  margin: 0;
+}
+
+.report-metric {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
+  gap: 12px;
+  padding: 5px 0;
+}
+
+.report-metric dt {
+  color: var(--ui-dim);
+  font-size: 12px;
+}
+
+.report-metric dd {
+  margin: 0;
+  text-align: right;
+  overflow-wrap: anywhere;
+  font-family: var(--ui-mono);
+  font-size: 12px;
+}
+
+.report-note {
+  margin: 12px 0 0;
+  font-size: 12px;
+  overflow-wrap: anywhere;
+}
+
+.report-note.line-info,
+.report-empty {
+  color: var(--ui-dim);
+}
+
+.report-table-scroll {
+  max-height: 420px;
+  overflow: auto;
+  margin-top: 12px;
+  scrollbar-gutter: stable;
+}
+
+.report-table {
+  width: 100%;
+  border-collapse: separate;
+  border-spacing: 0;
+  font-family: var(--ui-mono);
+  font-size: 11px;
+}
+
+.report-table th,
+.report-table td {
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--ui-border);
+  text-align: right;
+  white-space: nowrap;
+}
+
+.report-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 2;
+  background: var(--ui-raised);
+  color: var(--ui-dim);
+  font-weight: normal;
+}
+
+.report-table th:first-child {
+  position: sticky;
+  left: 0;
+  z-index: 1;
+  min-width: 64px;
+  max-width: 145px;
+  text-align: left;
+  white-space: normal;
+  overflow-wrap: anywhere;
+  background: var(--ui-panel);
+  font-family: inherit;
+  font-weight: normal;
+}
+
+.report-table thead th:first-child {
+  z-index: 3;
+  background: var(--ui-raised);
+}
+
+.report-table tbody tr:nth-child(even) td,
+.report-table tbody tr:nth-child(even) th {
+  background: var(--ui-input);
+}
+
+.report-log {
+  font-family: var(--ui-mono);
+  font-size: 12px;
+}
+
+.log-heading {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 8px;
 }
 
 .line-info {
@@ -229,7 +490,7 @@ button:disabled {
 }
 
 .log-entry {
-  margin-bottom: 8px;
+  margin-bottom: 20px;
 }
 
 .log-text {
@@ -237,7 +498,7 @@ button:disabled {
 }
 
 .placeholder {
-  padding: 10px;
+  padding: 20px;
   color: var(--ui-dim);
 }
 
@@ -255,13 +516,26 @@ button:disabled {
 
 .view-tabs {
   display: flex;
+  flex-wrap: wrap;
   gap: 4px;
-  margin-left: 8px;
+  padding-left: 16px;
+  border-left: 1px solid var(--ui-border);
+}
+
+.view-button {
+  background: transparent;
+  border-color: transparent;
+  color: var(--ui-dim);
+}
+
+.view-button:hover:not(:disabled) {
+  border-color: transparent;
 }
 
 .view-button.active {
   color: var(--ui-accent);
-  border-color: var(--ui-accent);
+  background: var(--ui-hover);
+  border-color: transparent;
 }
 
 .simple-view {
@@ -283,12 +557,12 @@ button:disabled {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--ui-border);
+  border: none;
 }
 
 .model-canvas canvas {
   display: block;
-  background: #001000; /* guibuilder.py UI_CANVAS */
+  background: #141517;
   cursor: grab;
   touch-action: none;
 }
@@ -313,19 +587,21 @@ button:disabled {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 10px;
-  padding: 6px;
+  gap: 8px 16px;
+  padding: 10px 16px;
   border-bottom: 1px solid var(--ui-border);
 }
 
 .axes-label {
-  color: var(--ui-accent);
+  color: var(--ui-dim);
+  font-size: 12px;
 }
 
 .mode-radio {
   display: flex;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
+  cursor: pointer;
 }
 
 .draw-error {
@@ -344,8 +620,8 @@ button:disabled {
   display: flex;
   flex: 1;
   min-height: 0;
-  gap: 4px;
-  padding: 4px;
+  gap: 8px;
+  padding: 8px;
 }
 
 .canvas-area {
@@ -362,14 +638,14 @@ button:disabled {
   grid-row: 1;
   min-width: 0;
   min-height: 0;
-  border: 1px solid var(--ui-border);
+  border: none;
 }
 
 .drawing-canvas {
   display: block;
   width: 100%;
   height: 100%;
-  background: #001000; /* guibuilder.py UI_CANVAS */
+  background: #141517;
   cursor: grab;
   user-select: none;
   touch-action: none;
@@ -418,8 +694,8 @@ button:disabled {
   flex-direction: column;
   align-items: center;
   justify-content: space-between;
-  padding: 2px 4px;
-  border: 1px solid var(--ui-border);
+  padding: 8px 4px;
+  color: var(--ui-dim);
 }
 
 .roll-label {
@@ -499,23 +775,29 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: center;
-  background: rgba(0, 0, 0, 0.6);
+  background: rgba(8, 9, 11, 0.75);
+  backdrop-filter: blur(4px);
   z-index: 40;
 }
 
 .modal {
-  min-width: 340px;
-  max-width: 520px;
+  width: min(480px, calc(100vw - 40px));
+  max-height: calc(100vh - 40px);
+  overflow: auto;
   display: flex;
   flex-direction: column;
-  gap: 10px;
-  padding: 12px;
-  background: var(--ui-panel);
+  gap: 20px;
+  padding: 24px;
+  background: var(--ui-raised);
   border: 1px solid var(--ui-border);
+  border-radius: 14px;
+  box-shadow: 0 24px 80px rgba(0, 0, 0, 0.55);
 }
 
 .modal-title {
-  color: var(--ui-accent);
+  font-size: 20px;
+  font-weight: 600;
+  letter-spacing: -0.02em;
 }
 
 .modal-form {
@@ -530,8 +812,10 @@ button:disabled {
 
 .modal input {
   width: 100%;
-  padding: 4px 6px;
-  background: var(--ui-bg);
+  min-height: 36px;
+  padding: 8px 10px;
+  border-radius: 6px;
+  background: var(--ui-input);
   color: var(--ui-fg);
   border: 1px solid var(--ui-border);
   font: inherit;
@@ -565,22 +849,23 @@ button:disabled {
 .project-list {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
   max-height: 320px;
   overflow: auto;
-  padding: 4px;
+  padding: 6px;
   border: 1px solid var(--ui-border);
+  border-radius: 8px;
 }
 
 .project-list button {
   border: none;
   text-align: left;
-  padding: 4px 6px;
+  padding: 10px 12px;
   background: transparent;
 }
 
 .project-list button:hover:not(:disabled) {
-  background: var(--ui-border);
+  background: var(--ui-hover);
 }
 
 /* --- Editor forms ------------------------------------------------------- */
@@ -593,25 +878,33 @@ button:disabled {
   min-width: 0;
 }
 
+.right-pane,
+.part-editor-pane,
+.cad-view,
+.sim-left {
+  container-type: inline-size;
+}
+
 .subtab-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 2px;
-  padding: 4px 4px 0 4px;
-  border-bottom: 1px solid var(--ui-border);
+  gap: 4px;
+  padding: 10px 12px;
+  background: var(--ui-input);
 }
 
 .subtab {
-  border-radius: 4px 4px 0 0;
-  border-bottom-color: transparent;
-  padding: 3px 8px;
+  min-height: 30px;
+  padding: 5px 10px;
+  border-color: transparent;
+  color: var(--ui-dim);
+  background: transparent;
 }
 
 .subtab.active {
   color: var(--ui-accent);
-  border-color: var(--ui-accent);
-  border-bottom-color: var(--ui-panel);
-  background: var(--ui-panel);
+  border-color: transparent;
+  background: var(--ui-hover);
 }
 
 .editor-forms {
@@ -620,8 +913,8 @@ button:disabled {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 8px;
-  gap: 8px;
+  padding: 16px;
+  gap: 16px;
 }
 
 .editor-forms[hidden] {
@@ -631,11 +924,12 @@ button:disabled {
 .form-card {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  padding: 8px 10px 10px 10px;
-  border: 1px solid var(--ui-border);
-  border-radius: 6px;
-  background: rgba(103, 255, 103, 0.03);
+  flex: 0 0 auto;
+  min-width: 0;
+  gap: 12px;
+  padding: 16px;
+  border-radius: 8px;
+  background: var(--ui-raised);
 }
 
 .form-card-header {
@@ -643,38 +937,41 @@ button:disabled {
   align-items: center;
   justify-content: space-between;
   gap: 8px;
-  border-bottom: 1px solid var(--ui-border);
+  flex-wrap: wrap;
   padding-bottom: 4px;
 }
 
 .form-card-header h3 {
   margin: 0;
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
-  color: var(--ui-accent);
-  letter-spacing: 0.02em;
+  color: var(--ui-fg);
+  letter-spacing: -0.01em;
 }
 
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 10px;
+  min-width: 0;
   margin: 0;
-  padding: 6px 8px 8px 8px;
-  border: 1px solid var(--ui-border);
-  border-radius: 6px;
+  padding: 12px 0 0;
+  border: none;
+  border-top: 1px solid var(--ui-border);
 }
 
 .form-group legend {
-  padding: 0 4px;
-  color: var(--ui-fg);
+  padding: 0 8px 0 0;
+  color: var(--ui-accent);
+  font-size: 12px;
+  font-weight: 600;
 }
 
 .form-row {
   display: grid;
-  grid-template-columns: minmax(96px, 46%) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 44%) minmax(0, 1fr);
   align-items: center;
-  gap: 3px 8px;
+  gap: 4px 12px;
   min-width: 0;
 }
 
@@ -683,10 +980,19 @@ button:disabled {
 }
 
 .form-label {
-  color: var(--ui-fg);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--ui-dim);
+  overflow-wrap: anywhere;
+  line-height: 1.35;
+}
+
+.form-row > .form-hint {
+  grid-column: 2;
+}
+
+.form-row > .check-row {
+  min-width: 0;
+  flex-wrap: wrap;
+  gap: 8px 12px;
 }
 
 .form-control {
@@ -711,12 +1017,20 @@ button:disabled {
 .field-input {
   width: 100%;
   min-width: 0;
-  padding: 3px 6px;
-  background: var(--ui-bg);
+  max-width: 100%;
+  min-height: 34px;
+  padding: 6px 9px;
+  background: var(--ui-input);
   color: var(--ui-fg);
   border: 1px solid var(--ui-border);
-  border-radius: 4px;
+  border-radius: 6px;
   font: inherit;
+}
+
+.field-input:disabled {
+  color: var(--ui-dim);
+  background: transparent;
+  opacity: 0.55;
 }
 
 select.field-input {
@@ -726,7 +1040,7 @@ select.field-input {
 .field-input:focus {
   outline: none;
   border-color: var(--ui-accent);
-  box-shadow: 0 0 0 1px var(--ui-accent);
+  box-shadow: 0 0 0 2px rgba(180, 237, 145, 0.15);
 }
 
 .field-input.field-invalid {
@@ -744,7 +1058,7 @@ select.field-input {
 .check-row {
   display: flex;
   align-items: center;
-  gap: 5px;
+  gap: 8px;
   cursor: pointer;
   user-select: none;
 }
@@ -756,13 +1070,14 @@ select.field-input {
 
 .button-row {
   display: flex;
-  gap: 6px;
+  gap: 8px;
   flex-wrap: wrap;
 }
 
 button.danger {
   color: var(--ui-problem);
-  border-color: var(--ui-problem);
+  border-color: transparent;
+  background: rgba(255, 133, 133, 0.08);
 }
 
 button.danger:hover:not(:disabled) {
@@ -783,7 +1098,7 @@ button.danger:hover:not(:disabled) {
 .section-grid {
   display: grid;
   grid-template-columns: repeat(9, auto);
-  gap: 4px 8px;
+  gap: 8px 12px;
   align-items: center;
   overflow-x: auto;
 }
@@ -868,7 +1183,7 @@ button.danger:hover:not(:disabled) {
 .motor-lines {
   margin: 6px 0 0 0;
   color: var(--ui-fg);
-  font-family: inherit;
+  font-family: var(--ui-mono);
   font-size: 12px;
   line-height: 1.35;
   white-space: pre-wrap;
@@ -889,13 +1204,14 @@ button.danger:hover:not(:disabled) {
   align-items: baseline;
   justify-content: space-between;
   gap: 8px;
-  padding: 6px 8px;
+  flex-wrap: wrap;
+  padding: 16px;
   border-bottom: 1px solid var(--ui-border);
 }
 
 .part-search {
-  margin: 6px 8px;
-  width: calc(100% - 16px);
+  margin: 12px;
+  width: calc(100% - 24px);
 }
 
 .part-tree {
@@ -910,8 +1226,8 @@ button.danger:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 3px 8px;
-  min-height: 24px;
+  padding: 8px 12px;
+  min-height: 36px;
   border-left: 2px solid transparent;
   cursor: pointer;
   user-select: none;
@@ -930,11 +1246,11 @@ button.danger:hover:not(:disabled) {
 }
 
 .part-row:hover {
-  background: rgba(103, 255, 103, 0.08);
+  background: var(--ui-hover);
 }
 
 .part-row.selected {
-  background: var(--ui-border);
+  background: var(--ui-hover);
   color: var(--ui-accent);
   border-left-color: var(--ui-accent);
 }
@@ -948,6 +1264,7 @@ button.danger:hover:not(:disabled) {
   flex: 0 0 14px;
   width: 14px;
   padding: 0;
+  min-height: 20px;
   border: none;
   background: transparent;
   color: var(--ui-dim);
@@ -981,9 +1298,9 @@ button.danger:hover:not(:disabled) {
 }
 
 .part-editor-pane {
-  gap: 8px;
+  gap: 16px;
   overflow: auto;
-  padding: 8px;
+  padding: 16px;
 }
 
 .part-editor-pane > .placeholder {
@@ -1015,10 +1332,10 @@ button.danger:hover:not(:disabled) {
 .cad-view {
   height: 100%;
   overflow: auto;
-  padding: 8px;
+  padding: 20px;
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 16px;
 }
 
 .cad-view .form-card {
@@ -1038,6 +1355,7 @@ button.danger:hover:not(:disabled) {
 .cad-mode-option.active {
   color: var(--ui-accent);
   border-color: var(--ui-accent);
+  background: var(--ui-hover);
 }
 
 .cad-result {
@@ -1084,8 +1402,8 @@ button.danger:hover:not(:disabled) {
 .sim-left,
 .sim-centre,
 .sim-right {
-  gap: 8px;
-  padding: 8px;
+  gap: 16px;
+  padding: 12px;
   overflow: auto;
 }
 
@@ -1093,51 +1411,51 @@ button.danger:hover:not(:disabled) {
   display: grid;
   grid-template-columns: minmax(90px, 44%) minmax(0, 1fr);
   align-items: center;
-  gap: 3px 8px;
+  gap: 6px 12px;
   min-width: 0;
 }
 
 .sim-field label {
-  color: var(--ui-fg);
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--ui-dim);
+  overflow-wrap: anywhere;
 }
 
 .sim-conditions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 4px 10px;
+  gap: 10px 16px;
   margin: 2px 0 0 0;
-  padding: 6px 8px 8px 8px;
-  border: 1px solid var(--ui-border);
-  border-radius: 6px;
+  padding: 12px 0 0;
+  min-width: 0;
+  border: none;
+  border-top: 1px solid var(--ui-border);
 }
 
 .sim-conditions legend {
-  padding: 0 4px;
-  color: var(--ui-fg);
+  padding: 0 8px 0 0;
+  color: var(--ui-dim);
+  font-size: 12px;
 }
 
 .sim-condition {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 72px;
   align-items: center;
-  gap: 4px;
+  gap: 6px;
   min-width: 0;
 }
 
 .sim-condition label {
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
+  color: var(--ui-dim);
+  overflow-wrap: anywhere;
 }
 
 .sim-buttons {
   display: flex;
   align-items: center;
-  gap: 6px;
-  padding-top: 2px;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding-top: 4px;
 }
 
 .sim-status {
@@ -1153,14 +1471,13 @@ button.danger:hover:not(:disabled) {
   flex: 1;
   min-height: 0;
   margin: 0;
-  padding: 4px 6px;
+  padding: 12px;
   overflow: auto;
-  background: var(--ui-bg);
-  border: 1px solid var(--ui-border);
-  border-radius: 4px;
-  font-family: "DejaVu Sans Mono", "Liberation Mono", monospace;
-  font-size: 13px;
-  line-height: 1.35;
+  background: var(--ui-input);
+  border-radius: 6px;
+  font-family: var(--ui-mono);
+  font-size: 12px;
+  line-height: 1.6;
   white-space: pre-wrap;
   overflow-wrap: anywhere;
 }
@@ -1179,7 +1496,7 @@ button.danger:hover:not(:disabled) {
   min-height: 0;
   padding: 4px 0; /* no horizontal padding: uPlot is sized to clientWidth */
   overflow: auto;
-  background: var(--ui-bg);
+  background: var(--ui-input);
 }
 
 .sim-subplot {
@@ -1191,16 +1508,34 @@ button.danger:hover:not(:disabled) {
   flex: 1;
   min-height: 0;
   overflow: hidden;
-  border: 1px solid var(--ui-border);
+  border: none;
 }
 
 .sim-path canvas {
   display: block;
-  background: #001000; /* guibuilder.py UI_CANVAS */
+  background: #141517;
   cursor: grab;
   touch-action: none;
 }
 
 .sim-path canvas:active {
   cursor: grabbing;
+}
+
+@container (max-width: 360px) {
+  .sim-conditions,
+  .form-row:not(.form-row-bare),
+  .sim-field {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .form-row > .form-hint {
+    grid-column: 1;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  button {
+    transition: none;
+  }
 }

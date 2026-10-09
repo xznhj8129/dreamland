@@ -5,7 +5,7 @@ import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import type { Model3DBounds, Model3DPayload, Snapshot } from '../types'
 
 /** The 2D canvas colour (guibuilder.py UI_CANVAS) keeps the 3D view on the app's dark theme. */
-const BACKGROUND = '#001000'
+const BACKGROUND = '#141517'
 const FIT_MARGIN = 1.15
 /** Marker sphere radius as a fraction of the model's largest dimension. */
 const MARKER_RADIUS_FRACTION = 0.02

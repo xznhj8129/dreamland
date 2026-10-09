@@ -8,6 +8,7 @@ from typing import Any
 from libs.presets import preset_carry_through, preset_spars, preset_status
 from libs.propulsion import summary_lines
 from libs.reportline import ReportLine
+from webapp.report import build_report_pages
 from webapp.state import AppState
 
 
@@ -69,6 +70,7 @@ def snapshot(state: AppState) -> dict[str, Any]:
         "propulsion_chart": None if state.propulsion is None else chart_payload(state.propulsion),
         "pack_summary": pack_payload(state),
         "report": lines_payload(state.report),
+        "report_pages": None if state.resolved is None else dataclasses.asdict(build_report_pages(state.resolved, state.aero, state.problems, state.propulsion, state.status)),
         "log": [dataclasses.asdict(entry) for entry in state.log],
         "status": state.status,
         "aero_pending": state.aero is None,

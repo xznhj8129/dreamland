@@ -35,7 +35,12 @@ export function App(): ReactElement {
 
   return (
     <div className="app">
-      <TopBar view={view} onView={setView} />
+      <TopBar
+        view={view}
+        onView={setView}
+        project={snapshot?.project ?? null}
+        aircraftName={typeof snapshot?.definition.name === 'string' ? snapshot.definition.name : null}
+      />
       <main className="view-host">
         {view === 'Editor' ? (
           <EditorView snapshot={snapshot} />

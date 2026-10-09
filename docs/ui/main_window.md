@@ -7,10 +7,12 @@ This file covers the persistent shell of the web front end (`web/src/App.tsx`, `
 ```text
 Theme
 
-    - Palette = monochrome green on black
-    - Window background = black
-    - Panels = dark green/black
-    - UI outlines = green
+    - Palette = lighter green on darker greyish
+    - Window background = #141517
+    - Panels = #1c1e21; cards = #25282c
+    - UI outlines = #3b4045
+    - UI font = system sans-serif; reports = monospace
+    - Menus, bars, boxes and controls = restyled; drawing renderer = unchanged
     - Airframe drawing = green
     - Semantic markers remain color-coded:
         CG = blue
@@ -112,8 +114,8 @@ CAD            -> cad_view.md
 Part Editor    -> part_editor_view.md
 ```
 
-Aero Analysis, VLM and SIM are placeholder views in the web front end; their engines
-(VLM sweep, NeuralFoil airfoil comparison, INAV/script simulation) run headless.
+Aero Analysis and VLM are placeholder views in the web front end; their engines
+(VLM sweep, NeuralFoil airfoil comparison) run headless.
 
 ## Error handling
 

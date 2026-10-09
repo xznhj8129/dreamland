@@ -7,6 +7,37 @@ export interface ReportLine {
   level: LineLevel
 }
 
+export interface ReportMetric {
+  label: string
+  value: string
+  level: LineLevel
+}
+
+export interface ReportRow {
+  values: string[]
+  level: LineLevel
+}
+
+export interface ReportTable {
+  columns: string[]
+  rows: ReportRow[]
+}
+
+export interface ReportSection {
+  title: string
+  metrics: ReportMetric[]
+  notes: ReportLine[]
+  table: ReportTable | null
+  collapsible: boolean
+}
+
+export interface ReportPages {
+  summary: ReportSection[]
+  mass: ReportSection[]
+  aero: ReportSection[]
+  propulsion: ReportSection[]
+}
+
 export interface LogEntry {
   time: string
   title: string
@@ -143,6 +174,7 @@ export interface Snapshot {
   /** The resolved pack summary shown under the battery fields; null without a propulsion summary. */
   pack_summary: PackSummary | null
   report: ReportLine[]
+  report_pages: ReportPages | null
   log: LogEntry[]
   status: string
   aero_pending: boolean

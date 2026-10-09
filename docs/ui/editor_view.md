@@ -29,6 +29,9 @@ LeftPane [arrange:column]
     * RecomputeHeader [arrange:row]
     * LeftTabs [ui:tabs]
         Summary
+        Mass
+        Aero
+        Propulsion
         Log
 ```
 
@@ -52,12 +55,30 @@ RecomputeHeader [arrange:row]
 ```text
 SummaryTab [fill]
 
-    * SummaryPanel [fill, scrollable, copyable, word-wrapped]
-        * SummaryText [ui:fixed-width text, bind:analysis.report_text]
-            includes dimensional surface-force estimates at the current operating condition
-            reports per-surface lift / drag / vertical force using the configured airfoil and surface geometry
+    * SummaryPanel [fill, scrollable, copyable]
+        * Overview [ui:labelled values, bind:analysis.report_pages.summary]
+            airframe, mass, CG, thrust/weight, layout problems, propulsion alerts, stability at a glance, geometry
             problems in red (layout problems, unstable margin, no hover), warnings in yellow (marginal margin,
             parts not modelled, motorlib warnings)
+```
+
+### Detail tabs
+
+```text
+MassTab [fill, scrollable, copyable]
+    mass and CG, inertia, mass breakdown table, printed estimates, fuselage section masses
+
+AeroTab [fill, scrollable, copyable]
+    static stability first: nominal and ranged-CG margins, verdicts, neutral point, Barrowman cross-check
+    operating point, total forces, per-surface forces table
+    expandable angle-of-attack sweep table; all points retained
+
+PropulsionTab [fill, scrollable, copyable]
+    motors and propellers, spin, battery, full throttle, hover, model limitations, wiring resistance
+
+Detail values [ui:labelled values, fixed-width numbers, tables with units and sticky headings]
+    tables scroll horizontally when needed; tabs retain their scroll positions
+    tab keyboard navigation: Left/Right, Home/End
 ```
 
 ### Log tab

@@ -13,13 +13,15 @@ export type View = (typeof VIEWS)[number]
 interface TopBarProps {
   view: View
   onView: (view: View) => void
+  project: string | null
+  aircraftName: string | null
 }
 
 /**
  * The File menu: New, Load, Save, Save As, ported from the retired Tk menu bar (guibuilder.BuilderApp.build_menu;
  * see git history), with the main-view buttons beside it instead of a separate bottom bar.
  */
-export function TopBar({ view, onView }: TopBarProps): ReactElement {
+export function TopBar({ view, onView, project, aircraftName }: TopBarProps): ReactElement {
   const [menuOpen, setMenuOpen] = useState(false)
   const [dialog, setDialog] = useState<DialogKind | null>(null)
   const [notice, setNotice] = useState('')
@@ -59,6 +61,7 @@ export function TopBar({ view, onView }: TopBarProps): ReactElement {
 
   return (
     <header className="top-bar" ref={barRef}>
+      <span className="app-name">quadrocketbuilder</span>
       <div className="menu-root">
         <button
           type="button"
@@ -86,18 +89,25 @@ export function TopBar({ view, onView }: TopBarProps): ReactElement {
           </div>
         )}
       </div>
-      <nav className="view-tabs">
+      <nav className="view-tabs" aria-label="Main views">
         {VIEWS.map((name) => (
           <button
             key={name}
             type="button"
             className={name === view ? 'view-button active' : 'view-button'}
+            aria-current={name === view ? 'page' : undefined}
             onClick={() => onView(name)}
           >
             {name}
           </button>
         ))}
       </nav>
+      {project !== null && (
+        <div className="project-context" aria-label="Current project">
+          <span className="project-name" title={project}>{project}</span>
+          {aircraftName !== null && aircraftName !== project && <span>{aircraftName}</span>}
+        </div>
+      )}
       {notice !== '' && <span className="top-notice">{notice}</span>}
       {dialog === 'new' && <NameModal title="New Project" submitLabel="Create" action={newProject} onClose={() => setDialog(null)} />}
       {dialog === 'saveAs' && <NameModal title="Save Project As" submitLabel="Save As" action={saveProjectAs} onClose={() => setDialog(null)} />}

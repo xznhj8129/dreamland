@@ -25,7 +25,6 @@ User added TODOs (do not remove/change unless done)
     
 - Motor mount holes, set in motor mount section; either single-hole D1 or adjustable D1 and D2 diameters (drone motor mount), hole size, center hole diameter + depth, bolt head diameter and depth (remove all material before for bolt entry)
 
-- Clean up summary formatting, find better location/format for stability analysis
 
 
 ---

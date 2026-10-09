@@ -18,7 +18,7 @@ export function EditorView({ snapshot }: { snapshot: Snapshot | null }): ReactEl
           </button>
           <span className="status">{snapshot?.status ?? 'Connecting...'}</span>
         </div>
-        <ReportPanel report={snapshot?.report ?? []} log={snapshot?.log ?? []} />
+        <ReportPanel pages={snapshot?.report_pages ?? null} log={snapshot?.log ?? []} />
       </section>
       <section className="panel centre-pane">
         <DrawingTabs snapshot={snapshot} />
