@@ -947,6 +947,8 @@ def socket_checks(airframe: Airframe, body: Body) -> list[str]:
     sections, joints = airframe.sections, airframe.fuselage.joints
     problems = []
     for index, (cut, joint) in enumerate(zip(sections.cuts_m, sections.cut_joints)):
+        if joint == "none":  # no female end: the sections butt, nothing enters the skin
+            continue
         ends = {"coupler": ((index, -1.0), (index + 1, 1.0)), "front_male": ((index + 1, 1.0),), "rear_male": ((index, -1.0),)}[joint]
         socket = min(body_half_extents(body, cut)) - joints.socket_wall_m
         for section, direction in ends:

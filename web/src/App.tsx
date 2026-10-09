@@ -4,6 +4,7 @@ import { recompute, startClient, useSnapshot } from './store'
 import { TopBar } from './components/TopBar'
 import { EditorView } from './views/EditorView'
 import { PartEditorView } from './parteditor/PartEditorView'
+import { CadView } from './views/CadView'
 import { PlaceholderView } from './views/PlaceholderView'
 
 const VIEWS = ['Editor', 'Aero Analysis', 'VLM', 'SIM', 'CAD', 'Part Editor'] as const
@@ -41,6 +42,8 @@ export function App(): ReactElement {
           <EditorView snapshot={snapshot} />
         ) : view === 'Part Editor' ? (
           <PartEditorView />
+        ) : view === 'CAD' ? (
+          <CadView />
         ) : (
           <PlaceholderView name={view} />
         )}

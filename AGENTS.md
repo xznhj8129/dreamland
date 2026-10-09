@@ -5,7 +5,10 @@
 This directory is the plane-first tube-aircraft design tool.
 
 Primary files:
-- `guibuilder.py`: Tk window and widget wiring
+- `webbuilder.py`: web front-end entry: starts the local aiohttp server on 127.0.0.1 and opens the browser (`--port`, `--no-browser`)
+- `webapp/`: Python server over `libs/` for the web front-end. `state.py` (one session definition/report/recompute + background aero), `server.py` (routes, `/ws/events` state push, draw/move/model3d/editor/library APIs), `drawing.py` + `drawing_enrich.py` (record the Tk drawing and enrich it: airfoil sections, projected spars, front-view thickness, roll detents, drag handles), `editor.py` (editor context, path edits and structural ops, ports of the Tk editor semantics with source-line citations), `model3d.py` (triangle meshes for the 3D tab), `library.py` (part library payload/save/delete), `serialize.py`; headless suites `test_draw_drag.py`, `test_editor_sync.py`, `test_library.py`
+- `web/`: React + TypeScript + Vite front-end (npm; `web/dist` is what the server serves): `src/editor/` (the nine definition editor tabs), `src/components/` (Simple drawing and the Three.js `ModelView`), `src/parteditor/` (part library tree + editor), `src/views/`; three.js for 3D, uPlot for the motor chart
+- `guibuilder.py`: Tk window and widget wiring — **RETIRING: use the web front-end instead**
 - `libs/airframe.py`: airframe/2 schema loader and validator (the saved aircraft definition) and size preset validation
 - `libs/project.py`: aircraft project layout (`aircraft/<project>/`), open and copy
 - `libs/presets.py`: size presets (`data/presets/<name>.json`) applied to, compared with and saved from a definition
@@ -16,7 +19,7 @@ Primary files:
 - `libs/drawings.py`: blueprint drawings (SVG/PNG) of the printable parts: side cutaway (cut faces hatched), three-view, x-ray (skin see-through)
 - `libs/varsets.py`: FreeCAD varsets, one JSON per varset (Varset_FROM_JSON.FCMacro); every value in exactly one varset
 - `libs/graphics.py`: orthographic drawing on Tk canvas
-- `libs/library_editors.py`: main-window editor panel for the part library `data/parts/`
+- `libs/library_editors.py`: Tk main-window editor panel for the part library `data/parts/` (legacy; the web Part Editor is `web/src/parteditor/` + `webapp/library.py`)
 - `libs/airfoil_analysis.py`: NeuralFoil 2D airfoil comparison and DAT import
 - `libs/views/editor_view.py`: Editor main-view layout and definition editors
 - `libs/views/aero_analysis_view.py`: Aero Analysis main-view layout and NeuralFoil airfoil comparison
@@ -48,28 +51,32 @@ Primary files:
 - Do not silently invent missing aircraft data at runtime.
 - If a field is required, put it in the airframe/2 schema (`libs/airframe.py`, `PLAN.md` section 1) or the part library `data/parts/` and then use it directly.
 - If required data is missing, let it fail visibly.
-- Keep UI behavior documented in `docs/ui/ui_layout.md`, do not detail implementation there, only visible UI.
+- Keep UI behavior documented in `docs/ui/` (one file per Tk view). The web front-end mirrors those views: update the matching doc when visible editor behavior changes.
 - Keep README about design philosophy and analysis staging, not widget details.
 - Keep analysis usable without Tk.
 - INAV always flies a diff file the owner can read and edit. Never compose FC settings from strings in code: templates live in `data/inav/`, the composed diff is written to the project's `inav/generated/`.
 - Keep drawing code in `libs/graphics.py`, not mixed back into `guibuilder.py`.
-- Keep library editor UI in `libs/library_editors.py`, mounted into the main window from `guibuilder.py`.
+- The web front-end is the current UI; new UI work goes in `web/`. The Tk views (`libs/views/`, `libs/library_editors.py`) are legacy: keep them working, do not extend them.
+- Keep web-specific engine adapters in `webapp/`; prefer adapter code there over changing `libs/` (change `libs/` only when the shared engine itself changes — both front-ends see it). Mirror Tk editor semantics when porting (`webapp/editor.py` cites the Tk source lines).
+- The 2D scene is recorded from `libs/graphics.py` unchanged and enriched in `webapp/drawing_enrich.py`; do not fork a second drawing implementation in JS.
+- Web mutations go through the browser store's queued editor calls; element drags use the move-with-draw fast path (geometry-only recompute, no snapshot/WS push per motion; the release syncs the full state).
+- Run the web app under the drone env: `cd web && npm install && npm run build`, then `/home/anon/miniconda3/envs/drone/bin/python webbuilder.py aircraft/example`. Rebuild `web/` after front-end edits and restart the server after `webapp/` edits.
+- Keep the headless suites (`webapp/test_draw_drag.py`, `webapp/test_editor_sync.py`, `webapp/test_library.py`) passing when touching drawing, editor or library paths.
 
 ## Save / Load Contract
 
 - Load opens a project directory (`aircraft/<project>/`); its `aircraft.json` must be airframe/2; everything is recomputed.
 - Save writes the project's `aircraft.json` (the definition only; nothing computed). Save As copies the whole project under a new name, then saves there.
+- Both front-ends share this contract; the web does the same project operations server-side (File menu -> `webapp/server.py`).
 
 ## Current Caveats
 
 - The aero path (`libs/aero.py` `analyze_aero`) is lifting-line wings (AeroSandbox `LiftingLine` algorithm, batched over AoA in `lifting_line_sweep`) plus AeroBuildup bodies, with a Barrowman cross-check. Keep `lifting_line_sweep` equal to `asb.LiftingLine`.
-- AeroSandbox 3D exists in the main center-pane `ASB` tab.
-- VLM sweep exists in the main-window `VLM` view.
-- `Aero Analysis` provides NeuralFoil-backed 2D airfoil comparison plots and summary output.
-- The right side of the `VLM` view uses the selected solved-point controls and a `Show` button that opens the normal external AeroSandbox/PyVista window.
-- The displayed VLM view should come from the actual AeroSandbox draw path, not a custom renderer.
-- That transient VLM cache is display-only and must not be saved to disk.
-- Orthographic drawing is Tk-canvas-native, not CAD geometry.
+- The Tk ASB tab shows AeroSandbox 3D via matplotlib; the web editor's centre tabs are Simple (the enriched recorded scene) and 3D (Three.js, meshes from `webapp/model3d.py`), which replaces ASB for the web.
+- VLM sweep exists in the main-window `VLM` view (Tk). The web VLM is not built yet; when it is, it renders the solved panel/streamline data in-browser (PyVista cannot run server-side).
+- `Aero Analysis` provides NeuralFoil-backed 2D airfoil comparison plots and summary output (Tk today; the web view is not built yet).
+- The Tk `VLM` view's `Show` button opens the external AeroSandbox/PyVista window; the transient VLM cache is display-only and must not be saved to disk.
+- Orthographic drawing starts from the Tk-canvas drawing (`libs/graphics.py`, recorded server-side) and is enriched for the web (`webapp/drawing_enrich.py`): airfoil sections, projected spar geometry, front-view thickness. It is not CAD geometry.
 - Motor geometry uses motorlib stator dimensions plus explicit shaft/base drawing constants.
 
 ## Remember
@@ -77,6 +84,6 @@ Primary files:
 - When adding editable definition fields:
   - add them to the schema in `libs/airframe.py` and to `aircraft/*/aircraft.json`
   - document them in `PLAN.md` section 1
-  - expose them in UI if intended
-  - update `docs/ui/ui_layout.md`
+  - expose them in the web editor (`web/src/editor/`, structural ops and semantics in `webapp/editor.py`) and in the Tk editor only if it is still the intended path
+  - update the matching `docs/ui/<view>.md`
 - Keep `analyze_airframe.py` working as the simplest validation path for definition and analysis changes.

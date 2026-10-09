@@ -2,29 +2,27 @@ User added TODOs (do not remove/change unless done)
 
 - changing xyz positions entry (which specifically, some must stay mm) from abs mm to relative frac to allow scaling without one-by-one mm adjustment
 
+- rename surface "root offset" to "vertical offset"
+
+- surfaces must not start outside fuselage (seperate bodies)
+
+- scroll zoom still hangs until view change (click-drag)
+
+- fuselage cross-sections with different shapes 
+
 - SIM:
-    * "ground throw" starting condition simulating a throw/bungee/catapult, aircraft is fixed at x pitch angle, for x meter distance, launched to x m/s in x seconds on scenario launch trigger
+    * support catapult/rail launch
     * Re-design testing scenarios to be scripts with starting conditions, measurement points and goal/stop conditions
-    * Scenario method of control for Flight Controller SITL is what a pilot would traditionally use: RC channels, MSP/Mavlink commands (complicated)
+    * Scenario method of control for Flight Controller SITL is what a pilot would traditionally use: RC channels.  MSP/Mavlink commands (maybe complicated, not right now)
     * Center pane should have editor for the current INAV Diff
     * Start INAV SITL without flight to allow configurator connection
     * Center pane should have a Scenario text editor where the script can be edited as python
         
 - Hatches (for now simple rounded rectangle polar cut with width, length, gap; fasteners and hinges deferred)
 
-- CAD export options currently stale-ish and confusing, blocking, no status bar or similar
-    * Component fused / Fused OML ~vs~ Export Step, stl, printable sections, cutaway, varsets
-    
-- Parts
-    * Current view a mess, make it a tree with part categories
-
 - Wiring
     * Auto-conduits from wires
     * Wire placement (think drawio, horizontal/vertical)
-    
-- Editor view
-    - Remove the plain line remnant of surfaces (before airfoils were drawn), and draw surfaces thickness from front
-    - Draw outline of spars (dotted) as well as projected circle
     
 - Motor mount holes, set in motor mount section; either single-hole D1 or adjustable D1 and D2 diameters (drone motor mount), hole size, center hole diameter + depth, bolt head diameter and depth (remove all material before for bolt entry)
 

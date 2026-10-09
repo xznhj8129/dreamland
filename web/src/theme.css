@@ -1012,3 +1012,72 @@ button.danger:hover:not(:disabled) {
 .part-group[open] {
   gap: 4px;
 }
+
+/* CAD view (web/src/views/CadView.tsx, libs/views/cad_view.py) */
+.cad-view {
+  height: 100%;
+  overflow: auto;
+  padding: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.cad-view .form-card {
+  flex: 0 0 auto;
+}
+
+.cad-mode {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.cad-mode-option {
+  text-align: left;
+}
+
+.cad-mode-option.active {
+  color: var(--ui-accent);
+  border-color: var(--ui-accent);
+}
+
+.cad-result {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding-top: 4px;
+  border-top: 1px solid var(--ui-border);
+}
+
+.cad-detail {
+  color: var(--ui-accent);
+  overflow-wrap: anywhere;
+}
+
+.cad-files,
+.cad-notes {
+  margin: 0;
+  padding-left: 18px;
+  line-height: 1.45;
+}
+
+.cad-notes {
+  color: var(--ui-warning);
+}
+
+.cad-files a {
+  color: var(--ui-fg);
+  overflow-wrap: anywhere;
+}
+
+.cad-files a:hover {
+  color: var(--ui-accent);
+}
+
+.cad-preview {
+  display: block;
+  max-width: 100%;
+  border: 1px solid var(--ui-border);
+  background: #ffffff;
+}

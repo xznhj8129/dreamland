@@ -6,13 +6,14 @@ import asyncio
 import json
 import traceback
 from pathlib import Path
-from typing import Any, TypeGuard
+from typing import Any, Callable, TypeGuard
 
 from aiohttp import WSCloseCode, WSMsgType, web
 
 from libs.airframe import SCHEMA, AirframeError, blank_definition, parse_airframe
 from libs.geometry import resolve_airframe
 from libs.project import BUILD_FILE, PROJECTS_DIR, ProjectError, copy_project, create_project, open_project
+from webapp import cad as cad_export
 from webapp.drawing import ViewState, draw, ensure_view
 from webapp.editor import OpFailed, SessionMismatch, apply_move, apply_op, apply_set, check_session, context
 from webapp.library import delete_part, library_payload, save_part
@@ -63,6 +64,13 @@ def create_app(state: AppState, dist_dir: Path) -> web.Application:
     app.router.add_post("/api/library/delete", handle_library_delete)
     app.router.add_post("/api/draw", handle_draw)
     app.router.add_post("/api/model3d", handle_model3d)
+    app.router.add_post("/api/cad/step", handle_cad_step)
+    app.router.add_post("/api/cad/stl", handle_cad_stl)
+    app.router.add_post("/api/cad/sections", handle_cad_sections)
+    app.router.add_post("/api/cad/drawings", handle_cad_drawings)
+    app.router.add_post("/api/cad/varsets", handle_cad_varsets)
+    app.router.add_get("/api/cad/files", handle_cad_files)
+    app.router.add_get("/files/{tail:.*}", handle_project_file)  # the active project's own outputs, read-only
     app.router.add_get("/ws/events", handle_events)
     app.router.add_get("/{tail:.*}", handle_dist)  # after the API routes: SPA fallback
     app.on_startup.append(on_startup)
@@ -435,6 +443,105 @@ async def handle_model3d(request: web.Request) -> web.Response:
     if state.resolved is None:
         return web.json_response(snapshot(state), status=409)
     return web.json_response(build_model3d(state.resolved, state.aero))
+
+
+NO_VALID_AIRFRAME = "No valid airframe yet; fix the definition first."
+
+# Explicit types for the CAD outputs the /files route serves; everything else falls back to aiohttp's guess.
+FILE_CONTENT_TYPES = {
+    ".step": "application/step",
+    ".stp": "application/step",
+    ".stl": "model/stl",
+    ".svg": "image/svg+xml",
+    ".png": "image/png",
+    ".json": "application/json",
+}
+
+
+def _refuse_no_airframe(state: AppState) -> web.Response:
+    """The Tk refusal (cad_view.on_export_*): a Log entry plus 400; nothing recomputed, so the push is explicit."""
+    state.log_error("CAD export", NO_VALID_AIRFRAME)
+    state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
+    return _failed(state)
+
+
+async def _run_cad_export(state: AppState, export: Callable[..., dict[str, Any]], *args: Any) -> web.Response:
+    """Run one webapp.cad export in a worker thread (OCCT blocks seconds) and answer with its result JSON.
+
+    Unexpected export failures stay the error middleware's (logged traceback + snapshot). The resolved airframe
+    and project are read here, on the loop, so the thread only touches the values handed to it.
+    """
+    if state.resolved is None:
+        return _refuse_no_airframe(state)
+    return web.json_response(await asyncio.to_thread(export, state.resolved, state.project, *args))
+
+
+async def handle_cad_step(request: web.Request) -> web.Response:
+    """POST /api/cad/step {mode, include_prop_discs}: the whole airframe to cad/<project>.step."""
+    state = _state(request)
+    body = await _json_object(request)
+    mode = body.get("mode", "assembly")
+    if mode not in ("assembly", "fused"):
+        raise web.HTTPBadRequest(text="mode must be 'assembly' or 'fused'")
+    prop_discs = body.get("include_prop_discs", False)
+    if type(prop_discs) is not bool:
+        raise web.HTTPBadRequest(text="include_prop_discs must be a boolean")
+    return await _run_cad_export(state, cad_export.export_step, mode, prop_discs)
+
+
+async def handle_cad_stl(request: web.Request) -> web.Response:
+    """POST /api/cad/stl {include_prop_discs}: the whole airframe as one STL mesh to cad/<project>.stl."""
+    state = _state(request)
+    body = await _json_object(request)
+    prop_discs = body.get("include_prop_discs", False)
+    if type(prop_discs) is not bool:
+        raise web.HTTPBadRequest(text="include_prop_discs must be a boolean")
+    return await _run_cad_export(state, cad_export.export_stl, prop_discs)
+
+
+async def handle_cad_sections(request: web.Request) -> web.Response:
+    """POST /api/cad/sections: printable sections and couplers into cad/sections/; problems go to the Log."""
+    state = _state(request)
+    if state.resolved is None:
+        return _refuse_no_airframe(state)
+    result = await asyncio.to_thread(cad_export.export_sections, state.resolved, state.project)
+    if result["notes"]:
+        state.log_error("Section export", "\n".join(result["notes"]))
+        state.notify()  # the problems must reach the open Log like the Tk status/Log does
+    return web.json_response(result)
+
+
+async def handle_cad_drawings(request: web.Request) -> web.Response:
+    """POST /api/cad/drawings: the cutaway, three-view and x-ray .svg/.png into cad/."""
+    return await _run_cad_export(_state(request), cad_export.export_drawings)
+
+
+async def handle_cad_varsets(request: web.Request) -> web.Response:
+    """POST /api/cad/varsets: one FreeCAD varset JSON per varset into cad/varsets/."""
+    return await _run_cad_export(_state(request), cad_export.export_varsets)
+
+
+async def handle_cad_files(request: web.Request) -> web.Response:
+    """GET /api/cad/files: every existing output under the project's cad/, newest first."""
+    return web.json_response({"files": cad_export.list_files(_state(request).project)})
+
+
+async def handle_project_file(request: web.Request) -> web.StreamResponse:
+    """GET /files/<tail>: the active project's own files, read-only (the UI opens cad/ outputs in a new tab).
+
+    The tail is resolved against the project root and must stay inside it, so no path escapes the active project;
+    anything other than a regular file is 404. no-cache: a re-export overwrites the same URL.
+    """
+    state = _state(request)
+    root = state.project.root.resolve()
+    candidate = (root / request.match_info["tail"]).resolve()
+    if not candidate.is_relative_to(root) or not candidate.is_file():
+        raise web.HTTPNotFound()
+    headers = {"Cache-Control": "no-cache"}
+    content_type = FILE_CONTENT_TYPES.get(candidate.suffix.lower())
+    if content_type is not None:
+        headers["Content-Type"] = content_type
+    return web.FileResponse(candidate, headers=headers)
 
 
 async def handle_events(request: web.Request) -> web.WebSocketResponse:

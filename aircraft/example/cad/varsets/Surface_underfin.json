@@ -1,0 +1,71 @@
+{
+    "Base": {
+        "Label": {
+            "Type": "App::PropertyString",
+            "Value": "'Surface_underfin'"
+        }
+    },
+    "Planform": {
+        "XRootLE": {
+            "Type": "App::PropertyLength",
+            "Value": 520.0,
+            "Unit": "mm"
+        },
+        "Layout": {
+            "Type": "App::PropertyString",
+            "Value": "'1'"
+        },
+        "FinPosition": {
+            "Type": "App::PropertyString",
+            "Value": "'bottom'"
+        },
+        "Root": {
+            "Type": "App::PropertyString",
+            "Value": "'body'"
+        },
+        "RootOffset": {
+            "Type": "App::PropertyFloat",
+            "Value": 0.0
+        },
+        "Span": {
+            "Type": "App::PropertyLength",
+            "Value": 50.0,
+            "Unit": "mm"
+        },
+        "ChordRoot": {
+            "Type": "App::PropertyLength",
+            "Value": 80.0,
+            "Unit": "mm"
+        },
+        "ChordTip": {
+            "Type": "App::PropertyLength",
+            "Value": 50.0,
+            "Unit": "mm"
+        },
+        "SweepLE": {
+            "Type": "App::PropertyAngle",
+            "Value": 30.0,
+            "Unit": "deg"
+        },
+        "Dihedral": {
+            "Type": "App::PropertyAngle",
+            "Value": 0.0,
+            "Unit": "deg"
+        },
+        "Incidence": {
+            "Type": "App::PropertyAngle",
+            "Value": 0.0,
+            "Unit": "deg"
+        },
+        "IncidenceMode": {
+            "Type": "App::PropertyString",
+            "Value": "'symmetric'"
+        }
+    },
+    "Airfoil": {
+        "Name": {
+            "Type": "App::PropertyString",
+            "Value": "'naca0008'"
+        }
+    }
+}

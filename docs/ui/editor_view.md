@@ -271,7 +271,8 @@ SectionsTab [scrollable]  (group title "Sections (cut lines; drag them in the si
         section mm   S<n> from-to
         cut mm       the section's end cut [ui:textbox]; none on the last section
         joint        that cut's joint [ui:dropdown]: coupler (separate coupler, its mass at the cut), front_male (this
-                     section carries the male end), rear_male (the next section does); none on the last section
+                     section carries the male end), rear_male (the next section does), none (the sections butt with no
+                     coupler, spigot or screws); empty on the last section
         solid        [ui:checkbox]  off = hollow shell wall; on = solid less the volumes inside it
         empty g      weighed printed mass [ui:textbox]; blank = calc
         calc         computed printed mass (hollow: shell wall x material density; solid: x print bulk density)

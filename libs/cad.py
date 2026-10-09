@@ -357,7 +357,11 @@ def joint_hole_stations(resolved: ResolvedAirframe, cut_index: int) -> tuple[flo
     joint = resolved.airframe.sections.cut_joints[cut_index]
     if joint == "coupler":
         return cut - joints.hole_edge_dist_m, cut + joints.hole_edge_dist_m
-    return (cut + joints.hole_edge_dist_m,) if joint == "front_male" else (cut - joints.hole_edge_dist_m,)
+    if joint == "front_male":
+        return (cut + joints.hole_edge_dist_m,)
+    if joint == "rear_male":
+        return (cut - joints.hole_edge_dist_m,)
+    return ()  # none: no coupler, no screws
 
 
 def _screw_holes(resolved: ResolvedAirframe, x_m: float) -> list:

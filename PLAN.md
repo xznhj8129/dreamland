@@ -134,13 +134,15 @@ parts[]             library components: name, part (<category>:<name>; category 
                     yaw_deg, pitch_deg, roll_deg optional (default 0): its turn, about z, y, x, roll first, body axes;
                     the first fc part carries the script controller's IMU (its position and axes)
 sections
-  cuts_m[]          cut stations (ascending, inside the fuselage); section i spans cut i-1 .. cut i
+  cuts_m[]          cut stations (ascending, inside the fuselage); section i spans cut i-1 .. cut i; may be empty
+                    (one uncut section: the whole fuselage, no couplers)
   per_section[]     one per section: solid (true: printed solid less the volumes inside it, x print.bulk_density_kg_m3;
                     false: hollow shell wall), empty_mass_kg (optional: weighed printed mass), complete_mass_kg (optional:
                     weighed printed mass + everything attached in the section, which it replaces: points by position,
                     props with their motor, motors with their mount, surface sets where they meet the body: their exposed root LE)
   cut_joints[]      one per cut: coupler (separate coupler into both sections; fuselage.joints.coupler_mass_kg at the
-                    cut), front_male or rear_male (the section ahead of / behind the cut carries the male end, no coupler)
+                    cut), front_male or rear_male (the section ahead of / behind the cut carries the male end, no coupler),
+                    or none (the sections butt with no coupler or spigot; cut them in CAD as needed)
 ```
 
 Body-rooted panels keep the true root edge on the body (follows nose/tail cones) and use an equivalent aero root at the mean body radius under the root chord. Axis-rooted panels start on the axis; Barrowman uses their exposed part.

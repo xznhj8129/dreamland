@@ -62,7 +62,7 @@ THRUST_DIRECTIONS = ("tractor", "pusher")
 SURFACE_PROP_SPINS = ("out", "in")
 SINGLE_PROP_SPINS = ("cw", "ccw")
 JOINT_TYPES = ("radial_screws",)
-CUT_JOINTS = ("coupler", "front_male", "rear_male")  # at a cut: a separate coupler into both sections, or the section ahead / behind carries the male end
+CUT_JOINTS = ("coupler", "front_male", "rear_male", "none")  # at a cut: a separate coupler into both sections, the section ahead / behind carries the male end, or none (the sections butt with no coupler or spigot; reference the seam in CAD)
 REINFORCEMENT_TYPES = ("cf_rod",)
 POLAR_SPLITS = (0, 2)  # rods at each polar position: 0 = one, 2 = a pair either side of it
 CONTROL_KINDS = ("split", "all_moving")

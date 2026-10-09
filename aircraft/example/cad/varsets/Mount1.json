@@ -1,0 +1,48 @@
+{
+    "Base": {
+        "Label": {
+            "Type": "App::PropertyString",
+            "Value": "'Mount1'"
+        }
+    },
+    "Mount": {
+        "On": {
+            "Type": "App::PropertyString",
+            "Value": "'tail'"
+        },
+        "Direction": {
+            "Type": "App::PropertyString",
+            "Value": "'pusher'"
+        },
+        "Spin": {
+            "Type": "App::PropertyString",
+            "Value": "'cw'"
+        },
+        "ThrustTilt": {
+            "Type": "App::PropertyAngle",
+            "Value": 0.0,
+            "Unit": "deg"
+        }
+    },
+    "Pod": {
+        "Diameter": {
+            "Type": "App::PropertyLength",
+            "Value": 35.0,
+            "Unit": "mm"
+        },
+        "FlatLength": {
+            "Type": "App::PropertyLength",
+            "Value": 20.0,
+            "Unit": "mm"
+        },
+        "CurveLength": {
+            "Type": "App::PropertyLength",
+            "Value": 20.0,
+            "Unit": "mm"
+        },
+        "Profile": {
+            "Type": "App::PropertyString",
+            "Value": "'elliptical'"
+        }
+    }
+}
