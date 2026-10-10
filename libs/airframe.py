@@ -24,6 +24,7 @@ from libs.motorlib import DataRepo
 from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS, check_profile, normalize_shape_name
 
 SCHEMA = "airframe/2"
+SECTION_PROFILE_KEYS = ("width_m", "height_m", "shape")
 DATA_DIR = Path(__file__).resolve().parent.parent / "data"
 PARTS_DIR = DATA_DIR / "parts"  # the part library: one <category>.json per category
 PRESETS_DIR = DATA_DIR / "presets"  # size presets: one <name>.json each, in the aircraft definition's own form
@@ -94,6 +95,22 @@ class BodySection:
     height_m: float
     shape: float  # superellipse exponent, 2 = ellipse/circle
     wall_radial_m: float
+
+
+@dataclass(frozen=True)
+class SectionProfile:
+    """Optional cross-section overrides; absent values inherit fuselage.section."""
+    width_m: float | None = None
+    height_m: float | None = None
+    shape: float | None = None
+
+    def resolve(self, default: BodySection) -> BodySection:
+        return BodySection(
+            default.width_m if self.width_m is None else self.width_m,
+            default.height_m if self.height_m is None else self.height_m,
+            default.shape if self.shape is None else self.shape,
+            default.wall_radial_m,
+        )
 
 
 @dataclass(frozen=True)
@@ -281,6 +298,26 @@ class Pod:
 
 
 @dataclass(frozen=True)
+class MotorMountHoles:
+    """Mount-face cuts. D1/D2 are slot-centre circle diameters; single uses D1 as its hole diameter."""
+    pattern: str
+    d1_m: float
+    d2_m: float
+    hole_diameter_m: float
+    center_diameter_m: float
+    center_depth_m: float
+    head_diameter_m: float
+    head_depth_m: float  # seat distance inward from the mounting face; access is cleared behind it
+
+    def segments_m(self) -> tuple[tuple[tuple[float, float], tuple[float, float]], ...]:
+        if self.pattern == "single":
+            return (((0.0, 0.0), (0.0, 0.0)),)
+        return tuple(((y * self.d1_m / 2.0, z * self.d1_m / 2.0),
+                      (y * self.d2_m / 2.0, z * self.d2_m / 2.0))
+                     for y, z in ((1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0)))
+
+
+@dataclass(frozen=True)
 class Mount:
     on: str
     surface: str | None
@@ -290,6 +327,7 @@ class Mount:
     spin: str  # SURFACE_PROP_SPINS on a surface, SINGLE_PROP_SPINS on the nose or tail
     thrust_axis_tilt_deg: float  # thrust line tilted up (+z) from the body axis, e.g. to pass through the CG
     pod: Pod | None
+    holes: MotorMountHoles | None = None
 
 
 @dataclass(frozen=True)
@@ -386,6 +424,8 @@ class FuselageSection:
     solid: bool  # printed solid less the volumes inside it; False = hollow tube (shell wall)
     empty_mass_kg: float | None  # weighed printed mass; None = computed
     complete_mass_kg: float | None  # weighed printed mass + everything positioned in the section; None = itemised
+    fixed_length: bool = False  # preserve this section's length during automatic editor resizing
+    section: SectionProfile = SectionProfile()
 
 
 @dataclass(frozen=True)
@@ -1003,6 +1043,26 @@ def _wire_run(data: dict, path: str, parts_data: dict) -> WireRun:
     return WireRun(gauge_awg=gauge, conductors=conductors, plugs=tuple(plugs))
 
 
+def _motor_mount_holes(data: dict, path: str) -> MotorMountHoles:
+    fields = _Fields(data, path)
+    holes = MotorMountHoles(
+        pattern=fields.choice("pattern", ("single", "radial_slots")),
+        d1_m=fields.positive("d1_m"), d2_m=fields.positive("d2_m"),
+        hole_diameter_m=fields.positive("hole_diameter_m"),
+        center_diameter_m=fields.number("center_diameter_m", minimum=0.0),
+        center_depth_m=fields.number("center_depth_m", minimum=0.0),
+        head_diameter_m=fields.number("head_diameter_m", minimum=0.0),
+        head_depth_m=fields.number("head_depth_m", minimum=0.0),
+    )
+    fields.done()
+    if holes.pattern == "radial_slots" and holes.d2_m < holes.d1_m:
+        raise AirframeError(f"{path}.d2_m: must be >= D1")
+    hole_size = holes.d1_m if holes.pattern == "single" else holes.hole_diameter_m
+    if holes.head_diameter_m and holes.head_diameter_m < hole_size:
+        raise AirframeError(f"{path}.head_diameter_m: must be >= the fastening hole diameter")
+    return holes
+
+
 def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], parts: tuple[PlacedPart, ...], volumes: dict[str, Volume], parts_data: dict) -> Propulsion:
     fields = _Fields(data, path)
     motor_fields = _Fields(fields.required("motor"), fields.at("motor"))
@@ -1061,9 +1121,11 @@ def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], parts: tup
                 check_profile(pod.profile, pod.curve_length_m, pod.diameter_m / 2.0)
             except ValueError as error:
                 raise AirframeError(f"{mount_fields.at('pod')}: {error}") from error
+        holes_data = mount_fields.optional("holes", None)
+        holes = None if holes_data is None else _motor_mount_holes(holes_data, mount_fields.at("holes"))
         mount_fields.done()
         mounts.append(Mount(on=on, surface=surface_name, span_position_m=span_position_m, x_offset_m=x_offset_m, direction=direction, spin=spin,
-                            thrust_axis_tilt_deg=thrust_axis_tilt_deg, pod=pod))
+                            thrust_axis_tilt_deg=thrust_axis_tilt_deg, pod=pod, holes=holes))
     if not mounts:
         raise AirframeError(f"{fields.at('mounts')}: at least one mount is required")
     wiring_fields = _Fields(fields.required("wiring"), fields.at("wiring"))
@@ -1132,12 +1194,28 @@ def load_presets(parts_data: dict) -> dict[str, Preset]:
     return {path.stem: _preset(json.loads(path.read_text()), path.stem, parts_data) for path in sorted(PRESETS_DIR.glob("*.json"))}
 
 
-def _fuselage_section(data: dict, path: str) -> FuselageSection:
+def _section_profile(data: dict, path: str, default: BodySection) -> SectionProfile:
+    fields = _Fields(data, path)
+    profile = SectionProfile(
+        width_m=fields.positive("width_m") if "width_m" in data else None,
+        height_m=fields.positive("height_m") if "height_m" in data else None,
+        shape=fields.number("shape", minimum=1.0) if "shape" in data else None,
+    )
+    fields.done()
+    resolved = profile.resolve(default)
+    if min(resolved.width_m, resolved.height_m) <= 2.0 * resolved.wall_radial_m:
+        raise AirframeError(f"{path}: width/height leaves no internal space with wall {resolved.wall_radial_m} m")
+    return profile
+
+
+def _fuselage_section(data: dict, path: str, default: BodySection) -> FuselageSection:
     fields = _Fields(data, path)
     section = FuselageSection(
         solid=fields.flag("solid"),
         empty_mass_kg=None if "empty_mass_kg" not in fields.data else fields.positive("empty_mass_kg"),
         complete_mass_kg=None if "complete_mass_kg" not in fields.data else fields.positive("complete_mass_kg"),
+        fixed_length=fields.flag("fixed_length") if "fixed_length" in fields.data else False,
+        section=_section_profile(fields.optional("section", {}), fields.at("section"), default),
     )
     fields.done()
     return section
@@ -1235,7 +1313,7 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     rows = sections_fields.required("per_section")
     if type(rows) is not list or len(rows) != len(cuts) + 1:
         raise AirframeError(f"{sections_fields.at('per_section')}: needs one entry per section ({len(cuts) + 1})")
-    per_section = tuple(_fuselage_section(row, f"{sections_fields.at('per_section')}[{index}]") for index, row in enumerate(rows))
+    per_section = tuple(_fuselage_section(row, f"{sections_fields.at('per_section')}[{index}]", fuselage.section) for index, row in enumerate(rows))
     cut_joints = sections_fields.required("cut_joints")
     if type(cut_joints) is not list or len(cut_joints) != len(cuts) or any(joint not in CUT_JOINTS for joint in cut_joints):
         raise AirframeError(f"{sections_fields.at('cut_joints')}: needs one of {list(CUT_JOINTS)} per cut ({len(cuts)}), got {cut_joints!r}")
@@ -1324,7 +1402,7 @@ def blank_definition(name: str) -> dict:
         "surfaces": [],
         "volumes": [],
         "parts": [],
-        "sections": {"cuts_m": [], "per_section": [{"solid": False}], "cut_joints": []},
+        "sections": {"cuts_m": [], "per_section": [{"solid": False, "section": {}}], "cut_joints": []},
     }
 
 

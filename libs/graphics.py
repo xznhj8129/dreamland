@@ -13,7 +13,7 @@ import math
 from typing import Any
 
 from libs.airframe import BOX_SHAPES
-from libs.geometry import PROP_SHAFT_LEN_M, ResolvedAirframe, body_half_extents, deflected_outline, superellipse_radius
+from libs.geometry import PROP_SHAFT_LEN_M, ResolvedAirframe, body_half_extents, body_section_at, deflected_outline, superellipse_radius
 
 PROP_SHAFT_DIAM_M = 0.005
 MOTOR_BASE_DIAM_FACTOR = 0.5
@@ -128,7 +128,7 @@ def volume_projected_half(resolved: ResolvedAirframe, volume, roll_rad: float) -
     section, a cylinder's support is half-length x |cos| + radius x sin of its axis to the view's transverse axis)."""
     _half_x, half_y, half_z = volume_half_extents(resolved, volume)
     if volume.shape == "bore":
-        return section_projected_half(half_y, half_z, resolved.body.shape, roll_rad)
+        return section_projected_half(half_y, half_z, body_section_at(resolved.body, volume.x_m).shape, roll_rad)
     if volume.shape == "cylinder":
         along = {"x": 0.0, "y": math.sin(roll_rad), "z": math.cos(roll_rad)}[volume.axis]
         return volume.length_m / 2.0 * abs(along) + volume.diameter_m / 2.0 * math.sqrt(1.0 - along * along)
@@ -254,7 +254,7 @@ def draw_longitudinal_view(canvas: Any, resolved: ResolvedAirframe, aero, roll_d
     top_points = []
     bottom_points = []
     for station in body.stations:
-        half = section_projected_half(station.width_m / 2.0, station.height_m / 2.0, body.shape, roll_rad)
+        half = section_projected_half(station.width_m / 2.0, station.height_m / 2.0, station.shape, roll_rad)
         top_points.extend((x_to_screen(station.x_m), transverse_to_screen(half)))
         bottom_points.extend((x_to_screen(station.x_m), transverse_to_screen(-half)))
     canvas.create_line(top_points, fill=ui_draw, width=2)
@@ -313,7 +313,7 @@ def draw_longitudinal_view(canvas: Any, resolved: ResolvedAirframe, aero, roll_d
     sections = resolved.airframe.sections
     for index, cut in enumerate(sections.cuts_m):
         half_w, half_h = body_half_extents(body, cut)
-        half = section_projected_half(half_w, half_h, body.shape, roll_rad) * scale + CUT_OVERHANG_PX
+        half = section_projected_half(half_w, half_h, body_section_at(body, cut).shape, roll_rad) * scale + CUT_OVERHANG_PX
         canvas.create_line(x_to_screen(cut), center_y - half, x_to_screen(cut), center_y + half, fill=CUT_COLOR, width=3, dash=(6, 3), tags=("drag", f"cut:{index}"))
     for index, section in enumerate(resolved.sections):
         x0, x1 = section.x0_m, section.x1_m
@@ -321,7 +321,7 @@ def draw_longitudinal_view(canvas: Any, resolved: ResolvedAirframe, aero, roll_d
         label = f"S{index + 1} {section.empty_kg * 1000.0:.0f} g{computed}\n{(x1 - x0) * 1000.0:.0f} mm{' solid' if section.solid else ''}"
         if section.complete_kg is not None:
             label += f"\n{section.complete_kg * 1000.0:.0f} g all"
-        canvas.create_text(x_to_screen((x0 + x1) / 2.0), transverse_to_screen(0.0) + section_projected_half(*body_half_extents(body, (x0 + x1) / 2.0), body.shape, roll_rad) * scale + 4,
+        canvas.create_text(x_to_screen((x0 + x1) / 2.0), transverse_to_screen(0.0) + section_projected_half(*body_half_extents(body, (x0 + x1) / 2.0), body_section_at(body, (x0 + x1) / 2.0).shape, roll_rad) * scale + 4,
                            anchor="n", text=label, fill=CUT_COLOR, font=("TkDefaultFont", 8), justify="center")
 
     for motor in resolved.motors:
@@ -386,11 +386,11 @@ def draw_front_view(canvas: Any, resolved: ResolvedAirframe, aero, ui_draw: str,
             canvas.create_line(center_x + panel.root_le[1] * scale, center_y - panel.root_le[2] * scale,
                                center_x + panel.tip_le[1] * scale, center_y - panel.tip_le[2] * scale, fill=ui_draw, width=2)
     body = resolved.body
-    widest = max(body.stations, key=lambda station: station.width_m)
     outline = []
     for index in range(SECTION_OUTLINE_SAMPLES + 1):
         angle = 2.0 * math.pi * index / SECTION_OUTLINE_SAMPLES
-        radius = superellipse_radius(widest.width_m / 2.0, widest.height_m / 2.0, body.shape, angle)
+        radius = max(superellipse_radius(station.width_m / 2.0, station.height_m / 2.0, station.shape, angle)
+                     for station in body.stations if min(station.width_m, station.height_m) > 0.0)
         outline.extend((center_x + radius * math.cos(angle) * scale, center_y - radius * math.sin(angle) * scale))
     canvas.create_line(outline, fill=ui_draw, width=2)
     for volume in resolved.airframe.volumes:
@@ -403,7 +403,7 @@ def draw_front_view(canvas: Any, resolved: ResolvedAirframe, aero, ui_draw: str,
             outline = []
             for index in range(SECTION_OUTLINE_SAMPLES + 1):
                 angle = 2.0 * math.pi * index / SECTION_OUTLINE_SAMPLES
-                radius = superellipse_radius(half_y, half_z, body.shape, angle)
+                radius = superellipse_radius(half_y, half_z, body_section_at(body, volume.x_m).shape, angle)
                 outline.extend((x_screen + radius * math.cos(angle) * scale, y_screen - radius * math.sin(angle) * scale))
             canvas.create_line(outline, fill=VOLUME_COLOR, width=1, dash=(4, 2))
         elif volume.shape == "cylinder" and volume.axis == "x":

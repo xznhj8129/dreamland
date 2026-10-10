@@ -11,6 +11,7 @@ import {
   formatLibraryValue,
   libraryParseMessage,
   parseLibraryValue,
+  parseLibraryVector,
   pathKeyOf,
   removePath,
   setPath,
@@ -228,6 +229,11 @@ export function PartEditorView(): ReactElement {
     for (const leaf of collectLeaves(buildLibraryNodes(work.values, work.category, payload))) {
       const key = pathKeyOf(leaf.path)
       const edit = work.edits[key]
+      if (edit?.components !== undefined) {
+        try { setPath(values, leaf.path, parseLibraryVector(edit.components)) }
+        catch (error) { errors[key] = libraryParseMessage(error) }
+        continue
+      }
       if (leaf.optionalKind !== null) {
         const text = edit?.text ?? ''
         if (text.trim() === '') {
@@ -310,6 +316,7 @@ export function PartEditorView(): ReactElement {
         <section className="panel part-tree-pane">
           <div className="part-tree-head">
             <span className="status">Part library</span>
+            <button type="button" disabled={busy || !canNew} onClick={onNew}>New part</button>
             <span className="status">
               {totalParts} parts in {payload?.categories.length ?? 0} categories
             </span>
@@ -330,7 +337,7 @@ export function PartEditorView(): ReactElement {
         </section>
         <section className="panel part-editor-pane">
           {work === null || payload === null ? (
-            <div className="placeholder">{loadError === '' ? 'Select a part in the tree, or press New.' : loadError}</div>
+            <div className="placeholder">{loadError === '' ? 'Select a library component to edit, or choose New part.' : loadError}</div>
           ) : (
             <>
               <section className="form-card">

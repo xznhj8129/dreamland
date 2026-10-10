@@ -1,4 +1,4 @@
-# quadrocketbuilder (GUIBuilder)
+# Dreamland
 
 A design tool for small tube-bodied drone airframes: a fuselage tube made of modules, wing and fin sets bolted onto it, motors, props, battery and ballast inside. You assemble the aircraft from parts you have (or intend to have), and the tool works out mass, balance, propulsion and aerodynamics, draws it, and exports geometry for CAD and printing.
 
@@ -19,6 +19,7 @@ Dependencies (aerosandbox, neuralfoil, cadquery, pandas, numpy, threadpoolctl) l
 ```
 cd web && npm install && npm run build                        # once, and after front-end edits
 python webbuilder.py aircraft/example                         # web UI
+python webbuilder.py aircraft/example --host 0.0.0.0 --no-browser # phone/LAN access on port 8765
 python webbuilder.py aircraft/quadlancer62
 python analyze_airframe.py aircraft/m62v2                     # same analysis, text report
 python analyze_airframe.py aircraft/m62v2 --aoa 5 --airspeed 20 --sweep
@@ -27,14 +28,18 @@ python analyze_airframe.py aircraft/m62v2 --export-sections   # printable sectio
 python analyze_airframe.py aircraft/m62v2 --export-varsets     # FreeCAD varsets into cad/varsets/
 python analyze_airframe.py aircraft/m62v2 --export-drawings    # blueprint drawings: cad/cutaway, threeview, xray (.svg and .png)
 python aero_check.py                                          # live lifting line vs asb.LiftingLine, per-surface info
-python sim_inav.py hover aircraft/m62v1                       # INAV SITL on JSBSim: hover (VTOL)
-python sim_inav.py efficiency aircraft/quadlancer62           # speed sweep: Wh/km, slowest level speed, range, endurance
-python sim_inav.py efficiency aircraft/m62v1 --start ground   # take off and transition first (VTOL)
-python sim_inav.py top-speed aircraft/m62v1 --inav-config aircraft/m62v1/inav/m62v1_2025-08-20.txt
-python sim_inav.py controls aircraft/simpleplane              # stick steps: each axis moves the commanded way
-python sim_inav.py glide aircraft/testglide                   # motors off: smallest sink rate and best glide
-python sim_inav.py glide aircraft/simpleplane --alt 600 --heading 90 --wind-from 270 --wind-speed 5   # set the start
-python sim_script.py aircraft/simpleplane level --duration 120   # fly a controller script from the project's controllers/
+python sim_flight.py aircraft/m62v1 hover --controller inav     # INAV SITL on JSBSim: hover (VTOL)
+python sim_flight.py aircraft/quadlancer62 efficiency --controller inav # speed sweep: Wh/km, range, endurance
+python sim_flight.py aircraft/m62v1 efficiency --controller inav --start ground # take off and transition first
+python sim_flight.py aircraft/m62v1 top-speed --controller inav --inav-config aircraft/m62v1/inav/m62v1_2025-08-20.txt
+python sim_flight.py aircraft/simpleplane controls --controller inav # stick steps checked against motion
+python sim_flight.py aircraft/testglide glide --controller inav # motors off: smallest sink rate and best glide
+python sim_flight.py aircraft/simpleplane glide --controller inav --alt 600 --heading 90 --wind-from 270 --wind-speed 5
+python sim_flight.py aircraft/example acro_climb --controller inav --clock stepped-faster
+python sim_flight.py aircraft/example configurator --controller inav # disarmed, TCP 5761
+python sim_flight.py aircraft/m62v1 experiment --controller inav
+python sim_flight.py aircraft/example stability --controller mcu --clock stepped
+python sim_flight.py aircraft/simpleplane level --controller mcu --duration 120
 ```
 
 Each aircraft is a project directory, opened as an argument or with File → Load; Save As copies the whole project under a new name. `aircraft/` is gitignored except `aircraft/example` (a copy of simpleplane); the other names above are local projects:
@@ -44,14 +49,18 @@ aircraft/<project>/
     aircraft.json   the definition (airframe/2)
     inav/           INAV diffs: real FC dumps, and SITL diffs flown as written
       generated/    the diff a run flies, written from the design or a real FC dump (templates in data/inav/); copy into inav/ to edit
-    sitl/           SITL.elf (copied in from inav_development on the first run, then pinned), eeprom.bin, sitl.log
+    sitl/           eeprom.bin, sitl.log; firmware is shared: inav-claude/inav/build_sitl/bin/SITL.elf (--sitl overrides it)
     jsbsim/         JSBSim export
     logs/           SITL and script flight logs and plots
     cad/            STEP / STL exports, blueprint drawings: cutaway, threeview, xray (.svg / .png)
       sections/     printable sections S01.. and couplers C01.., STEP and STL
       varsets/      FreeCAD varsets, one JSON per varset
-    controllers/    flight controller scripts: setup()/loop() against simulated hardware in raw units (libs/controller.py)
+    scenarios/      one run(flight) convention; overrides of data/scenarios/<controller>/*.py
+      inav/         scripts importing controllers.inav
+      mcu/          scripts importing controllers.mcu; raw sensor/PWM scripts use the same flight API
 ```
+
+Every scenario defines `run(flight)`. Controller commands come from `from controllers import inav as controller` or `mcu`; simulation state, conditions, raw sensors, scheduling and recording are shared (`libs/scenario.py`, `libs/sensors.py`). `experiment` is an INAV example; `stability` is an MCU PWM example. MCU control logic lives in the script, reading raw sensors and writing PWM; the backend has no autopilot or mixer. Optional `START`, `PARAMETERS`, `TELEMETRY` and `LOG_FIELDS` declare conditions, parameters and recording.
 
 The GUI's SIM view runs the same simulations with a live plot of the flight log; STEP/STL export is in its CAD view. Tube size presets (tube62, tube75: section, joints, rods) are loaded, saved and created in the Fuselage tab.
 
@@ -87,7 +96,7 @@ The Barrowman CP line is a rocket-style estimate shown as a cross-check; if it d
 1. **Resolve.** The aircraft definition becomes geometry (body stations, wing panels, motors and pods) and point masses: every printed section, coupler, rod, wing set, motor, prop and volume at its real position. That gives total mass, CG (a CG range when a volume's mass is a range) and the inertia tensor. Printed parts are estimated from geometry (fuselage sections: hollow = shell wall x material density, solid = outer volume less the volumes inside it x the print bulk density; wings and fins: solid airfoil volume x that bulk density, calibrated on a weighed printed segment) and the estimate is shown next to any weighed value. A section can also take a weighed complete mass, which replaces it and everything attached in it.
 2. **Propulsion.** motorlib (`libs/motorlib`, the rcplanes.online calculator's motor and prop data and formulas, used as published) for the chosen motor, prop and battery, with the resistance from the cells to each motor worked out from the design (pack, wire runs from the parts' positions, plugs, ESC), gives static thrust, current, power, thrust/weight, hover point (VTOL) and flight time. Throttle is INAV's motor output, i.e. ESC duty.
 3. **Aerodynamics (live, ~1.5 s): lifting line + bodies.** AeroSandbox's lifting line for all wings and fins, with body-mounted panels carried through the body to the axis, plus AeroSandbox AeroBuildup for the fuselage, pods and motors. It includes downwash from front surfaces onto rear ones, lift carried across the body, airfoil camber and stall at the actual Reynolds number (NeuralFoil section polars). It is AeroSandbox's `LiftingLine` algorithm solved for the whole AoA sweep at once. The neutral point comes from a straight-line fit of pitch moment against lift over ±4° around the operating point.
-4. **JSBSim export (`libs/jsbsim.py`).** Mass, CG, inertia, contact points, motors with spin and thrust tilt, the same fitted motor and prop tables, full-range AeroBuildup aero tables over airspeed (see `TODO.md` F for the real m62v1 comparison), control surfaces driven by INAV servo outputs, plus INAV mixer profiles by aircraft type (tailsitter: hover and forward flight; fixed-wing or glider: AIRPLANE) with a servo mix whose signs come from each surface's computed moments. `sim_inav.py` flies it in INAV SITL on `inav-jsbsim-bench`; m62v1 hovers at the predicted motor command.
+4. **JSBSim export (`libs/jsbsim.py`).** Mass, CG, inertia, contact points, motors with spin and thrust tilt, the same fitted motor and prop tables, the editor’s lifting-line + body model in forward flight, blended to AeroBuildup for the outer envelope (sideslip increments and rate damping remain AeroBuildup), control surfaces driven by INAV servo outputs, plus INAV mixer profiles by aircraft type (tailsitter: hover and forward flight; fixed-wing or glider: AIRPLANE) with a servo mix whose signs come from each surface's computed moments. `sim_flight.py --controller inav` flies it in INAV SITL on `inav-jsbsim-bench`; m62v1 hovers at the predicted motor command.
 5. **Barrowman cross-check.** The OpenRocket method for nose plus fins, with each fin weighted by how much it faces the pitch plane, so vertical fins add no pitch stability.
 
 Other views:

@@ -70,7 +70,7 @@ export function WiringTab({ snapshot }: { snapshot: Snapshot }): ReactElement {
 
   const resolved = snapshot.resolved
   const wires = resolved !== null && isObject(resolved.wires) ? resolved.wires : null
-  const current = wires !== null && Array.isArray(wires.motors) && wires.motors.length === motorRuns.length
+  const current = snapshot.definition_valid && wires !== null && Array.isArray(wires.motors) && wires.motors.length === motorRuns.length
   const resolvedMotors = resolved !== null && Array.isArray(resolved.motors) ? resolved.motors : []
   const names: string[] = current
     ? resolvedMotors.map((motor) => (isObject(motor) && typeof motor.name === 'string' ? motor.name : 'motor'))
@@ -90,21 +90,9 @@ export function WiringTab({ snapshot }: { snapshot: Snapshot }): ReactElement {
   const gauges = context.wire_gauges.map(String)
 
   return (
-    <Card title="Wire runs (auto-routed: along the axes, wing motors inside their panel; drawn in the side view)">
-      <table className="wiring-table">
-        <thead>
-          <tr>
-            {context.wiring_columns.map((column) => (
-              <th key={column}>{column}</th>
-            ))}
-          </tr>
-        </thead>
-        <tbody>
-          {rows.map((row) => (
-            <WireRow key={row.label} row={row} gauges={gauges} battery={row.label === 'battery -> ESC' ? battery : null} />
-          ))}
-        </tbody>
-      </table>
+    <Card title="Wire runs">
+      <p className="form-hint">Routes follow the axes and run inside wing panels. Lengths update from the component positions.</p>
+      {rows.map(row => <WireRow key={row.label} row={row} gauges={gauges} battery={row.label === 'battery -> ESC' ? battery : null} />)}
     </Card>
   )
 }
@@ -123,29 +111,26 @@ function WireRow({ row, gauges, battery }: WireRowProps): ReactElement {
   const plugs = Array.isArray(row.run.plugs) ? row.run.plugs.filter((plug): plug is string => typeof plug === 'string') : []
 
   return (
-    <tr>
-      <td>{row.label}</td>
-      <td>{row.route === null ? '-' : (routeLengthM(row.route) * 1000.0).toFixed(0)}</td>
-      <td>
+    <fieldset className="form-group wire-run">
+      <legend>{row.label}</legend>
+      <p className="wire-length">Route length: {row.route === null ? 'Unavailable' : `${(routeLengthM(row.route) * 1000.0).toFixed(0)} mm`}</p>
         <ChoiceField
-          showLabel={false}
-          width={4}
+          label="Wire gauge (AWG)"
           path={[...row.path, 'gauge_awg']}
           value={row.run.gauge_awg}
           options={gauges}
           convert={Number}
         />
-      </td>
-      <td>
-        <EntryField showLabel={false} width={3} path={[...row.path, 'conductors']} unitKey="conductors" />
-      </td>
-      <td className="wiring-plugs">
+        <EntryField label="Conductors" path={[...row.path, 'conductors']} unitKey="conductors" />
+      <div className="form-label">Connectors, in route order</div>
+      <div className="wiring-plugs">
         {/* 653-655: the battery's own connector comes first, set in its part library entry (or the custom pack). */}
-        {battery !== null && <span className="plug-fixed">{batteryConnector(battery, context)}</span>}
+        {battery !== null && <span className="plug-fixed">Pack: {batteryConnector(battery, context)}</span>}
         {plugs.map((plug, index) => (
           <select
             key={index}
             className="field-input plug-select"
+            aria-label={`${row.label} connector ${index + 1}`}
             value={plug}
             onChange={(event) => {
               const choice = event.target.value
@@ -161,8 +146,8 @@ function WireRow({ row, gauges, battery }: WireRowProps): ReactElement {
           </select>
         ))}
         <AddPlug path={row.path} plugs={plugs} />
-      </td>
-    </tr>
+      </div>
+    </fieldset>
   )
 }
 
@@ -175,6 +160,7 @@ function AddPlug({ path, plugs }: { path: Path; plugs: string[] }): ReactElement
   return (
     <select
       className="field-input plug-select"
+      aria-label="Add connector"
       value={choice}
       onChange={(event) => {
         const picked = event.target.value

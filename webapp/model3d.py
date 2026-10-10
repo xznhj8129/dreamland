@@ -18,10 +18,10 @@ from typing import Any
 
 from libs.airframe import BATTERY_PART_NAME, BOX_SHAPES
 from libs.geometry import (
-    PROP_SHAFT_LEN_M, ResolvedAirframe, chord_direction, cross, dot, superellipse_radius,
+    PROP_SHAFT_LEN_M, BodyStation, ResolvedAirframe, body_section_at, chord_direction, cross, dot, superellipse_radius,
     thickness_direction, unit,
 )
-from libs.graphics import PROP_SHAFT_DIAM_M, marker_positions, part_corners, volume_half_extents
+from libs.graphics import PROP_SHAFT_DIAM_M, marker_positions, part_corners
 from webapp.drawing_enrich import airfoil_profile, section_points
 
 BODY_SAMPLES = 32
@@ -60,7 +60,7 @@ def build_model3d(resolved: ResolvedAirframe, aero: Any | None) -> dict[str, Any
     back to the fuselage extents when nothing could be built.
     """
     meshes: list[dict[str, Any]] = []
-    _try_mesh(meshes, lambda: _mesh("body", "body", *_body_mesh(resolved.body), BODY_COLOR))
+    _try_mesh(meshes, lambda: _mesh("body", "body", *_body_mesh(resolved.body.stations), BODY_COLOR))
     for surface_index, surface_set in enumerate(resolved.surfaces):
         color = PANEL_COLORS[surface_index % len(PANEL_COLORS)]
         definition = surface_set.definition.control
@@ -198,21 +198,21 @@ def _octahedron(center, radius: float) -> tuple[list, list]:
     return positions, indices
 
 
-def _body_mesh(body) -> tuple[list, list]:
+def _body_mesh(stations: tuple[BodyStation, ...]) -> tuple[list, list]:
     """Loft the body stations into a ring tube with nose/tail cap fans (superellipse sections, 32 samples)."""
     rings = []
-    for station in body.stations:
+    for station in stations:
         half_width, half_height = station.width_m / 2.0, station.height_m / 2.0
         ring = []
         for index in range(BODY_SAMPLES):
             angle = 2.0 * math.pi * index / BODY_SAMPLES
-            radius = superellipse_radius(half_width, half_height, body.shape, angle) if half_width > 0.0 and half_height > 0.0 else 0.0
+            radius = superellipse_radius(half_width, half_height, station.shape, angle) if half_width > 0.0 and half_height > 0.0 else 0.0
             ring.append((station.x_m, radius * math.cos(angle), radius * math.sin(angle)))
         rings.append(ring)
     positions = [point for ring in rings for point in ring]
     nose_cap, tail_cap = len(positions), len(positions) + 1
-    positions.append((body.stations[0].x_m, 0.0, 0.0))
-    positions.append((body.stations[-1].x_m, 0.0, 0.0))
+    positions.append((stations[0].x_m, 0.0, 0.0))
+    positions.append((stations[-1].x_m, 0.0, 0.0))
     indices: list[int] = []
     for first, second in zip(range(len(rings) - 1), range(1, len(rings))):
         for index in range(BODY_SAMPLES):
@@ -324,8 +324,12 @@ def _volume_mesh(resolved: ResolvedAirframe, volume) -> tuple[list, list]:
         half = volume.length_m / 2.0
         return _cylinder(tuple(c - half * a for c, a in zip(center, axis)), tuple(c + half * a for c, a in zip(center, axis)), volume.diameter_m / 2.0)
     if volume.shape == "bore":
-        half_x, half_y, half_z = volume_half_extents(resolved, volume)
-        return _cylinder((volume.x_m - half_x, volume.y_m, volume.z_m), (volume.x_m + half_x, volume.y_m, volume.z_m), min(half_y, half_z))
+        x0, x1 = volume.x_m - volume.length_m / 2.0, volume.x_m + volume.length_m / 2.0
+        xs = [x0, *(station.x_m for station in resolved.body.stations if x0 < station.x_m < x1), x1]
+        wall = resolved.airframe.fuselage.section.wall_radial_m
+        stations = tuple(BodyStation(x, max(section.width_m - 2.0 * wall, 0.0), max(section.height_m - 2.0 * wall, 0.0), section.shape)
+                         for x in xs for section in (body_section_at(resolved.body, x),))
+        return _body_mesh(stations)
     if volume.shape == "point":
         return _octahedron(center, POINT_RADIUS_M)
     raise ValueError(f"unknown volume shape {volume.shape!r}")

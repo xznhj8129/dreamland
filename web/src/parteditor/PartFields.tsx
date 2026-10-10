@@ -1,12 +1,13 @@
 import { useId } from 'react'
 import type { ChangeEvent, ReactElement } from 'react'
 import type { LibraryPayload } from '../types'
-import { formatLibraryValue, libraryFieldLabel, pathKeyOf } from './library'
+import { formatLibraryValue, libraryFieldLabel, pathKeyOf, VECTOR_AXES } from './library'
 import type { LibraryNode } from './library'
 
 export interface FieldEdit {
   text?: string
   checked?: boolean
+  components?: string[]
 }
 
 interface FieldNodeProps {
@@ -67,13 +68,25 @@ function FieldRow({ node, payload, edits, errors, onEdit }: FieldRowProps): Reac
         <div className="form-control">
           <label className="check-row">
             <input type="checkbox" checked={checked} onChange={(event) => onEdit(key, { checked: event.target.checked })} />
-            <span className="part-bool-value">{checked ? 'true' : 'false'}</span>
+            <span className="part-bool-value">{checked ? 'Yes' : 'No'}</span>
           </label>
         </div>
       </div>
     )
   }
 
+  const axes = VECTOR_AXES[node.key]
+  if (axes && Array.isArray(node.value) && node.value.length === axes.length) {
+    const components = edit?.components ?? node.value.map(String)
+    return <fieldset className="form-group library-vector">
+      <legend>{label}</legend>
+      <div className="vector-fields">{axes.map((axis, index) => <label key={axis}>
+        <span>{axis}</span><input className="field-input" value={components[index]} aria-label={`${label} ${axis}`}
+          onChange={event => onEdit(key, { components: components.map((value, position) => position === index ? event.target.value : value) })} />
+      </label>)}</div>
+      {error !== undefined && <div className="field-error">{error}</div>}
+    </fieldset>
+  }
   const text = edit?.text ?? formatLibraryValue(node.key, node.value, payload)
   const onChange = (event: ChangeEvent<HTMLInputElement>): void => onEdit(key, { text: event.target.value })
   return (

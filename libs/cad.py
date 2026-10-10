@@ -14,7 +14,7 @@ import math
 
 from libs.airframe import BOX_SHAPES, ControlSurface
 from libs.geometry import (
-    Body, CarryThroughArm, Panel, ResolvedAirframe, body_half_extents, build_body, carry_through_front_profile, carry_through_side_profile,
+    Body, CarryThroughArm, Panel, ResolvedAirframe, body_half_extents, body_section_at, build_body, carry_through_front_profile, carry_through_side_profile,
     chord_direction, control_cut_frames, section_index, superellipse_radius, thickness_direction,
 )
 
@@ -74,10 +74,10 @@ def _airfoil_section_coordinates(airfoil_name: str):
     return [(float(x), float(y)) for x, y in coordinates]
 
 
-def _clipped_stations(body: Body, x0: float, x1: float) -> list[tuple[float, float, float]]:
-    """(x, half_width, half_height) from x0 to x1, with interpolated end stations."""
+def _clipped_stations(body: Body, x0: float, x1: float) -> list[tuple[float, float, float, float]]:
+    """(x, half_width, half_height, shape) from x0 to x1, with interpolated end stations."""
     xs = [x0] + [station.x_m for station in body.stations if x0 < station.x_m < x1] + [x1]
-    return [(x, *body_half_extents(body, x)) for x in xs]
+    return [(x, *body_half_extents(body, x), body_section_at(body, x).shape) for x in xs]
 
 
 def _superellipse_wire(x_mm: float, half_width_mm: float, half_height_mm: float, shape: float):
@@ -102,15 +102,15 @@ def build_body_solid(resolved: ResolvedAirframe, x0: float, x1: float, inset_m: 
     import cadquery as cq
 
     body = build_body(resolved.airframe, PROFILE_SAMPLES)
-    stations = [(x, max(half_w - inset_m, 0.0), max(half_h - inset_m, 0.0)) for x, half_w, half_h in _clipped_stations(body, x0, x1)]
-    solid = [index for index, (_x, half_w, half_h) in enumerate(stations) if min(half_w, half_h) > 0.0]
+    stations = [(x, max(half_w - inset_m, 0.0), max(half_h - inset_m, 0.0), shape) for x, half_w, half_h, shape in _clipped_stations(body, x0, x1)]
+    solid = [index for index, (_x, half_w, half_h, _shape) in enumerate(stations) if min(half_w, half_h) > 0.0]
     if not solid:
         return None
     stations = stations[max(solid[0] - 1, 0): solid[-1] + 2]  # one point station either side of the part with a section
-    circular = body.shape == 2.0 and all(abs(half_w - half_h) < 1e-12 for _x, half_w, half_h in stations)
+    circular = all(shape == 2.0 and abs(half_w - half_h) < 1e-12 for _x, half_w, half_h, shape in stations)
     if circular:
-        return _revolve_profile_solid([(x * M_TO_MM, half_w * M_TO_MM) for x, half_w, _half_h in stations])
-    wires = [_superellipse_wire(x * M_TO_MM, half_w * M_TO_MM, half_h * M_TO_MM, body.shape) for x, half_w, half_h in stations]
+        return _revolve_profile_solid([(x * M_TO_MM, half_w * M_TO_MM) for x, half_w, _half_h, _shape in stations])
+    wires = [_superellipse_wire(x * M_TO_MM, half_w * M_TO_MM, half_h * M_TO_MM, shape) for x, half_w, half_h, shape in stations]
     return cq.Workplane("XY").newObject([cq.Solid.makeLoft(wires, ruled=True)])
 
 
@@ -142,7 +142,7 @@ def _root_le(panel: Panel, coordinates, body: Body) -> tuple[float, float, float
         half_w, half_h = body_half_extents(body, x)
         if half_w <= 0.0 or half_h <= 0.0:
             return False
-        return math.hypot(y, z) <= superellipse_radius(half_w, half_h, body.shape, math.atan2(z, y)) - ROOT_EMBED_MARGIN_M
+        return math.hypot(y, z) <= superellipse_radius(half_w, half_h, body_section_at(body, x).shape, math.atan2(z, y)) - ROOT_EMBED_MARGIN_M
 
     def depth_for(point) -> float:
         low = 0.0
@@ -305,6 +305,48 @@ def section_bounds(resolved: ResolvedAirframe) -> list[tuple[float, float]]:
     return list(zip(bounds, bounds[1:]))
 
 
+def _mount_opening(motor, start, end, diameter_m: float, depth0_m: float, depth1_m: float):
+    """A circular hole or radial slot along the physical motor/pod axis."""
+    import cadquery as cq
+
+    inward = motor.mount_inward
+    origin = tuple((p + depth0_m * d) * M_TO_MM for p, d in zip(motor.mount_face, inward))
+    plane = cq.Plane(origin=origin, xDir=(0, 1, 0), normal=inward)
+    work = cq.Workplane(plane).center((start[0] + end[0]) * M_TO_MM / 2.0,
+                                     (start[1] + end[1]) * inward[0] * M_TO_MM / 2.0)
+    length = math.dist(start, end)
+    if length <= 1e-12:
+        work = work.circle(diameter_m * M_TO_MM / 2.0)
+    else:
+        angle = math.degrees(math.atan2((end[1] - start[1]) * inward[0], end[0] - start[0]))
+        work = work.slot2D((length + diameter_m) * M_TO_MM, diameter_m * M_TO_MM, angle)
+    return work.extrude((depth1_m - depth0_m) * M_TO_MM).val()
+
+
+def cut_motor_mount_holes(shape, resolved: ResolvedAirframe):
+    """Cut fastening holes, shaft relief and bolt-entry clearance in printed material, leaving motors intact."""
+    bounds = shape.BoundingBox()
+    overshoot = CUT_OVERSHOOT_MM / M_TO_MM
+    cutters = []
+    for motor in resolved.motors:
+        holes = motor.mount_holes
+        if holes is None:
+            continue
+        far_x = bounds.xmax / M_TO_MM if motor.mount_inward[0] > 0 else bounds.xmin / M_TO_MM
+        reach = (far_x - motor.mount_face[0]) * motor.mount_inward[0] + overshoot
+        if reach <= 0:
+            continue
+        diameter = holes.d1_m if holes.pattern == "single" else holes.hole_diameter_m
+        for start, end in holes.segments_m():
+            cutters.append(_mount_opening(motor, start, end, diameter, -overshoot, reach))
+            if holes.head_diameter_m and holes.head_depth_m < reach:
+                cutters.append(_mount_opening(motor, start, end, holes.head_diameter_m, holes.head_depth_m, reach))
+        if holes.center_diameter_m and holes.center_depth_m:
+            cutters.append(_mount_opening(motor, (0.0, 0.0), (0.0, 0.0), holes.center_diameter_m,
+                                          -overshoot, holes.center_depth_m))
+    return shape.cut(*cutters).clean() if cutters else shape
+
+
 def build_airframe_assembly(resolved: ResolvedAirframe, include_prop_discs: bool = False):
     """Nested CadQuery assembly: one sub-assembly per fuselage section with its body piece and the surfaces,
     motors and pods whose root or position lies in it. Body-rooted panels are carried through the body to the
@@ -315,21 +357,23 @@ def build_airframe_assembly(resolved: ResolvedAirframe, include_prop_discs: bool
     assembly = cq.Assembly(name=resolved.airframe.name or "airframe")
     children = {index: cq.Assembly(name=f"S{index + 1:02d}") for index in range(len(section_bounds(resolved)))}
     for index, (x0, x1) in enumerate(section_bounds(resolved)):
-        children[index].add(build_body_solid(resolved, x0, x1), name=f"S{index + 1:02d}_body")
+        body = cut_motor_mount_holes(build_body_solid(resolved, x0, x1).val(), resolved)
+        children[index].add(cq.Workplane("XY").newObject([body]), name=f"S{index + 1:02d}_body")
     placements = {(control.surface, control.panel_index): control.number for control in resolved.controls}
     for surface_set in resolved.surfaces:
         for panel in surface_set.panels:
             index = section_index(resolved.airframe.sections.cuts_m, panel.attach_le[0])
             fixed, moving = build_panel_solids(resolved, panel, surface_set.definition.control)
             if fixed is not None:
-                children[index].add(cq.Workplane("XY").newObject([fixed]), name=f"S{index + 1:02d}_{surface_set.name}_{panel.index + 1}")
+                children[index].add(cq.Workplane("XY").newObject([cut_motor_mount_holes(fixed, resolved)]), name=f"S{index + 1:02d}_{surface_set.name}_{panel.index + 1}")
             for solid in moving:
                 children[index].add(cq.Workplane("XY").newObject([solid]), name=f"S{index + 1:02d}_CS{placements[(surface_set.name, panel.index)]}")
     for motor_index, motor in enumerate(resolved.motors, start=1):
         index = section_index(resolved.airframe.sections.cuts_m, motor.position[0])
         children[index].add(build_motor_solid(motor), name=f"S{index + 1:02d}_motor_{motor_index}")
         if motor.pod_stations:
-            children[index].add(build_pod_solid(motor), name=f"S{index + 1:02d}_pod_{motor_index}")
+            pod = cut_motor_mount_holes(build_pod_solid(motor).val(), resolved)
+            children[index].add(cq.Workplane("XY").newObject([pod]), name=f"S{index + 1:02d}_pod_{motor_index}")
         if include_prop_discs:
             children[index].add(build_prop_disc_solid(motor), name=f"S{index + 1:02d}_prop_{motor_index}")
     for index, child in children.items():
@@ -340,17 +384,19 @@ def build_airframe_assembly(resolved: ResolvedAirframe, include_prop_discs: bool
 def _airframe_solids(resolved: ResolvedAirframe, include_prop_discs: bool) -> list:
     import cadquery as cq
 
-    solids = [build_body_solid(resolved, 0.0, resolved.body.length_m)]
+    body = cut_motor_mount_holes(build_body_solid(resolved, 0.0, resolved.body.length_m).val(), resolved)
+    solids = [cq.Workplane("XY").newObject([body])]
     for surface_set in resolved.surfaces:
         for panel in surface_set.panels:
             fixed, moving = build_panel_solids(resolved, panel, surface_set.definition.control)  # the gap keeps a control a separate solid
             if fixed is not None:
-                solids.append(cq.Workplane("XY").newObject([fixed]))
+                solids.append(cq.Workplane("XY").newObject([cut_motor_mount_holes(fixed, resolved)]))
             solids += [cq.Workplane("XY").newObject([solid]) for solid in moving]
     for motor in resolved.motors:
         solids.append(build_motor_solid(motor))
         if motor.pod_stations:
-            solids.append(build_pod_solid(motor))
+            pod = cut_motor_mount_holes(build_pod_solid(motor).val(), resolved)
+            solids.append(cq.Workplane("XY").newObject([pod]))
         if include_prop_discs:
             solids.append(build_prop_disc_solid(motor))
     return solids
@@ -455,7 +501,7 @@ def _socket(resolved: ResolvedAirframe, face_m: float, direction: float):
     joints = resolved.airframe.fuselage.joints
     socket = tuple(value - joints.socket_wall_m for value in body_half_extents(resolved.body, face_m))
     x = sorted((face_m - direction * CUT_OVERSHOOT_MM / M_TO_MM, face_m + direction * joints.insertion_depth_m))
-    return _prism(*x, *socket, resolved.body.shape)
+    return _prism(*x, *socket, body_section_at(resolved.body, face_m).shape)
 
 
 def joint_hole_stations(resolved: ResolvedAirframe, cut_index: int) -> tuple[float, ...]:
@@ -525,7 +571,7 @@ def _spigot(resolved: ResolvedAirframe, cut_m: float, direction: float):
     may taper there, e.g. a tail cone). Inside the carrying section it is chamfered from the fuselage ID at its far end to
     the coupler ID hole_edge_dist_m short of the fastener hole centre (at the cut), so there is no step to print."""
     joints = resolved.airframe.fuselage.joints
-    shape = resolved.body.shape
+    shape = body_section_at(resolved.body, cut_m).shape
     outside, inside = joint_half_extents(resolved, cut_m)
     bore = bore_half_extents(resolved, cut_m)
     embed = tuple(value + SPIGOT_WALL_EMBED * resolved.airframe.fuselage.section.wall_radial_m for value in bore)
@@ -621,7 +667,7 @@ def build_section_solid(resolved: ResolvedAirframe, index: int, attachments: lis
     holes = _through_holes(resolved, reach0, reach1)
     if holes:
         shape = shape.cut(*holes)
-    return shape.clean(), notes
+    return cut_motor_mount_holes(shape, resolved).clean(), notes
 
 
 def build_coupler_solid(resolved: ResolvedAirframe, cut_index: int):
@@ -630,7 +676,7 @@ def build_coupler_solid(resolved: ResolvedAirframe, cut_index: int):
     joints = resolved.airframe.fuselage.joints
     cut = resolved.airframe.sections.cuts_m[cut_index]
     half_length = joints.insertion_depth_m
-    solid = _ring(cut - half_length, cut + half_length, *joint_half_extents(resolved, cut), resolved.body.shape)
+    solid = _ring(cut - half_length, cut + half_length, *joint_half_extents(resolved, cut), body_section_at(resolved.body, cut).shape)
     holes = _through_holes(resolved, cut - half_length, cut + half_length)
     if holes:
         solid = solid.cut(*holes)
@@ -652,7 +698,11 @@ def build_volume_solid(resolved: ResolvedAirframe, volume):
         axis = cq.Vector(*(1.0 if name == volume.axis else 0.0 for name in "xyz"))
         return cq.Solid.makeCylinder(volume.diameter_m / 2.0 * M_TO_MM, volume.length_m * M_TO_MM, centre - axis * (volume.length_m / 2.0 * M_TO_MM), axis)
     if volume.shape == "bore":
-        return _prism(volume.x_m - volume.length_m / 2.0, volume.x_m + volume.length_m / 2.0, *bore_half_extents(resolved, volume.x_m), resolved.body.shape)
+        bore = build_body_solid(resolved, volume.x_m - volume.length_m / 2.0, volume.x_m + volume.length_m / 2.0,
+                               inset_m=resolved.airframe.fuselage.section.wall_radial_m)
+        if bore is None:
+            raise ValueError(f"volume {volume.name!r}: no fuselage interior over its length")
+        return bore.val()
     raise ValueError(f"volume {volume.name!r}: a {volume.shape} has no solid")
 
 

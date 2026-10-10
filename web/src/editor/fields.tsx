@@ -13,14 +13,15 @@ interface EntryFieldProps {
   label?: string
   optional?: boolean
   blankHint?: string
+  defaultValue?: unknown
+  defaultLabel?: string
   showLabel?: boolean
   width?: number
-  /** A change's extra work (editor_view.make_entry on_commit: a rename carries to references). Called with the
-   * previous and the new value once the queued set has landed; a removal passes null as the new value. */
-  onCommit?: (previous: unknown, next: unknown) => void
   /** A commit's replacement for the queued set: a structural op that owns the change (a rename that must carry to
    * references, or a volume change). The text is parsed and validated as usual; no set is sent. */
   onValue?: (value: unknown) => void
+  /** A derived numeric field whose structural op owns the edit. */
+  derivedValue?: number
 }
 
 /**
@@ -35,14 +36,20 @@ export function EntryField({
   label,
   optional = false,
   blankHint,
+  defaultValue,
+  defaultLabel,
   showLabel = true,
   width,
-  onCommit,
   onValue,
+  derivedValue,
 }: EntryFieldProps): ReactElement {
   const api = useFormApi()
   const id = useId()
-  const value = getIn(api.definition, path)
+  const value = derivedValue ?? getIn(api.definition, path)
+  const [overriding, setOverriding] = useState(value !== undefined && value !== null)
+  const automatic = defaultLabel ?? (blankHint === 'blank = 0' ? 'Zero' : blankHint === 'blank = space only' ? 'Space only' : blankHint === 'blank = library' ? 'Library' : api.context.gram_keys.includes(unitKey) ? 'Calculated' : 'Not set')
+  const effectiveDefault = defaultValue ?? (blankHint === 'blank = 0' || blankHint === 'blank = space only' ? 0 : undefined)
+  const defaultText = formatValue(unitKey, effectiveDefault, api.context)
   const [text, setText] = useState(() => formatValue(unitKey, value, api.context))
   const [focused, setFocused] = useState(false)
   const [error, setError] = useState('')
@@ -61,16 +68,16 @@ export function EntryField({
     setError('')
   }, [value, focused, unitKey, api.context])
 
+  useEffect(() => { setOverriding(value !== undefined && value !== null) }, [value])
+
   const commitText = (raw: string): void => {
     if (raw.trim() === committedRef.current.trim()) return
-    const previous = latestRef.current
     if (optional && raw.trim() === '') {
+      setOverriding(false)
       committedRef.current = raw
       latestRef.current = undefined
       setError('')
-      void api.remove(path).then((result) => {
-        if (result.ok) onCommit?.(previous, null)
-      })
+      void api.remove(path)
       return
     }
     const existing = latestRef.current ?? 0.0
@@ -83,9 +90,7 @@ export function EntryField({
         onValue(parsed)
         return
       }
-      void api.set(path, parsed).then((result) => {
-        if (result.ok) onCommit?.(previous, parsed)
-      })
+      void api.set(path, parsed)
     } catch (parseError) {
       const message = parseError instanceof FieldParseError ? parseError.message : 'not a valid value'
       setError(`${label ?? fieldLabel(unitKey, api.context)}: ${message}`)
@@ -117,6 +122,7 @@ export function EntryField({
     const input = inputRef.current
     if (input === null) return undefined
     const onWheel = (event: WheelEvent): void => {
+      if (document.activeElement !== input || input.readOnly) return
       event.preventDefault()
       stepRef.current(event.deltaY < 0 ? 1 : -1)
     }
@@ -136,7 +142,25 @@ export function EntryField({
           {label ?? fieldLabel(unitKey, api.context)}
         </label>
       )}
-      <div className="form-control">
+      <div className={optional ? 'form-control optional-control' : 'form-control'}>
+        {optional && <div className="optional-mode">
+          <button type="button" className={!overriding ? 'active' : ''} aria-pressed={!overriding} onClick={() => {
+            setOverriding(false)
+            committedRef.current = ''
+            textRef.current = ''
+            latestRef.current = undefined
+            setText('')
+            if (value !== undefined && value !== null) void api.remove(path)
+          }}>Auto</button>
+          <button type="button" className={overriding ? 'active' : ''} aria-pressed={overriding} onClick={() => {
+            setOverriding(true)
+            if (text === '') {
+              const initial = Array.isArray(effectiveDefault) && unitKey !== 'mass_kg' ? '' : defaultText
+              textRef.current = initial; setText(initial)
+            }
+            inputRef.current?.focus()
+          }}>Override</button>
+        </div>}
         <input
           ref={inputRef}
           id={id}
@@ -144,6 +168,9 @@ export function EntryField({
           className={error === '' ? 'field-input' : 'field-input field-invalid'}
           style={width === undefined ? undefined : { width: `${width + 2}ch` }}
           value={text}
+          readOnly={optional && !overriding}
+          placeholder={optional && !overriding ? defaultText || automatic : undefined}
+          aria-label={!showLabel ? label ?? fieldLabel(unitKey, api.context) : undefined}
           spellCheck={false}
           autoComplete="off"
           onChange={onChange}
@@ -162,7 +189,7 @@ export function EntryField({
         {error !== '' && <div className="field-error">{error}</div>}
       </div>
       {showLabel && optional && (
-        <span className="form-hint">{blankHint ?? (api.context.gram_keys.includes(unitKey) ? 'blank = computed' : 'blank = none')}</span>
+        <span className="form-hint">{automatic}{defaultText !== '' ? `: ${defaultText}` : ''}{overriding ? ' · overridden' : ''}</span>
       )}
     </div>
   )
@@ -172,10 +199,12 @@ interface ChoiceFieldProps {
   path: Path
   value: unknown
   options: string[]
+  optionLabels?: Record<string, string>
   label?: string
   unitKey?: string
   showLabel?: boolean
   width?: number
+  searchable?: boolean
   /** How a pick's text becomes the stored value, editor_view.make_choice convert (str by default, int for
    * gauge/awg fields). */
   convert?: (value: string) => unknown
@@ -184,11 +213,13 @@ interface ChoiceFieldProps {
 }
 
 /** Readonly combobox, editor_view.make_choice (484-498): a pick stores convert(text) and recomputes. */
-export function ChoiceField({ path, value, options, label, unitKey, showLabel = true, width, convert, onValue }: ChoiceFieldProps): ReactElement {
+export function ChoiceField({ path, value, options, optionLabels, label, unitKey, showLabel = true, width, searchable = false, convert, onValue }: ChoiceFieldProps): ReactElement {
   const api = useFormApi()
   const id = useId()
   const current = value === null || value === undefined ? '' : String(value)
+  const [query, setQuery] = useState('')
   const shown = current !== '' && !options.includes(current) ? [current, ...options] : options
+  const filtered = searchable && query !== '' ? shown.filter(option => option === current || option.toLowerCase().includes(query.toLowerCase())) : shown
   const select = (next: string): void => {
     if (onValue !== undefined) {
       onValue(next)
@@ -204,10 +235,11 @@ export function ChoiceField({ path, value, options, label, unitKey, showLabel = 
         </label>
       )}
       <div className="form-control" style={width === undefined ? undefined : { maxWidth: `${width + 4}ch` }}>
+        {searchable && <input type="search" className="field-input choice-search" aria-label={`Search ${label ?? fieldLabel(unitKey ?? String(path[path.length - 1]), api.context)}`} placeholder="Filter options…" value={query} onChange={event => setQuery(event.target.value)} />}
         <select id={id} className="field-input" value={current} onChange={(event) => select(event.target.value)}>
-          {shown.map((option) => (
+          {filtered.map((option) => (
             <option key={option} value={option}>
-              {option}
+              {optionLabels?.[option] ?? option}
             </option>
           ))}
         </select>
@@ -263,10 +295,11 @@ interface OptionalBlockProps {
  * shows its fields when present (spars with a nested carry-through, root base, pod). */
 export function OptionalBlock({ label, present, onToggle, children }: OptionalBlockProps): ReactElement {
   return (
-    <>
-      <CheckboxField checked={present} label={label} onToggle={onToggle} />
+    <details className="advanced-fields">
+      <summary>{label}<span>{present ? 'Enabled' : 'Not used'}</span></summary>
+      <CheckboxField checked={present} label={`Enable ${label}`} onToggle={onToggle} />
       {present && <Group label={label}>{children}</Group>}
-    </>
+    </details>
   )
 }
 
@@ -337,9 +370,11 @@ export function PlacementFields({ path, item, volumeNames, onVolume }: Placement
           ))}
         </>
       )}
+      <details className="advanced-fields"><summary>Orientation</summary>
       {api.context.orientation_keys.map((key) => (
         <EntryField key={key} path={[...path, key]} unitKey={key} optional blankHint="blank = 0" />
       ))}
+      </details>
     </>
   )
 }

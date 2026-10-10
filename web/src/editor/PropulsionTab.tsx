@@ -1,3 +1,4 @@
+import { ReportSections } from '../components/ReportPanel'
 import { useId, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { Snapshot } from '../types'
@@ -23,13 +24,13 @@ export function PropulsionTab({ snapshot }: { snapshot: Snapshot }): ReactElemen
   }
   return (
     <>
-      <BatteryCard snapshot={snapshot} propulsion={propulsion} />
       <MotorCard propulsion={propulsion} />
+      <BatteryCard snapshot={snapshot} propulsion={propulsion} />
       {snapshot.propulsion_chart !== null && (
         <Card title="Motor info (motorlib, static)">
           <MotorChart chart={snapshot.propulsion_chart} />
-          {/* 1097: the summary lines, in the order libs.propulsion.summary_lines gives them. */}
-          <pre className="motor-lines">{snapshot.propulsion.map((line) => line.text).join('\n')}</pre>
+          <ReportSections sections={(snapshot.report_pages?.propulsion ?? []).filter(section => ['Full throttle', 'Hover', 'Model limitations'].includes(section.title))} />
+          <p className="form-hint">See the Propulsion report for the complete battery and circuit details.</p>
         </Card>
       )}
     </>
@@ -101,7 +102,7 @@ function BatteryCard({ snapshot, propulsion }: BatteryCardProps): ReactElement {
         <>
           {/* 976-978: the pack from data/parts/battery.json, and an optional mass. */}
           <ChoiceField label="pack" path={['propulsion', 'battery', 'part']} value={battery.part} options={parts} />
-          <EntryField path={['propulsion', 'battery', 'mass_kg']} unitKey="mass_kg" optional blankHint="blank = library" />
+          <EntryField path={['propulsion', 'battery', 'mass_kg']} unitKey="mass_kg" optional defaultLabel="Library mass" defaultValue={context.parts_data.battery?.[String(battery.part)]?.mass} />
         </>
       ) : (
         <>
@@ -130,12 +131,15 @@ function BatteryCard({ snapshot, propulsion }: BatteryCardProps): ReactElement {
         </>
       )}
       {/* 1003: add_placement 1190-1207, with the battery among the resolved parts (BATTERY_PART_NAME). */}
+      <details className="advanced-fields">
+      <summary>Battery placement & orientation</summary>
       <PlacementFields
         path={['propulsion', 'battery']}
         item={battery}
         volumeNames={volumeNames}
         onVolume={(value) => void run({ op: 'propulsion.battery.volume', volume: value })}
       />
+      </details>
       {snapshot.pack_summary !== null && (
         <div className="form-row">
           <span className="form-static">{packSummaryText(snapshot.pack_summary)}</span>
@@ -170,8 +174,8 @@ function MotorCard({ propulsion }: MotorCardProps): ReactElement {
           void api.set(['propulsion', 'motor'], { manufacturer: value, name: (context.motors_by_manufacturer[value] ?? [])[0] ?? '' })
         }}
       />
-      <ChoiceField label="motor" path={['propulsion', 'motor', 'name']} value={motor.name} options={names} />
-      <ChoiceField path={['propulsion', 'prop']} value={propulsion.prop} options={context.props} />
+      <ChoiceField label="motor" path={['propulsion', 'motor', 'name']} value={motor.name} options={names} searchable />
+      <ChoiceField path={['propulsion', 'prop']} value={propulsion.prop} options={context.props} searchable />
       <ChoiceField label="ESC" path={['propulsion', 'esc']} value={propulsion.esc} options={placedPartsOf(definition, 'esc')} />
     </Card>
   )

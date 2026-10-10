@@ -7,10 +7,11 @@ import { ReportPanel } from '../components/ReportPanel'
 import { SimpleView } from '../components/SimpleView'
 import { SplitPane } from '../components/SplitPane'
 import { EditorPanel } from '../editor/EditorPanel'
+import { SelectionProvider } from '../editor/selection'
 
 export function EditorView({ snapshot }: { snapshot: Snapshot | null }): ReactElement {
   return (
-    <SplitPane>
+    <SelectionProvider key={snapshot?.session_id ?? -1}><SplitPane>
       <section className="panel left-pane">
         <div className="pane-header">
           <button type="button" className="action" onClick={() => void recompute()}>
@@ -18,7 +19,8 @@ export function EditorView({ snapshot }: { snapshot: Snapshot | null }): ReactEl
           </button>
           <span className="status">{snapshot?.status ?? 'Connecting...'}</span>
         </div>
-        <ReportPanel pages={snapshot?.report_pages ?? null} log={snapshot?.log ?? []} />
+        {snapshot !== null && !snapshot.definition_valid && <p className="last-valid-note">Showing the last valid analysis. See Log for definition errors.</p>}
+        <ReportPanel pages={snapshot?.report_pages ?? null} log={snapshot?.log ?? []} inspectEnabled={snapshot?.definition_valid ?? false} />
       </section>
       <section className="panel centre-pane">
         <DrawingTabs snapshot={snapshot} />
@@ -26,7 +28,7 @@ export function EditorView({ snapshot }: { snapshot: Snapshot | null }): ReactEl
       <section className="panel right-pane">
         <EditorPanel snapshot={snapshot} />
       </section>
-    </SplitPane>
+    </SplitPane></SelectionProvider>
   )
 }
 

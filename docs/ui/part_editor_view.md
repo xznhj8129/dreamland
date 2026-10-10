@@ -22,6 +22,7 @@ Header [arrange:row]
 
     - New
         on:click -> create a new part in the current category
+        New part also available in the sidebar before selecting a part
 
     - Delete
         on:click -> ask for confirmation, then delete current part
@@ -32,9 +33,9 @@ Header [arrange:row]
 ```text
 SidebarList [fill]
 
-    - listbox rows are shown as "category / name"
+    - searchable tree grouped by category; part names beneath each category
     - selecting a row rebuilds the editor panel for that part
-    - refresh_from_disk keeps the current selection if the same category/name still exists
+    - library refresh keeps the current selection if the same category/name still exists
 ```
 
 ## PropertyEditor
@@ -59,6 +60,9 @@ PropertyEditor [fill]
 Formatting
     - length fields are shown in mm where applicable
     - mass fields are shown in g
+    - descriptive labels with units; battery dimensions only under Dimensions
+    - wiring origins and outline sizes have labelled axis inputs
+    - other arrays retain JSON entry
 
 Save behavior
     - values are parsed back into the existing field type

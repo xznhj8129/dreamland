@@ -6,7 +6,7 @@ This directory is the plane-first tube-aircraft design tool.
 
 Primary files:
 - `webbuilder.py`: web front-end entry: starts the local aiohttp server on 127.0.0.1 and opens the browser (`--port`, `--no-browser`)
-- `webapp/`: Python server over `libs/` for the web front-end. `state.py` (one session definition/report/recompute + background aero), `server.py` (routes, `/ws/events` state push, draw/move/model3d/editor/library APIs), `drawing.py` + `drawing_enrich.py` (record the `libs/graphics.py` drawing and enrich it: airfoil sections, projected spars, front-view thickness, roll detents, drag handles), `editor.py` (editor context, path edits and structural ops, ports of the retired Tk editor with source-line citations), `model3d.py` (triangle meshes for the 3D tab), `library.py` (part library payload/save/delete), `sim.py` (one server-owned simulation run: spawns `sim_inav.py`/`sim_script.py`, streams stdout and tails the flight-log CSV), `serialize.py`; headless suites `test_draw_drag.py`, `test_editor_sync.py`, `test_library.py`, `test_sim.py`
+- `webapp/`: Python server over `libs/` for the web front-end. `state.py` (one session definition/report/recompute + background aero), `server.py` (routes, `/ws/events` state push, draw/move/model3d/editor/library APIs), `drawing.py` + `drawing_enrich.py` (record the `libs/graphics.py` drawing and enrich it: airfoil sections, projected spars, front-view thickness, roll detents, drag handles), `editor.py` (editor context, path edits and structural ops, ports of the retired Tk editor with source-line citations), `model3d.py` (triangle meshes for the 3D tab), `library.py` (part library payload/save/delete), `sim.py` (one server-owned simulation run: spawns `sim_flight.py`, streams stdout and tails the flight-log CSV), `serialize.py`; headless suites `test_draw_drag.py`, `test_editor_sync.py`, `test_library.py`, `test_sim.py`
 - `web/`: React + TypeScript + Vite front-end (npm; `web/dist` is what the server serves): `src/editor/` (the nine definition editor tabs), `src/components/` (Simple drawing and the Three.js `ModelView`), `src/parteditor/` (part library tree + editor), `src/views/`; three.js for 3D, uPlot for the motor chart
 - `libs/airframe.py`: airframe/2 schema loader and validator (the saved aircraft definition) and size preset validation
 - `libs/project.py`: aircraft project layout (`aircraft/<project>/`), open and copy
@@ -26,12 +26,13 @@ Primary files:
 - `aero_check.py`: aero cross-check
 - `libs/jsbsim.py`: JSBSim aircraft export (AeroBuildup aero tables, control surfaces) and INAV mixer profiles and servo mix
 - `libs/propulsion.py`: motor + prop model on motorlib, wiring resistance from the design, throttle as ESC duty
-- `sim_inav.py`: flies the JSBSim export in INAV SITL on `inav_development/inav-jsbsim-bench`
-- `sim_script.py`: flies the JSBSim export with a project's controller script, lockstep in simulated time
-- `libs/controller.py`: `Controller` script API: simulated SPI IMU (at the first fc part's position and axes), baro, mag, GPS, pitot, rangefinder in raw hardware units; ESC/servo pulses in us; `truth` (`TruthState`): the simulator's own state, for scripting around a flight, not for control
+- `sim_flight.py`: one scenario runner for all controllers; scripts define `run(flight)`
+- `controllers/`: controller commands and transport (`inav.py`, `mcu.py`); scripts import the selected module
+- `libs/scenario.py`: shared scheduler, simulation state, conditions, measurements and selected telemetry
+- `libs/sensors.py`: shared simulated SPI IMU (first fc part's position and axes), baro, mag, GPS, pitot and rangefinder in raw hardware units; PWM outputs in us
 - `libs/simrun.py`: shared by both runners: start conditions, vehicle build, ground rule, electrical model, plots
 - `airfoil_analysis_example.py`: simple non-GUI example of the airfoil comparison
-- `aircraft/<project>/`: one aircraft project (`aircraft/` is gitignored except `aircraft/example`, a copy of simpleplane): `aircraft.json` (airframe/2 definition), `inav/` (real FC diffs, SITL diffs; `generated/`: the diff written for each generated or real-FC run), `sitl/` (pinned SITL.elf, eeprom.bin, sitl.log), `jsbsim/` (export), `logs/` (SITL and script flight logs and plots), `cad/` (exports; drawings `cutaway`, `threeview`, `xray` .svg/.png; `sections/`: printable parts, `varsets/`: FreeCAD varsets), `controllers/` (flight controller scripts)
+- `aircraft/<project>/`: one aircraft project (`aircraft/` is gitignored except `aircraft/example`, a copy of simpleplane): `aircraft.json` (airframe/2 definition), `inav/` (real FC diffs, SITL diffs; `generated/`: the diff written for each generated or real-FC run), `sitl/` (eeprom.bin, sitl.log; firmware is the shared `controllers.inav.DEFAULT_SITL_PATH`), `jsbsim/` (export), `logs/` (SITL and script flight logs and plots), `cad/` (exports; drawings `cutaway`, `threeview`, `xray` .svg/.png; `sections/`: printable parts, `varsets/`: FreeCAD varsets), `scenarios/<controller>/` (flight scripts; overrides of `data/scenarios/<controller>/`)
 - `data/parts/`: part library: tables `<category>.json` (battery, prop, material, connector, mounting patterns) and role parts, one file each, `<role>/<name>.json` (fc, esc, camera, companion, vtx, receiver, gps, servo)
 - `data/airfoils.json`: imported airfoil coordinates
 - `data/inav/`: INAV settings templates (`sitl.txt` bench hardware, `plane.txt`, `tailsitter.txt` switches and modes) for generated SITL diffs
@@ -67,7 +68,7 @@ Primary files:
 - The editor's centre tabs are Simple (the enriched recorded scene) and 3D (Three.js, meshes from `webapp/model3d.py`). The Tk ASB tab went with the Tk UI.
 - The VLM sweep engine (`libs/aero.py`) has no UI: the web VLM view is not built yet (placeholder). When it is, it renders the solved panel/streamline data in-browser (PyVista cannot run server-side), and the transient VLM cache stays display-only (never saved to disk).
 - `Aero Analysis` has no UI: the web view is not built yet (placeholder). The NeuralFoil-backed 2D airfoil comparison runs headless through `libs/airfoil_analysis.py` / `airfoil_analysis_example.py`.
-- SIM is ported: `web/src/views/SimView.tsx` with `webapp/sim.py` runs the same engines as a server-owned subprocess (one run at a time, shared by every tab), streams stdout and tails the flight log for the plots and 3D path. The engines stay scriptable headless through `sim_inav.py` and `sim_script.py`.
+- SIM is ported: `web/src/views/SimView.tsx` with `webapp/sim.py` runs the same engines as a server-owned subprocess (one run at a time, shared by every tab), streams stdout and tails the flight log for the plots and 3D path. The shared scheduler runs headless through `sim_flight.py`; `experiment` is an example scenario.
 - Orthographic drawing starts from `libs/graphics.py`, recorded server-side into plain draw data and enriched for the web (`webapp/drawing_enrich.py`): airfoil sections, projected spar geometry, front-view thickness. It is not CAD geometry.
 - Motor geometry uses motorlib stator dimensions plus explicit shaft/base drawing constants.
 

@@ -19,6 +19,8 @@ EditorView split behavior
     - left / center / right panes are horizontally split
     - startup split is 25% / 50% / 25%
     - pane dividers remain draggable after startup
+    - compact form spacing; Auto/Override beside optional numeric inputs
+    - Notes: editable text; blank allowed
 ```
 
 ## Left Pane
@@ -57,7 +59,8 @@ SummaryTab [fill]
 
     * SummaryPanel [fill, scrollable, copyable]
         * Overview [ui:labelled values, bind:analysis.report_pages.summary]
-            airframe, mass, CG, thrust/weight, layout problems, propulsion alerts, stability at a glance, geometry
+            airframe, mass, CG, thrust/weight, layout problems, propulsion alerts, static stability estimate
+            geometry collapsed under Geometry details; layout problems link to the affected inspector
             problems in red (layout problems, unstable margin, no hover), warnings in yellow (marginal margin,
             parts not modelled, motorlib warnings)
 ```
@@ -91,7 +94,7 @@ LogTab [fill]
             every error in red, appended with its time: definition errors, motor overloaded (no motor info, no propulsion
             in the report), aero failures, load / save / preset errors, unhandled errors with their traceback
             a new entry brings the Log tab to the front; the status bar says "<what> (see Log)"; the Summary keeps the
-            last valid report
+            last valid report, explicitly labelled when the definition is invalid
 ```
 
 ## Center Pane
@@ -101,7 +104,7 @@ CenterPane [arrange:column]
 
     * CenterTabs [ui:tabs]
         Simple
-        ASB
+        3D
 ```
 
 ### Simple tab
@@ -150,6 +153,8 @@ OrthographicView [fill, switchable, pannable, zoomable]
     - horizontal scrollbar -> pan x
     - vertical scrollbar -> pan y
 
+    - selecting a drawing handle opens its component inspector; inspector selection highlights the handle
+
     mode Longitudinal
         - draw fuselage in side view
         - draw ends as curved caps meeting the tube
@@ -166,7 +171,7 @@ OrthographicView [fill, switchable, pannable, zoomable]
         - draw pods, motors, shafts, props, CG, CP, CL
 
     mode Front
-        - draw body as circular cross-section
+        - draw body as the front envelope of its lofted cross-sections
         - draw lifting surfaces as radial lines
         - draw volumes as dashed outlines, parts as solid outlines (a cross without library size)
         - draw wires as yellow dotted lines
@@ -175,26 +180,16 @@ OrthographicView [fill, switchable, pannable, zoomable]
         - draw motor / pod / prop cross-sections
 ```
 
-### ASB tab
+### 3D tab
 
 ```text
-ASBTab [fill]
+3DTab [fill]
 
-    * ASBView [fill]
-        - Update View [ui:button]
-            on:click -> run heavy recompute and redraw the AeroSandbox model
-        - embedded matplotlib 3D canvas
-```
-
-### ASB behavior
-
-```text
-ASB view
-    - uses the current in-memory AeroSandbox airplane
-    - light recompute does not redraw ASB
-    - heavy recompute rebuilds and redraws ASB
-    - starts in left isometric orientation
-    - user may reorient the same 3D model interactively
+    - Transparent skin: translucent body, pods, panels and controls; internal parts remain visible
+    - NP = static estimate; camera retained through transparency changes
+    - Three.js model from webapp/model3d.py
+    - drag to orbit, wheel to zoom
+    - camera survives tab switches and form edits
 ```
 
 ## Right Pane
@@ -210,6 +205,7 @@ RightPane [arrange:column]
             Surfaces
             Volumes
             Motor mounts
+            Optimization     placeholder; objectives and part-value ranges deferred
         Build [ui:tabs]    what goes in it
             Propulsion
             Parts
@@ -253,7 +249,9 @@ SizePresetPanel  (title "Size preset (data/presets/)")
 
 ```text
 FuselagePanel
-    - length
+    - airframe length: resize unfixed sections proportionally; fixed sections keep their lengths
+      parts, volumes, battery, surface roots, rod/channel endpoints and nose/tail stations follow the resized sections
+      component dimensions and surface-local hardware offsets remain unchanged
     * section: width, height, shape (superellipse exponent, 2 = circle), wall radial
     * nose, tail: profile [ui:dropdown], length, the profile's parameters
     * joints: type [ui:dropdown], count (screws per section end), screw, insertion depth, coupler wall, fit clearance,
@@ -284,24 +282,27 @@ ReinforcementPanel  (title "Reinforcement (longitudinal rods)")
 ```text
 SectionsTab [scrollable]  (group title "Sections (cut lines; drag them in the side view)")
 
-    - Add cut [ui:button]
-        on:click -> split the longest section at its middle; both halves keep its solid flag and lose its weighed masses;
-                    the new cut's joint is coupler
-
-    columns, one row per section
-        section mm   S<n> from-to
-        cut mm       the section's end cut [ui:textbox]; none on the last section
+    compact section picker labelled S<n>; fields for the selected section
+        start mm     shared with the previous section's end; first section fixed at nose origin 0
+        end mm       shared with the next section's start; last section edits fuselage length
+        length mm    keep airframe length; move boundaries and scale the other unfixed sections proportionally
+        Fix length   preserve length during automatic resizing; explicit length edits still apply
+                     refuse changes when no unfixed section can absorb them; rejected changes leave geometry unchanged
+        Loft cross-section: width mm, height mm, shape exponent; Auto inherits the Fuselage default per field.
+                     Section midpoint is the loft station before nose/tail taper; smooth cubic transitions join midpoints.
+                     Shape 1 = diamond, 2 = ellipse/circle, 4 = rounded rectangle; wall thickness stays global.
         joint        that cut's joint [ui:dropdown]: coupler (separate coupler, its mass at the cut), front_male (this
                      section carries the male end), rear_male (the next section does), none (the sections butt with no
                      coupler, spigot or screws); empty on the last section
         solid        [ui:checkbox]  off = hollow shell wall; on = solid less the volumes inside it
-        empty g      weighed printed mass [ui:textbox]; blank = calc
+        empty g      Auto = geometry estimate; Override = weighed printed mass [ui:textbox]
         calc         computed printed mass (hollow: shell wall x material density; solid: x print bulk density)
-        complete g   weighed printed mass + everything attached in the section [ui:textbox]; blank = items
+        complete g   Auto = itemised components; Override = weighed complete mass [ui:textbox]
         items        itemised mass of everything attached in the section (props with their motor, motors with their mount,
                      wing sets at their root leading edge); a range when it holds a mass range
-        Del          [ui:button] delete the section's end cut and its joint: the two sections merge, keeping the left one's solid flag,
+        Remove end cut & merge sections [ui:button] delete the section's end cut and its joint: the two sections merge, keeping the left one's solid flag,
                      each weighed mass summed when both had one
+                     differing cross-sections refuse the merge; matching cross-sections keep the left one's overrides
     calc and items update after every edit
     the side view labels each section "S<n> <empty> g" (* = computed), its length, "solid", and "<complete> g all" when weighed
 ```
@@ -312,12 +313,12 @@ SectionsTab [scrollable]  (group title "Sections (cut lines; drag them in the si
 SurfacesTab [arrange:column]
 
     - Add surface set [ui:button]
-    * one card per surface set: its planform fields, mass (blank = computed), Delete
-      control surface [ui:checkbox] with its fields: kind (split: chord start, span start, span end; all-moving: pivot, span start),
+    * compact surface picker and selected surface inspector: its planform fields, mass (blank = computed), Delete
+      collapsed control surface group with Enable checkbox and its fields: kind (split: chord start, span start, span end; all-moving: pivot, span start),
         roles, deflection min/max, rate, gap (blank = 0), hinge rod diameter (blank = no rod)
-      spars [ui:checkbox] (ticking fills them from the aircraft's preset): material [ui:dropdown], diameter, count, spacing, x offset, y offset (up),
+      collapsed spars group with Enable checkbox (ticking fills them from the aircraft's preset): material [ui:dropdown], diameter, count, spacing, x offset, y offset (up),
         carry-through [ui:checkbox]: stem width, length, flare radius, root length, wall fillet
-      root base (not built yet) [ui:checkbox]: length, width, height, forward offset, leading cut, trailing cut
+      root base (not implemented) [ui:read-only]: length, width, height, forward offset, leading cut, trailing cut
 ```
 
 ## Motor mounts tab
@@ -326,9 +327,12 @@ SurfacesTab [arrange:column]
 MotorMountsTab [arrange:column]
 
     - Add motor mount [ui:button]
-    * one card per mount: on (nose | tail | surface), surface, span position, x offset, direction, spin, thrust axis
+    * compact mount picker and selected mount inspector: on (nose | tail | surface), surface, span position, x offset, direction, spin, thrust axis
       tilt, pod [ui:checkbox] with its fields, Delete
     a surface mount puts one motor on every panel of the surface
+    - Mounting holes [ui:checkbox]: single D1 hole or four radial slots from D1 to D2; slot width defaults to 3 mm
+      center relief diameter/depth, bolt head diameter/seat depth; zero diameter disables relief/head cut
+      material behind the head seat cleared for bolt entry; cuts in CAD exports
 ```
 
 ## Propulsion tab
@@ -336,8 +340,8 @@ MotorMountsTab [arrange:column]
 ```text
 PropulsionTab [arrange:column]
 
-    * BatteryPanel
     * SelectionPanel
+    * BatteryPanel
     * MotorInfoPanel   (only while the motor can turn the prop; otherwise the Log says why)
 ```
 
@@ -359,7 +363,7 @@ BatteryPanel (title "Battery")
         - cell length along [ui:dropdown]   x | y | z
         - cells along x, y, z [ui:textbox]   their product must be S x P (otherwise a definition error in the Log)
         - lead AWG [ui:dropdown], lead length (mm) [ui:textbox]
-    - volume [ui:dropdown, "(none)" first] and offsets, or its own x, y, z (as on a part)
+    - collapsed Battery placement & orientation: volume and offsets, or its own x, y, z
     - the resolved pack: label, size (each axis count x (cell + 2 mm)), mass, capacity
 ```
 
@@ -369,8 +373,8 @@ BatteryPanel (title "Battery")
 SelectionPanel [editable]
 
     - Manufacturer [ui:dropdown, readonly]
-    - Motor [ui:dropdown, readonly]
-    - Prop [ui:dropdown, readonly]
+    - Motor [ui:search + dropdown, readonly]
+    - Prop [ui:search + dropdown, readonly]
     - ESC [ui:dropdown, readonly]
 
 Options
@@ -386,14 +390,13 @@ Options
 VolumesTab [arrange:column]
 
     - Add volume [ui:button]
-    * one card per volume: name, shape, x, y, z (mm), shape sizes, mass (g, blank = space only),
-      list of the parts in it, Delete
+    * compact volume picker and selected volume inspector: name, shape, x, y, z (mm), shape sizes, mass (g, blank = space only),
+      list of parts and battery in it, Delete
 
 Rules
     - shapes: box, rounded box (size, axis of its rounded edges, corner radius), cylinder, bore, point
     - deleting a volume leaves its parts (and the battery) where they are, at their own x, y, z
     - renaming a volume renames it in its parts
-    - deleting a volume that still holds parts leaves them pointing at it: a definition error in the Log until moved
     - dragging a volume in the side view moves its parts
 ```
 
@@ -403,9 +406,9 @@ Rules
 PartsTab [arrange:column]
 
     - Add part [ui:button]        new part: first library entry with a mass, in the first volume (no volume: at mid-fuselage)
-    * one card per part: name, part (library), volume [ui:dropdown, "(none)" first],
+    * compact part picker and selected part inspector: name, searchable part (library), volume [ui:dropdown, "(none)" first],
       in a volume: x, y, z offset from its centre (mm, blank = 0); "(none)": its own x, y, z (mm; y, z blank = 0),
-      yaw, pitch, roll (deg, blank = 0), mass (g; blank = library, required when the library has none; 0 = counted elsewhere), Delete
+      collapsed orientation: yaw, pitch, roll (deg, blank = 0); mass (g; blank = library, required when the library has none; 0 = counted elsewhere), Delete
 
 Rules
     - renaming a part renames it in the propulsion ESC; the propulsion battery is not a part (Propulsion tab)
@@ -419,9 +422,10 @@ Rules
 ```text
 WiringTab [arrange:column]
 
-    * WireRunsTable  (title "Wire runs (auto-routed: along the axes, wing motors inside their panel; drawn in the side view)")
-        one row per run: battery -> ESC, then ESC -> each motor (motor order)
-        columns
+    * WireRunsPanel  (title "Wire runs (auto-routed: along the axes, wing motors inside their panel; drawn in the side view)")
+        one labelled group per run: battery -> ESC, then ESC -> each motor (motor order)
+        full-width gauge and conductor fields; connectors wrap in route order
+        fields
             run          its ends
             length mm    the auto-routed length ("-" while the definition has an error)
             AWG          [ui:dropdown] motorlib's wire gauges
@@ -438,8 +442,9 @@ WiringTab [arrange:column]
 ```text
 MotorInfoPanel [fill]
 
-    - top half = matplotlib plot host
-    - bottom half = fixed-width text report
+    - uPlot motor chart
+    - labelled Full throttle, Hover and Model limitations results
+    - complete battery and circuit details in the Propulsion report tab
 
 Plot contents (mean per motor)
     - thrust vs INAV motor output
@@ -447,9 +452,7 @@ Plot contents (mean per motor)
     - kW vs INAV motor output
     - hover line (VTOL)
 
-Text report
-    - motors, prop, battery
-    - resistance per motor, by part (a range when the motor runs differ)
+Results
     - full throttle, thrust/weight, hover
     - parts not modelled, motorlib warnings
 
@@ -464,16 +467,16 @@ Length fields
     - stored internally in meters
 
 Any number field
-    - mouse wheel over it: up multiplies by 1.01, down divides by 1.01 (a whole number: +/- 1), applied at once
+    - wheel on a focused writable input: +/- 1 mm, +/- 1 whole number, otherwise +/- 0.1 displayed unit
 
 Mass fields
     - displayed in g
     - stored internally in kg
 
 Numeric entries
-    - Up arrow increases by 1 displayed unit
-    - Down arrow decreases by 1 displayed unit
-    - Return, keypad Enter, and FocusOut apply the value
+    - Enter and blur apply the value
+    - optional fields: Auto shows the effective value and source; Override enables entry
+    - Auto removes the explicit definition value
 
 Type fields
     - readonly dropdowns

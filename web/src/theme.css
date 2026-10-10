@@ -78,11 +78,36 @@ input[type="radio"] {
   border-bottom: 1px solid var(--ui-border);
 }
 
-.app-name {
-  font-size: 14px;
-  font-weight: 650;
-  letter-spacing: -0.03em;
+.app-brand {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+
+.app-logo {
+  display: block;
+  border-radius: 4px;
+}
+
+.brand-copy {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
   white-space: nowrap;
+}
+
+.app-name {
+  color: var(--ui-accent);
+  font-size: 15px;
+  font-weight: 650;
+  letter-spacing: 0.16em;
+  text-transform: uppercase;
+}
+
+.brand-tagline {
+  color: var(--ui-dim);
+  font-size: 9px;
+  letter-spacing: 0.08em;
 }
 
 .project-context {
@@ -545,6 +570,11 @@ button:disabled {
   min-height: 0;
 }
 
+.performance-results { overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+.performance-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
+.performance-metric { padding: 10px; border: 1px solid var(--ui-border); border-radius: 6px; display: flex; flex-direction: column; gap: 6px; }
+.performance-metric span { font-size: 12px; opacity: 0.75; }
+.performance-results table { width: 100%; text-align: left; font-variant-numeric: tabular-nums; }
 .model-view {
   display: flex;
   flex-direction: column;
@@ -913,8 +943,8 @@ button:disabled {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 16px;
-  gap: 16px;
+  padding: 12px;
+  gap: 10px;
 }
 
 .editor-forms[hidden] {
@@ -926,8 +956,8 @@ button:disabled {
   flex-direction: column;
   flex: 0 0 auto;
   min-width: 0;
-  gap: 12px;
-  padding: 16px;
+  gap: 8px;
+  padding: 12px;
   border-radius: 8px;
   background: var(--ui-raised);
 }
@@ -952,10 +982,10 @@ button:disabled {
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 8px;
   min-width: 0;
   margin: 0;
-  padding: 12px 0 0;
+  padding: 8px 0 0;
   border: none;
   border-top: 1px solid var(--ui-border);
 }
@@ -1018,8 +1048,8 @@ button:disabled {
   width: 100%;
   min-width: 0;
   max-width: 100%;
-  min-height: 34px;
-  padding: 6px 9px;
+  min-height: 30px;
+  padding: 4px 8px;
   background: var(--ui-input);
   color: var(--ui-fg);
   border: 1px solid var(--ui-border);
@@ -1494,13 +1524,29 @@ button.danger:hover:not(:disabled) {
   flex-direction: column;
   flex: 1;
   min-height: 0;
-  padding: 4px 0; /* no horizontal padding: uPlot is sized to clientWidth */
-  overflow: auto;
+  overflow: hidden;
   background: var(--ui-input);
 }
 
 .sim-subplot {
-  flex: 0 0 auto;
+  flex: 1;
+  min-height: 0;
+}
+
+.sim-plot-title {
+  height: 24px;
+  min-height: 24px;
+  padding: 2px 10px;
+  border: none;
+  background: transparent;
+  color: var(--ui-fg);
+  text-align: left;
+}
+
+.sim-links {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
 }
 
 .sim-path {
@@ -1539,3 +1585,74 @@ button.danger:hover:not(:disabled) {
     transition: none;
   }
 }
+
+/* Component lists and the selected component's inspector. */
+.component-picker {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.component-choice {
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  padding: 7px 10px;
+  min-width: 0;
+  text-align: left;
+  overflow-wrap: anywhere;
+}
+.component-choice strong { font-size: 12px; font-weight: 500; }
+.component-choice span { color: var(--ui-dim); font-size: 11px; }
+.component-choice.active { border-color: var(--ui-accent); background: var(--ui-hover); }
+.advanced-fields {
+  margin: 8px 0;
+  border-top: 1px solid var(--ui-border);
+  padding-top: 8px;
+}
+.advanced-fields > summary {
+  cursor: pointer;
+  color: var(--ui-fg);
+  font-size: 12px;
+  margin-bottom: 8px;
+}
+.advanced-fields > summary span { margin-left: 12px; color: var(--ui-dim); font-size: 11px; }
+.optional-control { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px; }
+.optional-control > .field-error { grid-column: 1 / -1; }
+.optional-mode { display: flex; gap: 2px; }
+.optional-mode button { min-height: 26px; padding: 3px 4px; font-size: 11px; }
+.optional-mode button.active { color: var(--ui-accent); border-color: var(--ui-accent); }
+.field-input[readonly] { color: var(--ui-dim); background: transparent; border-style: dashed; }
+.field-input::placeholder { color: var(--ui-dim); opacity: 1; }
+.choice-search { margin-bottom: 6px; font-size: 11px; }
+.wire-run { margin-top: 18px; }
+.wire-length { color: var(--ui-dim); font-size: 12px; }
+.wiring-plugs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
+.wiring-plugs .plug-select { width: auto; min-width: 100px; max-width: 100%; }
+.plug-fixed { align-self: center; color: var(--ui-dim); font-size: 12px; }
+.vector-fields { display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+.vector-fields label { display: flex; flex-direction: column; gap: 6px; color: var(--ui-dim); font-size: 12px; }
+.vector-fields input { min-width: 0; }
+.part-editor-pane .form-card { max-width: 880px; width: 100%; }
+.part-editor-pane .form-row { grid-template-columns: minmax(120px, 1fr) minmax(0, 2fr); }
+.planned-view { margin-left: 6px; font-size: 10px; }
+.save-status { color: var(--ui-dim); font-size: 11px; white-space: nowrap; }
+.save-status.unsaved { color: var(--ui-warning); }
+.last-valid-note { margin: 0; padding: 10px 16px; color: var(--ui-warning); font-size: 12px; }
+.condition-override { grid-column: 2; font-size: 11px; }
+.sim-start-details .sim-conditions { border: 0; padding: 0; }
+.cad-view { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; align-items: start; }
+@media (max-width: 1000px) { .cad-view { grid-template-columns: minmax(0, 1fr); } }
+
+.sim-path { position: relative; }
+.sim-path-tools { position: absolute; z-index: 1; top: 12px; left: 12px; display: flex; align-items: center; gap: 12px; padding: 6px; background: var(--ui-panel); border-radius: 6px; }
+.sim-source-panel { flex: 1; min-height: 0; flex-direction: column; gap: 12px; padding: 12px 0; }
+.sim-source-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
+.sim-source-toolbar > span { width: 100%; font-size: 12px; color: var(--ui-dim); }
+.sim-source-toolbar label { display: flex; align-items: center; gap: 8px; }
+.sim-source { flex: 1; min-height: 240px; width: 100%; resize: none; background: var(--ui-input); color: var(--ui-fg); border: 1px solid var(--ui-border); border-radius: 8px; padding: 16px; font: 13px/1.6 monospace; tab-size: 4; white-space: pre; overflow: auto; }
+.scenario-phase { padding: 10px 0; border-bottom: 1px solid var(--ui-border); }
+.scenario-phase h4 { margin: 0 0 6px; font-size: 13px; }
+.scenario-phase p { margin: 0; }
+.scenario-outline dl > div { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
+.scenario-outline dd { margin: 0; }

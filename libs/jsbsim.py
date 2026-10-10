@@ -29,15 +29,13 @@ Model choices (best estimates where no data exists):
 - Prop: static Ct and Cp from motorlib's full-throttle point (constant: JSBSim has no RPM dependence, motorlib's
   thrust and power exponents are ~2 and ~3); Ct(J) and Cp(J) shaped like JSBSim's bundled APC 9x4.5E table, J scaled
   by the pitch ratio over the APC's (zero thrust at J = 1.46 x pitch / diameter). Rotor inertia = prop only.
-- Aerodynamics: AeroSandbox AeroBuildup on the whole aircraft over AoA -180..180, sideslip -90..90 (dense near 0) and
-  AERO_SPEEDS_M_S (body-axis tables); roll/pitch/yaw damping from AeroBuildup over AoA and airspeed at sideslip 0. It
-  has no downwash between surfaces, so its pitch stability differs from the live model's (simpleplane Cm -0.34
-  against -0.13 at AoA 0).
-- Control surfaces: each control's increments over the undeflected aircraft from the same AeroBuildup (so they stall
-  with the base tables) at sideslip 0, the base AoA and airspeed grids, and CONTROL_DEFLECTION_GRID_DEG each way (cut
-  at its limits, plus the limits). AeroBuildup skips its finite-wing correction for control surfaces, so each control
-  is solved at its deflection x its wing's finite_wing_factor. Increments add up in JSBSim; AeroBuildup's one
-  interaction between controls is its aircraft-level induced drag (2 x dL1 x dL2), which they leave out. INAV servo
+- Aerodynamics: the editor's lifting line + bodies at forward zero-sideslip points; AeroBuildup sideslip increments,
+  outer envelope and rate damping (FlightAero documents the blend). Tables cover AoA -180..180, sideslip -90..90 and
+  AERO_SPEEDS_M_S. Matching models are consistency, not independent aerodynamic validation.
+- Control surfaces: each control's increments from the same blended model at sideslip 0, the base AoA/speed grids
+  and CONTROL_DEFLECTION_GRID_DEG. The forward model includes interacting-wing response to the actual deflection;
+  the outer AeroBuildup envelope uses finite_wing_factor. Separate control increments add up in JSBSim, omitting
+  nonlinear interactions between simultaneous deflections. INAV servo
   output Sn (1000..2000 us, as -1..1 on
   SERVO_PROPERTY) maps -1 / 0 / +1 to deflection_min / 0 / deflection_max, through an actuator rate-limited to
   rate_deg_s.
@@ -60,8 +58,9 @@ import aerosandbox as asb
 import jsbsim
 import neuralfoil
 import numpy as np
+from threadpoolctl import threadpool_limits
 
-from libs.aero import AERO_MODEL_SIZE, build_asb_airplane, build_hybrid_airplanes, with_side_deflections
+from libs.aero import AERO_MODEL_SIZE, ForwardAero, build_asb_airplane, with_side_deflections
 from libs.airframe import INCH_M, Propulsion, motor_repo, motorlib_motor
 from libs.geometry import STANDARD_GRAVITY_M_S2, Inertia, ResolvedAirframe, Vec
 from libs.propulsion import MotorModel, motor_models, rpm_for_thrust, static_points
@@ -83,6 +82,11 @@ FT_M = 0.3048
 ALPHA_RAD_ROWS = ("aero/alpha-rad", np.radians(AERO_ALPHA_DEG))  # table_xml (property, breakpoints)
 AIRSPEED_FPS = ("velocities/vt-fps", AERO_SPEEDS_M_S / FT_M)
 CONTROL_COEFFICIENTS = ("CX", "CY", "CZ", "Cl", "Cm", "Cn")
+FORWARD_ALPHA_LIMIT_DEG = 30.0
+ENVELOPE_ALPHA_END_DEG = 45.0
+FORWARD_BETA_LIMIT_DEG = 10.0
+ENVELOPE_BETA_END_DEG = 20.0
+AERO_PROVENANCE = "Lifting line + bodies in forward flight; AeroBuildup sideslip/rate effects and outer envelope"
 # Deflections the control tables are solved at, each way. Dense near neutral: a section stalls past ~15-20 deg (and
 # AeroSandbox's flap drag grows with deflection squared), so a coarse grid interpolates small deflections from a
 # stalled column (half of +-45 deg gave 90x the real adverse yaw and a ninth of the roll at 5 deg).
@@ -128,6 +132,9 @@ class JSBSimExport:
     motors: tuple[MotorModel, ...]  # per motor in motor order (JSBSim engine order), their constants the JSBSim motors'; () when unpowered
     pack_voltage_v: float | None  # JSBSim maxvolts: battery power is V = throttle-pos x pack_voltage_v, I = (V - rpm/Kv) / R
     servo_properties: tuple[str, ...]  # driven by INAV servo output 0, 1, ... (S1, S2, ...), -1..1
+    servo_rules: tuple[tuple[int, str, int, str], ...]  # (servo, role, sign, controls) for INAV
+    forward_alpha_limit_deg: float  # full lifting-line correction; tighter for swept strips that reverse flow
+    envelope_alpha_end_deg: float  # correction fades to pure AeroBuildup here
 
 
 @dataclass(frozen=True)
@@ -219,14 +226,72 @@ def body_coefficients(aero: dict, op_point: asb.OperatingPoint, resolved: Resolv
     return np.array([np.asarray(load) / (force_scale * length) for load, length in zip(loads, lengths)])
 
 
-def aero_tables(resolved: ResolvedAirframe) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+class FlightAero:
+    """Full flight envelope with the editor's interacting-wing model at forward, zero-sideslip points.
+
+    AeroBuildup supplies sideslip increments and damping. Normally the forward-model correction fades continuously
+    outside ±30 alpha / ±10 beta, reaching pure AeroBuildup at ±45 alpha / ±20 beta. Swept strips that reverse flow
+    inside ±30 alpha move the alpha blend earlier. The correction is held at its forward boundary before fading;
+    lifting line is never solved in backwards flow.
+    """
+
+    def __init__(self, resolved: ResolvedAirframe):
+        self.resolved = resolved
+        self.forward = ForwardAero(resolved)
+        self.airplane = build_asb_airplane(resolved)
+        self.atmosphere = asb.Atmosphere(altitude=resolved.airframe.operating_point.altitude_m)
+        self.forward_alpha_limit_deg = FORWARD_ALPHA_LIMIT_DEG
+        self.envelope_alpha_end_deg = ENVELOPE_ALPHA_END_DEG
+        strip_forward = self.forward.mesh.forward
+        # Geometry x points aft; a strip's forward vector points toward negative x.
+        reverse_alpha_deg = float(np.min(np.degrees(np.arctan2(-strip_forward[:, 0], np.abs(strip_forward[:, 2])))))
+        if reverse_alpha_deg <= FORWARD_ALPHA_LIMIT_DEG:
+            self.envelope_alpha_end_deg = reverse_alpha_deg
+            self.forward_alpha_limit_deg = max(0.0, reverse_alpha_deg - (ENVELOPE_ALPHA_END_DEG - FORWARD_ALPHA_LIMIT_DEG))
+
+    @threadpool_limits.wrap(limits=1, user_api="blas")
+    def run(self, speed, alpha, beta=0.0, deflections=None, envelope_deflections=None):
+        speed, alpha, beta = np.broadcast_arrays(speed, alpha, beta)
+        shape = speed.shape
+        speed, alpha, beta = (value.ravel() for value in (speed, alpha, beta))
+        airplane = self.airplane
+        if deflections:
+            envelope_deflections = envelope_deflections or deflections
+            for wing, numbers in enumerate(self.forward.hybrid.controls):
+                if any(number in deflections for number in numbers):
+                    airplane = with_side_deflections(airplane, wing, *(envelope_deflections.get(number, 0.0) for number in numbers))
+        weight = (np.clip((self.envelope_alpha_end_deg - np.abs(alpha)) / (self.envelope_alpha_end_deg - self.forward_alpha_limit_deg), 0, 1)
+                  * np.clip((ENVELOPE_BETA_END_DEG - np.abs(beta)) / (ENVELOPE_BETA_END_DEG - FORWARD_BETA_LIMIT_DEG), 0, 1))
+        exact = (weight == 1) & (beta == 0)
+        values = np.empty((6, len(speed)))
+        outer = ~exact
+        if np.any(outer):
+            point = asb.OperatingPoint(atmosphere=self.atmosphere, velocity=speed[outer], alpha=alpha[outer], beta=beta[outer])
+            values[:, outer] = body_coefficients(asb.AeroBuildup(airplane=airplane, op_point=point, model_size=AERO_MODEL_SIZE).run(), point, self.resolved)
+        for velocity in np.unique(speed[weight > 0]):
+            indices = np.flatnonzero((speed == velocity) & (weight > 0))
+            angles, inverse = np.unique(np.clip(alpha[indices], -self.forward_alpha_limit_deg, self.forward_alpha_limit_deg), return_inverse=True)
+            wings, body = self.forward.run(self.atmosphere, velocity, angles, deflections)
+            forward_point = asb.OperatingPoint(atmosphere=self.atmosphere, velocity=velocity, alpha=angles)
+            forward_loads = {"F_b": wings.force_body_n + np.asarray(body["F_b"]), "M_b": wings.moment_body_nm + np.asarray(body["M_b"])}
+            corrected = body_coefficients(forward_loads, forward_point, self.resolved)
+            direct = exact[indices]
+            values[:, indices[direct]] = corrected[:, inverse[direct]]
+            if np.any(~direct):
+                used, mapping = np.unique(inverse[~direct], return_inverse=True)
+                point = asb.OperatingPoint(atmosphere=self.atmosphere, velocity=velocity, alpha=angles[used])
+                baseline = body_coefficients(asb.AeroBuildup(airplane=airplane, op_point=point, model_size=AERO_MODEL_SIZE).run(), point, self.resolved)
+                values[:, indices[~direct]] += (corrected[:, used] - baseline)[:, mapping] * weight[indices[~direct]]
+        return values.reshape(6, *shape)
+
+
+def aero_tables(resolved: ResolvedAirframe, model: FlightAero | None = None) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
     """Body-axis coefficients on the airspeed x AoA x sideslip grid, and the damping derivatives on the airspeed x AoA
     grid at sideslip 0."""
-    airplane = build_asb_airplane(resolved)
-    atmosphere = asb.Atmosphere(altitude=resolved.airframe.operating_point.altitude_m)
+    model = model or FlightAero(resolved)
+    airplane, atmosphere = model.airplane, model.atmosphere
     speed, alpha, beta = np.meshgrid(AERO_SPEEDS_M_S, AERO_ALPHA_DEG, AERO_BETA_DEG, indexing="ij")
-    op_point = asb.OperatingPoint(atmosphere=atmosphere, velocity=speed.ravel(), alpha=alpha.ravel(), beta=beta.ravel())
-    values = body_coefficients(asb.AeroBuildup(airplane=airplane, op_point=op_point, model_size=AERO_MODEL_SIZE).run(), op_point, resolved)
+    values = model.run(speed, alpha, beta)
     tables = {name: values[index].reshape(speed.shape) for index, name in enumerate(CONTROL_COEFFICIENTS)}
     speed, alpha = np.meshgrid(AERO_SPEEDS_M_S, AERO_ALPHA_DEG, indexing="ij")
     rates = asb.AeroBuildup(
@@ -235,7 +300,11 @@ def aero_tables(resolved: ResolvedAirframe) -> tuple[dict[str, np.ndarray], dict
     dampers = {name: np.asarray(rates[name]).reshape(speed.shape) for name in ("Clp", "Cmq", "Cnr")}
     for name, table in (*tables.items(), *dampers.items()):
         if not np.all(np.isfinite(table)):
-            raise ValueError(f"AeroBuildup returned non-finite {name} on the airspeed x AoA grid")
+            invalid = np.argwhere(~np.isfinite(table))
+            index = invalid[0]
+            sideslip = f", sideslip {AERO_BETA_DEG[index[2]]:g} deg" if table.ndim == 3 else ""
+            raise ValueError(f"Flight aero returned non-finite {name} at {AERO_SPEEDS_M_S[index[0]]:g} m/s, "
+                             f"AoA {AERO_ALPHA_DEG[index[1]]:g} deg{sideslip}; {len(invalid)} invalid grid points")
     return tables, dampers
 
 
@@ -254,23 +323,17 @@ def finite_wing_factor(airplane: asb.Airplane, wing: int, run) -> float:
     return float(np.mean(twist_change / hinge_change))
 
 
-def control_tables(resolved: ResolvedAirframe) -> list[ControlTable]:
-    """Each control's increments over the undeflected aircraft, AeroBuildup (as the base tables) at sideslip 0, its
-    deflection times its wing's finite_wing_factor. An XZ-mirrored pair is one ASB wing, each side deflected alone
+def control_tables(resolved: ResolvedAirframe, model: FlightAero | None = None) -> list[ControlTable]:
+    """Each control's increments over the undeflected aircraft, shared FlightAero at sideslip 0.
+    Only the outer-envelope AeroBuildup deflection uses finite_wing_factor. An XZ-mirrored pair is one ASB wing, each side deflected alone
     (SideControlSurface)."""
     if not resolved.controls:
         return []
-    airplane = build_asb_airplane(resolved)
-    hybrid = build_hybrid_airplanes(resolved)  # its wings are airplane.wings in order, with the control numbers per wing
-    atmosphere = asb.Atmosphere(altitude=resolved.airframe.operating_point.altitude_m)
+    model = model or FlightAero(resolved)
+    hybrid = model.forward.hybrid
+    probe_point = asb.OperatingPoint(atmosphere=model.atmosphere, velocity=AERO_SPEEDS_M_S, alpha=np.full(len(AERO_SPEEDS_M_S), CONTROL_FACTOR_AOA_DEG))
     speed, alpha = np.meshgrid(AERO_SPEEDS_M_S, AERO_ALPHA_DEG, indexing="ij")
-    op_point = asb.OperatingPoint(atmosphere=atmosphere, velocity=speed.ravel(), alpha=alpha.ravel())
-    probe_point = asb.OperatingPoint(atmosphere=atmosphere, velocity=AERO_SPEEDS_M_S, alpha=np.full(len(AERO_SPEEDS_M_S), CONTROL_FACTOR_AOA_DEG))
-
-    def run(deflected: asb.Airplane, point: asb.OperatingPoint = op_point) -> np.ndarray:
-        return body_coefficients(asb.AeroBuildup(airplane=deflected, op_point=point, model_size=AERO_MODEL_SIZE).run(), point, resolved)
-
-    base = run(airplane)
+    base = model.run(speed, alpha)
     near = np.abs(AERO_ALPHA_DEG) <= CONTROL_DERIVATIVE_AOA_DEG
     placements = {control.number: control for control in resolved.controls}
     tables = []
@@ -279,7 +342,8 @@ def control_tables(resolved: ResolvedAirframe) -> list[ControlTable]:
             continue
         surface_set = resolved.surfaces[owner]
         definition = surface_set.definition.control
-        factor = finite_wing_factor(airplane, wing, lambda deflected: run(deflected, probe_point))
+        factor = finite_wing_factor(model.airplane, wing, lambda plane: body_coefficients(
+            asb.AeroBuildup(airplane=plane, op_point=probe_point, model_size=AERO_MODEL_SIZE).run(), probe_point, resolved))
         deflections = np.unique([0.0, definition.deflection_min_deg, definition.deflection_max_deg,
                                  *(-d for d in CONTROL_DEFLECTION_GRID_DEG if -d > definition.deflection_min_deg),
                                  *(d for d in CONTROL_DEFLECTION_GRID_DEG if d < definition.deflection_max_deg)])
@@ -288,15 +352,15 @@ def control_tables(resolved: ResolvedAirframe) -> list[ControlTable]:
             solved = float(deflection * factor)
             for side, (number, columns) in enumerate(zip(numbers, sides)):
                 if number:
-                    columns.append(run(with_side_deflections(airplane, wing, *((solved, 0.0) if side == 0 else (0.0, solved)))) - base if deflection else np.zeros_like(base))
+                    columns.append(model.run(speed, alpha, deflections={number: float(deflection)}, envelope_deflections={number: solved}) - base if deflection else np.zeros_like(base))
         neutral = int(np.flatnonzero(deflections == 0.0)[0])
         low, high = max(neutral - 1, 0), min(neutral + 1, len(deflections) - 1)  # the columns either side of neutral
         for number, columns in zip(numbers, sides):
             if not number:
                 continue
-            stacked = np.stack(columns, axis=2).reshape(6, *speed.shape, len(deflections))  # (6, speed, AoA, deflection)
+            stacked = np.stack(columns, axis=-1).reshape(6, *speed.shape, len(deflections))  # (6, speed, AoA, deflection)
             if not np.all(np.isfinite(stacked)):
-                raise ValueError(f"AeroBuildup returned non-finite control increments for C{number}")
+                raise ValueError(f"Flight aero returned non-finite control increments for C{number}")
             control = placements[number]
             tables.append(ControlTable(
                 number=number, label=f"C{number} {control.surface} panel {control.panel_index + 1}", servo=int(control.servo[1:]) - 1,
@@ -411,13 +475,13 @@ def coefficient_xml(name: str, description: str, factors: str, table: str) -> st
 
 def control_aero_xml(tables: list[ControlTable], coefficient: str, factors: str) -> str:
     return "".join(coefficient_xml(
-        f"{coefficient}_control_{table.number}", f"{coefficient} increment of {table.label} (AeroBuildup, deflection x {table.finite_wing_factor:.3f})", factors,
+        f"{coefficient}_control_{table.number}", f"{coefficient} increment of {table.label} (shared forward model, outer deflection x {table.finite_wing_factor:.3f})", factors,
         table_xml(("aero/alpha-deg", AERO_ALPHA_DEG), (CONTROL_POSITION_PROPERTY.format(number=table.number), table.deflection_deg), table.increments[coefficient], AIRSPEED_FPS),
     ) for table in tables)
 
 
 def aero_axis_xml(coefficient: str, table: np.ndarray, factors: str) -> str:
-    return coefficient_xml(coefficient, f"{coefficient} (AeroBuildup, body axes)", factors,
+    return coefficient_xml(coefficient, f"{coefficient} ({AERO_PROVENANCE}, body axes)", factors,
                            table_xml(ALPHA_RAD_ROWS, ("aero/beta-rad", np.radians(AERO_BETA_DEG)), table, AIRSPEED_FPS))
 
 
@@ -626,6 +690,7 @@ def reuse_or_export(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path,
     return export, False
 
 
+@threadpool_limits.wrap(limits=1, user_api="blas")
 def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, model_name: str, pack_voltage_v: float | None = None) -> JSBSimExport:
     """pack_voltage_v: battery voltage for the motors (default: nominal). The motor command is the duty, so a lower pack
     gives proportionally less motor voltage per command, as an ESC."""
@@ -661,8 +726,9 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
       <spring_coeff unit="N/M"> {spring:.3f} </spring_coeff>
       <damping_coeff unit="N/M/SEC"> {damping:.3f} </damping_coeff>
     </contact>""" for index, (x, y, z) in enumerate(contacts))
-    tables, rates = aero_tables(resolved)
-    controls = control_tables(resolved)
+    aero_model = FlightAero(resolved)
+    tables, rates = aero_tables(resolved, aero_model)
+    controls = control_tables(resolved, aero_model)
     servos = servo_mix(resolved, controls)
     forces = {"X": "CX", "Y": "CY", "Z": "CZ"}
     moments = {"ROLL": ("Cl", "metrics/bw-ft"), "PITCH": ("Cm", "metrics/cbarw-ft"), "YAW": ("Cn", "metrics/bw-ft")}
@@ -777,4 +843,7 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
         hover_motor_fraction=hover_fraction, hover_stick_us=hover_stick_us,
         stance_height_m=max(point[0] for point in contacts) - cg[0] if airframe.tailsitter else None, motors=models, pack_voltage_v=pack_voltage,
         servo_properties=tuple(SERVO_PROPERTY.format(index=index) for index in range(max((table.servo for table in controls), default=-1) + 1)),
+        servo_rules=servos.rules,
+        forward_alpha_limit_deg=aero_model.forward_alpha_limit_deg,
+        envelope_alpha_end_deg=aero_model.envelope_alpha_end_deg,
     )

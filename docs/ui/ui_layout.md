@@ -1,4 +1,4 @@
-# GUIBuilder UI Layout
+# Dreamland UI Layout
 
 This directory is split by window scope instead of keeping the whole UI in one file.
 

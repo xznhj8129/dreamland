@@ -24,11 +24,27 @@ function isMassKey(key: string, payload: LibraryPayload): boolean {
   return payload.mass_keys.includes(key)
 }
 
-/** library_editors.py field_label (94-127), library keys only: lengths in mm, masses in g, others bare. */
+const FIELD_LABELS: Record<string, string> = {
+  type: 'Chemistry / type', s: 'Cells in series (S)', p: 'Cells in parallel (P)', mah: 'Capacity (mAh)',
+  c: 'Discharge rating (C)', curr: 'Current rating (A)', min_s: 'Minimum series cells (S)', max_s: 'Maximum series cells (S)',
+  l: 'Length (mm)', w: 'Width (mm)', h: 'Height (mm)', dimensions: 'Dimensions',
+  ir_mohm_per_cell: 'Cell resistance (mΩ)', lead_awg: 'Lead gauge (AWG)', lead_length_mm: 'Lead length (mm)',
+  mosfet_rds_on_ohm: 'MOSFET on-resistance (Ω)', contact_resistance_ohm: 'Contact resistance (Ω)',
+  wiring_origin_mm: 'Wiring origin (mm)', density_kg_m3: 'Density (kg/m³)', diameter_in: 'Diameter (in)',
+  holes_mm: 'Mounting holes (mm, JSON)', outline_mm: 'Outline size (mm)', generic: 'Generic component',
+  mount: 'Mounting pattern', notes: 'Notes', connector: 'Connector',
+}
 export function libraryFieldLabel(key: string, payload: LibraryPayload): string {
-  if (isLengthKey(key, payload)) return `${key} (mm)`
-  if (isMassKey(key, payload)) return `${key} (g)`
-  return key
+  if (key in FIELD_LABELS) return FIELD_LABELS[key]
+  const label = key.replace(/_/g, ' ')
+  if (isLengthKey(key, payload)) return `${label} (mm)`
+  if (isMassKey(key, payload)) return `${label} (g)`
+  return label.charAt(0).toUpperCase() + label.slice(1)
+}
+
+export const VECTOR_AXES: Record<string, readonly string[]> = { wiring_origin_mm: ['x','y','z'], outline_mm: ['Length','Width'] }
+export function parseLibraryVector(components: string[]): number[] {
+  return components.map(parseNumber)
 }
 
 /** library_editors.py format_field_value (82-91): blank for null, mm/g-scaled %g for numbers, JSON for lists. */

@@ -22,6 +22,7 @@ from dataclasses import dataclass, replace
 import aerosandbox as asb
 import aerosandbox.numpy as asb_np
 import numpy as np
+from threadpoolctl import threadpool_limits
 from aerosandbox.aerodynamics.aero_3D.singularities.uniform_strength_horseshoe_singularities import calculate_induced_velocity_horseshoe
 
 from libs.airframe import ControlSurface
@@ -182,7 +183,7 @@ def build_asb_airplane(resolved: ResolvedAirframe) -> asb.Airplane:
     which AeroBuildup's fuselage form factor gives more drag than a flat disc."""
     body = resolved.body
     main_sections = [
-        asb.FuselageXSec(xyz_c=[station.x_m, 0.0, 0.0], width=station.width_m, height=station.height_m, shape=body.shape)
+        asb.FuselageXSec(xyz_c=[station.x_m, 0.0, 0.0], width=station.width_m, height=station.height_m, shape=station.shape)
         for station in body.stations
     ]
     fuselages = []
@@ -288,6 +289,31 @@ def build_hybrid_airplanes(resolved: ResolvedAirframe) -> HybridAirplanes:
 
 
 @dataclass(frozen=True)
+class SectionPolarModel:
+    """Airfoil.get_aero_from_neuralfoil's normalization/fit, prepared once for repeated section evaluations."""
+
+    foil: asb.KulfanAirfoil
+    rotation_deg: float
+    scale: float
+    dx_quarter_chord: float
+    dy_quarter_chord: float
+
+    @classmethod
+    def from_airfoil(cls, airfoil):
+        normalized = airfoil.normalize(return_dict=True)
+        rotation, scale = normalized["rotation_angle"], normalized["scale_factor"]
+        return cls(normalized["airfoil"].to_kulfan_airfoil(n_weights_per_side=8, normalize_coordinates=False),
+                   rotation, scale,
+                   -normalized["x_translation"] + 0.25 * np.cos(np.radians(rotation)) / scale - 0.25,
+                   -normalized["y_translation"] + 0.25 * np.sin(np.radians(-rotation)) / scale)
+
+    def get_aero_from_neuralfoil(self, *, alpha, Re, **kwargs):
+        aero = self.foil.get_aero_from_neuralfoil(alpha=alpha + self.rotation_deg, Re=Re / self.scale, **kwargs)
+        aero["CM"] = aero["CM"] - aero["CL"] * self.dx_quarter_chord + aero["CD"] * self.dy_quarter_chord
+        return aero
+
+
+@dataclass(frozen=True)
 class LiftingLineMesh:
     """asb.LiftingLine's horseshoe panels (one chordwise panel per spanwise strip), meshed once for every AoA."""
     owners: np.ndarray  # resolved.surfaces index of each panel
@@ -297,7 +323,7 @@ class LiftingLineMesh:
     forward: np.ndarray
     centers: np.ndarray  # bound-leg midpoints
     bound_legs: np.ndarray
-    airfoil_groups: tuple[tuple[asb.Airfoil, np.ndarray], ...]  # (airfoil, indices of the panels using it)
+    airfoil_groups: tuple[tuple[SectionPolarModel, np.ndarray], ...]  # prepared polar and its panel indices
     controls: np.ndarray  # control number of each panel's moving segment, 0 = fixed
     hinges: dict[int, float]  # hinge chord fraction per control number (0 = all-moving)
     induced: np.ndarray  # (3, panels, panels): velocity at panel i's centre per unit circulation of horseshoe j
@@ -357,7 +383,7 @@ def build_lifting_line_mesh(wing_plane: asb.Airplane, owners: tuple[int, ...], w
         chords=np.linalg.norm((back_left + back_right) / 2.0 - (front_left + front_right) / 2.0, axis=1),
         forward=np.cross(normals, bound_legs / np.linalg.norm(bound_legs, axis=1)[:, None]),
         centers=centers, bound_legs=bound_legs,
-        airfoil_groups=tuple((airfoil, np.array(indices)) for airfoil, indices in groups.values()),
+        airfoil_groups=tuple((SectionPolarModel.from_airfoil(airfoil), np.array(indices)) for airfoil, indices in groups.values()),
         controls=np.array(panel_controls), hinges={number: hinge for number, hinge in hinges.items() if number},
         induced=induced,
     )
@@ -428,6 +454,27 @@ def lifting_line_sweep(
     return loads
 
 
+class ForwardAero:
+    """Shared editor/export loads: interacting lifting-line panels plus AeroBuildup bodies.
+
+    Alpha is limited to the editor's -30..30 degree domain; sideslip/rate effects belong to the export envelope.
+    Mesh construction is paid once for speed sweeps and control-deflection tables.
+    """
+
+    def __init__(self, resolved: ResolvedAirframe):
+        self.resolved = resolved
+        self.hybrid = build_hybrid_airplanes(resolved)
+        self.mesh = build_lifting_line_mesh(self.hybrid.wings, self.hybrid.owners, self.hybrid.controls)
+
+    @threadpool_limits.wrap(limits=1, user_api="blas")
+    def run(self, atmosphere, speed_m_s, alpha_deg, deflections=None):
+        point = asb.OperatingPoint(atmosphere=atmosphere, velocity=speed_m_s, alpha=alpha_deg)
+        body = asb.AeroBuildup(airplane=self.hybrid.bodies, op_point=point, model_size=AERO_MODEL_SIZE).run()
+        wings = lifting_line_sweep(self.mesh, self.hybrid.wings.xyz_ref, len(self.resolved.surfaces),
+                                   atmosphere, speed_m_s, np.asarray(alpha_deg), deflections)
+        return wings, body
+
+
 def analyze_aero(resolved: ResolvedAirframe) -> AeroResult:
     if not resolved.surfaces:
         raise NoLiftingSurfacesError("aero needs at least one lifting surface; the definition has none")
@@ -437,18 +484,13 @@ def analyze_aero(resolved: ResolvedAirframe) -> AeroResult:
     cg_x = resolved.cg_m[0]
     reference = resolved.reference
     atmosphere = asb.Atmosphere(altitude=operating_point.altitude_m)
-    hybrid = build_hybrid_airplanes(resolved)
+    model = ForwardAero(resolved)
 
     # The sweep plus the operating point appended at eval_index, in one pass of each model.
     sweep_aoa = np.array(AOA_SWEEP_DEG, dtype=float)
     eval_index = len(sweep_aoa)
     aoa_values = np.append(sweep_aoa, operating_point.aoa_deg)
-    op_point = asb.OperatingPoint(atmosphere=atmosphere, velocity=operating_point.airspeed_m_s, alpha=aoa_values)
-    body = asb.AeroBuildup(airplane=hybrid.bodies, op_point=op_point, model_size=AERO_MODEL_SIZE).run()
-    wings = lifting_line_sweep(
-        build_lifting_line_mesh(hybrid.wings, hybrid.owners, hybrid.controls), hybrid.wings.xyz_ref, len(resolved.surfaces), atmosphere,
-        operating_point.airspeed_m_s, aoa_values,
-    )
+    wings, body = model.run(atmosphere, operating_point.airspeed_m_s, aoa_values)
     dynamic_pressure = float(asb.OperatingPoint(atmosphere=atmosphere, velocity=operating_point.airspeed_m_s).dynamic_pressure())
     force_scale = dynamic_pressure * reference.area_m2
     lift_all = wings.lift_n.sum(axis=0) + np.asarray(body["L"])

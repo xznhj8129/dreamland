@@ -65,6 +65,7 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
   const loadedKeyRef = useRef('')
   const [model, setModel] = useState<LoadedModel | null>(null)
   const [notice, setNotice] = useState('')
+  const [transparentSkin, setTransparentSkin] = useState(false)
 
   const session = snapshot?.session_id ?? -1
   const revision = snapshot?.definition_revision ?? -1
@@ -213,12 +214,13 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
       geometry.computeVertexNormals()
       const doubleSided = mesh.kind === 'panel' || mesh.kind === 'control'
       const seeThrough = mesh.kind === 'volume' || mesh.kind === 'prop'
+      const skin = transparentSkin && ['body', 'pod', 'panel', 'control'].includes(mesh.kind)
       const material = new THREE.MeshStandardMaterial({
         color: new THREE.Color(mesh.color),
-        side: doubleSided ? THREE.DoubleSide : THREE.FrontSide,
-        transparent: mesh.opacity < 1,
-        opacity: mesh.opacity,
-        depthWrite: !seeThrough,
+        side: doubleSided || skin ? THREE.DoubleSide : THREE.FrontSide,
+        transparent: skin || mesh.opacity < 1,
+        opacity: skin ? 0.18 : mesh.opacity,
+        depthWrite: !seeThrough && !skin,
         roughness: 0.7,
         metalness: 0.05,
       })
@@ -251,7 +253,7 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
       lastCentreRef.current = centre
     }
     dirtyRef.current = true
-  }, [model, placeCamera])
+  }, [model, placeCamera, transparentSkin])
 
   // Fetch once per session/revision/aero state while the tab is visible; abort a request whose key goes stale.
   useEffect(() => {
@@ -306,6 +308,8 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
     >
       <div className="graphics-controls">
         <span className="axes-label">X = Front &nbsp; Y = Right &nbsp; Z = Up</span>
+        <span className="axes-label">NP = static estimate</span>
+        <label className="check-row"><input type="checkbox" checked={transparentSkin} onChange={event => setTransparentSkin(event.target.checked)} />Transparent skin</label>
         <button type="button" onClick={() => placeCamera(null)} disabled={model === null}>
           Fit view
         </button>

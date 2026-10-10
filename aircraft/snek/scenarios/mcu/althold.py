@@ -20,9 +20,11 @@ reversers), pulse up = roll left; ESC 0 the pusher.
 
 import math
 
+from controllers import mcu as controller
+
 from simple_pid import PID
 
-from libs.controller import ACCEL_LSB_PER_G, AIR_DENSITY_KG_M3, GYRO_LSB_PER_DPS, Controller
+from libs.sensors import ACCEL_LSB_PER_G, AIR_DENSITY_KG_M3, GYRO_LSB_PER_DPS
 
 STANDARD_GRAVITY_M_S2 = 9.80665
 
@@ -48,58 +50,64 @@ ROLL_RATE_DAMPING = 0.075  # deg of aileron per deg/s
 
 
 
+LOG_FIELDS = ('alt_m', 'pitot_airspeed_m_s', 'pitch_target', 'est_roll', 'est_pitch')
+
+
 def baro_altitude_m(pressure_pa: float) -> float:
     """Standard atmosphere, as a BMP280 driver's readAltitude."""
     return 44330.77 * (1.0 - (pressure_pa / SEA_LEVEL_PA) ** (1.0 / 5.25588))
 
 
-class AltHold(Controller):
-    rate_hz = 100
+RATE_HZ = 100
+START = {"start": "air"}
 
-    def setup(self):
-        self.roll = self.pitch = 0.0
-        self.airspeed = self.airspeed_rate = None
-        self.airspeed_pid = PID(*AIRSPEED, setpoint=TARGET_AIRSPEED_M_S, sample_time=None, output_limits=(THROTTLE_US[0] - 1500, THROTTLE_US[1] - 1500))
-        self.altitude_pid = PID(*ALT_TO_PITCH, setpoint=TARGET_ALT_M, sample_time=None, output_limits=(-PITCH_LIMIT_DEG, PITCH_LIMIT_DEG))
-        self.pitch_pid = PID(*PITCH, setpoint=0.0, sample_time=None, output_limits=(-CANARD_LIMIT_DEG, CANARD_LIMIT_DEG))
-        self.roll_pid = PID(*ROLL, setpoint=0.0, sample_time=None, output_limits=(-TRAVEL_DEG, TRAVEL_DEG))
 
-    def loop(self):
-        truth = self.truth
-        dt = 1.0 / self.rate_hz
-        ax, ay, az = self.imu.accel()
-        gx, gy, gz = self.imu.gyro()
+def run(flight):
+    roll = pitch = 0.0
+    previous_airspeed = airspeed_rate = None
+    airspeed_pid = PID(*AIRSPEED, setpoint=TARGET_AIRSPEED_M_S, sample_time=None, output_limits=(THROTTLE_US[0] - 1500, THROTTLE_US[1] - 1500))
+    altitude_pid = PID(*ALT_TO_PITCH, setpoint=TARGET_ALT_M, sample_time=None, output_limits=(-PITCH_LIMIT_DEG, PITCH_LIMIT_DEG))
+    pitch_pid = PID(*PITCH, setpoint=0.0, sample_time=None, output_limits=(-CANARD_LIMIT_DEG, CANARD_LIMIT_DEG))
+    roll_pid = PID(*ROLL, setpoint=0.0, sample_time=None, output_limits=(-TRAVEL_DEG, TRAVEL_DEG))
+    controller.arm()
+    controller.release()
+    while True:
+        truth = flight.sensors.truth
+        dt = 1.0 / RATE_HZ
+        ax, ay, az = flight.sensors.imu.accel()
+        gx, gy, gz = flight.sensors.imu.gyro()
         roll_rate = gx / GYRO_LSB_PER_DPS  # deg/s, + = rolling right (the IMU's y points left, z up)
         pitch_rate = -gy / GYRO_LSB_PER_DPS  # deg/s, + = nose up
         yaw_rate = -gz / GYRO_LSB_PER_DPS  # deg/s, + = nose right
-        altitude = baro_altitude_m(self.baro.pressure())
-        airspeed = math.sqrt(2.0 * max(0.0, self.pitot.pressure()) / AIR_DENSITY_KG_M3)
-        if self.airspeed is None:
-            self.airspeed, self.airspeed_rate = airspeed, 0.0
-        self.airspeed_rate = AIRSPEED_SMOOTHING * self.airspeed_rate + (1 - AIRSPEED_SMOOTHING) * (airspeed - self.airspeed) / dt
-        self.airspeed = airspeed
+        altitude = baro_altitude_m(flight.sensors.baro.pressure())
+        airspeed = math.sqrt(2.0 * max(0.0, flight.sensors.pitot.pressure()) / AIR_DENSITY_KG_M3)
+        if previous_airspeed is None:
+            previous_airspeed, airspeed_rate = airspeed, 0.0
+        airspeed_rate = AIRSPEED_SMOOTHING * airspeed_rate + (1 - AIRSPEED_SMOOTHING) * (airspeed - previous_airspeed) / dt
+        previous_airspeed = airspeed
         # speeding up along x reads as nose up; flying at airspeed while rotating adds rotation x velocity on y and z
-        ax -= self.airspeed_rate / STANDARD_GRAVITY_M_S2 * ACCEL_LSB_PER_G
+        ax -= airspeed_rate / STANDARD_GRAVITY_M_S2 * ACCEL_LSB_PER_G
         ay -= math.radians(gz / GYRO_LSB_PER_DPS) * airspeed / STANDARD_GRAVITY_M_S2 * ACCEL_LSB_PER_G
         az += math.radians(gy / GYRO_LSB_PER_DPS) * airspeed / STANDARD_GRAVITY_M_S2 * ACCEL_LSB_PER_G
-        roll, pitch = math.radians(self.roll), math.radians(self.pitch)
-        self.roll += (roll_rate + math.tan(pitch) * (pitch_rate * math.sin(roll) + yaw_rate * math.cos(roll))) * dt
-        self.pitch += (pitch_rate * math.cos(roll) - yaw_rate * math.sin(roll)) * dt
+        roll_rad, pitch_rad = math.radians(roll), math.radians(pitch)
+        roll += (roll_rate + math.tan(pitch_rad) * (pitch_rate * math.sin(roll_rad) + yaw_rate * math.cos(roll_rad))) * dt
+        pitch += (pitch_rate * math.cos(roll_rad) - yaw_rate * math.sin(roll_rad)) * dt
         if ACCEL_TRUSTED_G[0] < math.sqrt(ax * ax + ay * ay + az * az) / ACCEL_LSB_PER_G < ACCEL_TRUSTED_G[1]:
-            self.roll = GYRO_SHARE * self.roll + (1 - GYRO_SHARE) * math.degrees(math.atan2(ay, az))
-            self.pitch = GYRO_SHARE * self.pitch + (1 - GYRO_SHARE) * math.degrees(math.atan2(ax, math.hypot(ay, az)))
+            roll = GYRO_SHARE * roll + (1 - GYRO_SHARE) * math.degrees(math.atan2(ay, az))
+            pitch = GYRO_SHARE * pitch + (1 - GYRO_SHARE) * math.degrees(math.atan2(ax, math.hypot(ay, az)))
 
-        self.pitch_pid.setpoint = self.altitude_pid(altitude, dt=dt)
+        pitch_pid.setpoint = altitude_pid(altitude, dt=dt)
         scale = max(GAIN_SCALE_LIMITS[0], min(GAIN_SCALE_LIMITS[1], (GAIN_AIRSPEED_M_S / max(airspeed, 1.0)) ** 2))
-        nose_up_deg = max(-CANARD_LIMIT_DEG, min(CANARD_LIMIT_DEG, scale * (self.pitch_pid(self.pitch, dt=dt) - PITCH_RATE_DAMPING * pitch_rate)))
-        roll_left_deg = -max(-TRAVEL_DEG, min(TRAVEL_DEG, scale * (self.roll_pid(self.roll, dt=dt) - ROLL_RATE_DAMPING * roll_rate)))
+        nose_up_deg = max(-CANARD_LIMIT_DEG, min(CANARD_LIMIT_DEG, scale * (pitch_pid(pitch, dt=dt) - PITCH_RATE_DAMPING * pitch_rate)))
+        roll_left_deg = -max(-TRAVEL_DEG, min(TRAVEL_DEG, scale * (roll_pid(roll, dt=dt) - ROLL_RATE_DAMPING * roll_rate)))
 
         for canard in range(4):
-            self.servo[canard] = round(1500 + 500 * nose_up_deg / TRAVEL_DEG)
-        self.servo[4] = round(1500 + 500 * roll_left_deg / TRAVEL_DEG)
-        self.esc[0] = round(1500 + self.airspeed_pid(airspeed, dt=dt))
-        self.log("alt_m", altitude)
-        self.log("airspeed_m_s", airspeed)
-        self.log("pitch_target", self.pitch_pid.setpoint)
-        self.log("est_roll", self.roll)
-        self.log("est_pitch", self.pitch)
+            controller.servo[canard] = round(1500 + 500 * nose_up_deg / TRAVEL_DEG)
+        controller.servo[4] = round(1500 + 500 * roll_left_deg / TRAVEL_DEG)
+        controller.esc[0] = round(1500 + airspeed_pid(airspeed, dt=dt))
+        flight.log("alt_m", altitude)
+        flight.log("pitot_airspeed_m_s", airspeed)
+        flight.log("pitch_target", pitch_pid.setpoint)
+        flight.log("est_roll", roll)
+        flight.log("est_pitch", pitch)
+        flight.wait(1 / RATE_HZ)

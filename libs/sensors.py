@@ -1,30 +1,5 @@
-"""
-Usage, in aircraft/<project>/controllers/<name>.py:
-from libs.controller import Controller
+"""Raw simulated hardware readings, mount geometry, and PWM units shared by every controller."""
 
-class Level(Controller):
-    rate_hz = 200                         # loop() runs this often, in simulated time
-
-    def setup(self):                      # once, before the first loop()
-        self.start_pressure = self.baro.pressure()
-
-    def loop(self):
-        ax, ay, az = self.imu.accel()     # raw counts, like reading the chip over SPI
-        self.servo[0] = 1500              # pulse widths in us, like Servo.writeMicroseconds
-        self.esc[0] = 1600
-        self.log("ax", ax)                # an extra flight-log column
-
-Run: python sim_script.py aircraft/<project> <name> (see sim_script.py), or pick the script in the GUI's SIM view.
-
-A flight controller script, talking to its hardware the way a microcontroller does: raw sensor readings in the units
-the parts deliver, pulse widths out, time from micros()/millis(). The hardware is simulated from the JSBSim plant
-(inavbench.vehicles.Plant), mounted level and facing forward, so its axes are the body's: x forward, y left, z up. The
-IMU sits on the airframe's flight controller (its first placed part of role fc): it reads at the FC's position (the
-lever arm from the CG adds the angular-acceleration and centripetal terms) and in the FC's own axes; without an FC part
-it sits at the CG, in the body's axes.
-"""
-
-import importlib.util
 import math
 import random
 from dataclasses import dataclass
@@ -36,13 +11,13 @@ GYRO_LSB_PER_DPS = 16.4  # its gyro at +-2000 deg/s
 INT16_RANGE = (-32768, 32767)  # IMU registers saturate here
 MAG_LSB_PER_GAUSS = 1090.0  # HMC5883L at its default gain
 EARTH_FIELD_GAUSS = 0.5  # the simulated field: level, pointing north, no dip
-PLANT_MAG_UNITS = 16000.0  # the size of inavbench Plant.mag's field vector
 AIR_DENSITY_KG_M3 = 1.225  # pitot: differential pressure 0.5 rho CAS^2
 RANGEFINDER_MAX_M = 10.0  # VL53L1X class, looking down the body's -z
 PWM_MIN_US, PWM_MID_US, PWM_MAX_US = 1000, 1500, 2000
 GPS_FIX_3D = 3  # u-blox NAV-PVT fixType
 GPS_SATELLITES = 14
 KNOT_M_S = 0.514444
+FT = 0.3048
 
 
 def _noisy(value: float, sigma: float) -> float:
@@ -79,8 +54,14 @@ class Imu:
         return self._gyro
 
     def _sample(self, plant, noise: dict, time_us: int) -> None:
-        accel_g = [mg / 1000.0 for mg in plant.acc_mg()]  # at the CG, body axes
-        rate = [math.radians(dps16 / 16.0) for dps16 in plant.gyro_dps16()]
+        fdm = plant.fdm
+        # Physical body axes, independent of the firmware's active mixer/sensor frame.
+        if plant.rail and plant.rail.held:
+            phi, theta = fdm["attitude/phi-rad"], fdm["attitude/theta-rad"]
+            accel_g = [math.sin(theta), math.sin(phi) * math.cos(theta), math.cos(phi) * math.cos(theta)]
+        else:
+            accel_g = [fdm["accelerations/Nx"], -fdm["accelerations/Ny"], fdm["accelerations/Nz"]]
+        rate = [fdm["velocities/p-rad_sec"], -fdm["velocities/q-rad_sec"], -fdm["velocities/r-rad_sec"]]
         previous, self._previous = self._previous, (time_us, tuple(rate))
         lever = _cross(rate, _cross(rate, self._offset_m))  # centripetal, then angular acceleration from the last sample
         if previous is not None and time_us > previous[0]:
@@ -115,8 +96,12 @@ class Mag:
         return self._counts
 
     def _sample(self, plant, noise: dict) -> None:
-        scale = EARTH_FIELD_GAUSS / PLANT_MAG_UNITS
-        self._counts = tuple(_int16(_noisy(unit * scale, noise.get("mag_gauss", 0.0)) * MAG_LSB_PER_GAUSS) for unit in plant.mag())
+        fdm = plant.fdm
+        phi, theta, psi = fdm["attitude/phi-rad"], fdm["attitude/theta-rad"], fdm["attitude/psi-rad"]
+        north = (math.cos(theta) * math.cos(psi),
+                 math.cos(phi) * math.sin(psi) - math.sin(phi) * math.sin(theta) * math.cos(psi),
+                 -math.cos(phi) * math.sin(theta) * math.cos(psi) - math.sin(phi) * math.sin(psi))
+        self._counts = tuple(_int16(_noisy(unit * EARTH_FIELD_GAUSS, noise.get("mag_gauss", 0.0)) * MAG_LSB_PER_GAUSS) for unit in north)
 
 
 @dataclass(frozen=True)
@@ -186,8 +171,13 @@ class Rangefinder:
         return self._mm
 
     def _sample(self, plant, noise: dict) -> None:
-        cm = plant.rangefinder_cm(RANGEFINDER_MAX_M)
-        self._mm = -1 if cm < 0 else max(0, round(_noisy(cm * 10.0, noise.get("range_mm", 0.0))))
+        fdm = plant.fdm
+        tilt = math.cos(fdm["attitude/phi-rad"]) * math.cos(fdm["attitude/theta-rad"])
+        if tilt < 0.5:
+            self._mm = -1
+            return
+        distance_m = fdm["position/h-agl-ft"] * FT / tilt
+        self._mm = -1 if distance_m > RANGEFINDER_MAX_M else max(0, round(_noisy(distance_m * 1000, noise.get("range_mm", 0.0))))
 
 
 @dataclass(frozen=True)
@@ -210,20 +200,9 @@ class TruthState:
     sideslip_deg: float
 
 
-class Controller:
-    """A flight controller script: write setup() and loop(). loop() runs rate_hz times per simulated second; before
-    each call the sensors hold fresh readings, and after it esc[] and servo[] go to the aircraft.
+class Hardware:
+    """The same simulated sensors and PWM outputs for every flight controller."""
 
-    Hardware: imu, baro, mag, gps, pitot, rangefinder (see their classes for units).
-    Outputs: esc[i] (motor i in the export's order) and servo[i] (S1 = servo[0]), pulse widths in us, PWM_MIN_US ..
-    PWM_MAX_US; they keep their value between loops.
-    Time: micros(), millis() (simulated). log(name, value) adds a flight-log column; stop() ends the run.
-    truth: the simulator's TruthState, fresh before each loop(); a real flight controller has nothing like it, so use
-    it for scripting around the flight, not for control.
-    sensor_noise: Gaussian standard deviations, in the physical units before the part's conversion, by name: accel_g,
-    gyro_dps, baro_pa, mag_gauss, gps_m, gps_m_s, pitot_pa, range_mm."""
-
-    rate_hz = 100.0
     gps_hz = 10.0
     sensor_noise: dict = {}
 
@@ -235,29 +214,10 @@ class Controller:
         self._time_us = 0
         self._next_gps_us = 0
         self._logged: dict[str, float] = {}
-        self._stopped = False
-        self.truth: TruthState | None = None  # set before setup()
-
-    def setup(self) -> None:
-        pass
-
-    def loop(self) -> None:
-        pass
-
-    def micros(self) -> int:
-        return self._time_us
-
-    def millis(self) -> int:
-        return self._time_us // 1000
-
-    def log(self, name: str, value: float) -> None:
-        self._logged[name] = value
-
-    def stop(self) -> None:
-        self._stopped = True
+        self.truth: TruthState | None = None  # set before run(flight)
 
     def _sample(self, plant, time_us: int) -> None:
-        """Fresh readings from the plant at time_us, and its truth (the runner's call, before setup() and every loop())."""
+        """Fresh readings from the plant at time_us, and its truth (the runner's call, before run(flight) and every simulator tick)."""
         self._time_us = time_us
         state, fdm = plant.truth(), plant.fdm
         self.truth = TruthState(
@@ -291,25 +251,3 @@ class Controller:
             columns |= {"gps_lat": fix.lat, "gps_lon": fix.lon, "gps_height_mm": fix.height_msl_mm, "gps_speed_mm_s": fix.ground_speed_mm_s,
                         "gps_heading": fix.heading_motion}
         return columns
-
-
-class ScriptError(Exception):
-    pass
-
-
-def controller_names(directory) -> list[str]:
-    """The scripts in a project's controllers/ directory, by name."""
-    return sorted(path.stem for path in directory.glob("*.py")) if directory.is_dir() else []
-
-
-def load_controller(directory, name: str) -> type[Controller]:
-    """The one Controller subclass defined in directory/<name>.py."""
-    path = directory / f"{name}.py"
-    spec = importlib.util.spec_from_file_location(f"controller_script_{name}", path)
-    module = importlib.util.module_from_spec(spec)
-    spec.loader.exec_module(module)
-    found = [item for item in vars(module).values()
-             if isinstance(item, type) and issubclass(item, Controller) and item is not Controller and item.__module__ == module.__name__]
-    if len(found) != 1:
-        raise ScriptError(f"{path}: needs exactly one Controller subclass, found {[item.__name__ for item in found]}")
-    return found[0]

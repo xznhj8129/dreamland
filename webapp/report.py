@@ -1,8 +1,11 @@
 """Structured editor reports from the same resolved results as the text report."""
 
+from __future__ import annotations
+
 from dataclasses import dataclass, field
 import math
 
+from libs.airframe import BATTERY_PART_NAME
 from libs.aero import AeroResult, stability_verdict
 from libs.geometry import (
     GRAMS_FORCE_PER_NEWTON,
@@ -12,6 +15,45 @@ from libs.geometry import (
 from libs.propulsion import MotorPoints, PropulsionSummary, summary_lines
 from libs.report import VERDICT_LEVELS
 from libs.reportline import ReportLine
+
+
+@dataclass(frozen=True)
+class ReportTarget:
+    kind: str
+    index: int
+    label: str
+
+
+@dataclass(frozen=True)
+class ReportNotice:
+    text: str
+    level: str
+    target: ReportTarget | None
+
+
+def problem_target(resolved: ResolvedAirframe, problem: str) -> ReportTarget | None:
+    # Geometry checks name their affected components; map those exact diagnostic prefixes to editor selections.
+    for index, volume in enumerate(resolved.airframe.volumes):
+        if problem.startswith(
+            (f"volume {volume.name!r} ", f"volumes {volume.name!r} and ")
+        ):
+            return ReportTarget("volume", index, volume.name)
+    for index, part in enumerate(resolved.airframe.parts):
+        if problem.startswith((f"part {part.name!r} ", f"parts {part.name!r} and ")):
+            return (
+                ReportTarget("battery", 0, part.name)
+                if part.name == BATTERY_PART_NAME
+                else ReportTarget("part", index, part.name)
+            )
+    if problem.startswith(("part 'battery' ", "parts 'battery' and ")):
+        return ReportTarget("battery", 0, "battery")
+    for index, surface in enumerate(resolved.surfaces):
+        if problem.startswith(f"surface {surface.name!r} "):
+            return ReportTarget("surface", index, surface.name)
+    for index in range(len(resolved.sections)):
+        if problem.startswith(f"section {index + 1}:"):
+            return ReportTarget("section", index, f"section {index + 1}")
+    return None
 
 
 @dataclass(frozen=True)
@@ -37,9 +79,10 @@ class ReportTable:
 class ReportSection:
     title: str
     metrics: list[ReportMetric] = field(default_factory=list)
-    notes: list[ReportLine] = field(default_factory=list)
+    notes: list[ReportLine | ReportNotice] = field(default_factory=list)
     table: ReportTable | None = None
     collapsible: bool = False
+    children: list[ReportSection] = field(default_factory=list)
 
 
 @dataclass(frozen=True)
@@ -210,6 +253,11 @@ def geometry_sections(resolved: ResolvedAirframe) -> list[ReportSection]:
             f"{fuselage.section.width_m * 1000:.1f} × {fuselage.section.height_m * 1000:.1f} mm",
         ),
     ]
+    for index, row in enumerate(airframe.sections.per_section):
+        if row.section.width_m is not None or row.section.height_m is not None or row.section.shape is not None:
+            profile = row.section.resolve(fuselage.section)
+            metrics.append(ReportMetric(f"Loft S{index + 1} before end taper",
+                                        f"{profile.width_m * 1000:.1f} × {profile.height_m * 1000:.1f} mm · shape {profile.shape:g}"))
     if airframe.preset is not None:
         metrics.append(ReportMetric("Preset", airframe.preset.name))
     sections = [
@@ -273,7 +321,7 @@ def aero_sections(
     weight = sum(resolved.mass_kg) / 2 * STANDARD_GRAVITY_M_S2
     sections = [
         ReportSection(
-            "Static stability",
+            "Static stability estimate",
             stability_metrics(resolved, aero)
             + [
                 ReportMetric("Neutral point", f"{aero.x_np_m:.4f} m"),
@@ -583,7 +631,10 @@ def build_report_pages(
         summary.append(
             ReportSection(
                 "Layout problems",
-                notes=[ReportLine(problem, "problem") for problem in problems],
+                notes=[
+                    ReportNotice(problem, "problem", problem_target(resolved, problem))
+                    for problem in problems
+                ],
             )
         )
     if propulsion is not None:
@@ -593,18 +644,22 @@ def build_report_pages(
     if aero is not None:
         summary.append(
             ReportSection(
-                "Stability at a glance",
+                "Static stability estimate",
                 stability_metrics(resolved, aero),
                 [
                     ReportLine(
-                        "See Aero for neutral point, forces and the angle-of-attack sweep."
+                        "Static pitch estimate at the editor operating point, not a flight-response verdict. See SIM for dynamic response; Aero for the sweep."
                     )
                 ],
             )
         )
     else:
         summary.append(ReportSection("Aerodynamics", notes=[ReportLine(status)]))
-    summary.extend(geometry_sections(resolved))
+    summary.append(
+        ReportSection(
+            "Geometry details", children=geometry_sections(resolved), collapsible=True
+        )
+    )
     return ReportPages(
         summary,
         mass_sections(resolved),

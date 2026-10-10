@@ -59,6 +59,7 @@ def snapshot(state: AppState) -> dict[str, Any]:
         "definition_revision": state.definition_revision,
         "library_revision": state.library_revision,
         "definition_valid": state.definition_valid,
+        "dirty": state.dirty,
         "preset_status": preset_status(state.definition),
         # The current preset label's spars (libs.presets.preset_spars 34-37): the surfaces form prefills a new spars
         # block from these, and its carry-through (40-42) for the nested block; null without either.

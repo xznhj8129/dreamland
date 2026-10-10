@@ -215,6 +215,7 @@
                 "direction": "pusher",
                 "spin": "cw",
                 "thrust_axis_tilt_deg": 0.0,
+                "holes": null,
                 "pod": {
                     "diameter_m": 0.035,
                     "flat_length_m": 0.02,
@@ -313,25 +314,31 @@
         "per_section": [
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.047
             },
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.065
             },
             {
-                "solid": true
+                "solid": true,
+                "section": {}
             },
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.122
             },
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.055
             },
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.015
             }
         ],

@@ -8,12 +8,15 @@
 
 /** GET /api/sim/options: the panel's option lists for the current project (webapp.sim.options). */
 export interface SimOptions {
-  /** Controller script names in the project's controllers/ (libs.controller.controller_names). */
+  aero_model: string
+  scenario_templates: Record<string, SimResource>
+  firmware: string
+  /** Available command modules in controllers/ (libs.scenario.CONTROLLERS). */
   controllers: string[]
   /** The project's inav/*.txt diffs, each with the label the Tk view showed ("SITL diff: ...", "real FC diff: ..."). */
   inav_configs: { file: string; label: string }[]
   /** The scenarios the current airframe can fly; empty means no valid airframe. */
-  scenarios: string[]
+  scenarios: Record<string, string[]>
   /** The starts those scenarios allow (air, ground, catapult, rail). */
   starts: string[]
   /** One row per libs.simrun START_OPTIONS entry, in order; blank input = the runner's default. A condition's
@@ -22,23 +25,51 @@ export interface SimOptions {
   /** The defaults each launch start shows as its fields' placeholders, keyed by START_OPTIONS key (a rail has no
    *  launch-speed). */
   launcher_defaults: Record<string, Record<string, number>>
+  condition_defaults: Record<string, number>
   default_duration_s: number
 }
 
 /** POST /api/sim/run body (webapp.sim._plan): what one run request carries. */
 export interface SimStart {
-  controller: 'inav' | 'script'
-  /** The script name when controller is "script". */
-  script?: string
-  /** The INAV scenario when controller is "inav". */
+  clock?: 'realtime' | 'stepped' | 'stepped-faster'
+  rate?: string
+  msp?: boolean
+  mavlink?: boolean
+  controller: string
+  /** The scenario name in scenarios/<controller>/. */
   scenario?: string
   start: string
   /** A value per START_OPTIONS key ("wind-from" for wind_from); blank values are omitted. */
   conditions?: Record<string, string>
   /** An inav/*.txt file name, or "generated" (absent = generated from the design). */
   inav_config?: string
-  /** Simulated seconds, script runs only. */
+  /** Maximum simulated seconds for any scenario. */
   duration?: string
+}
+
+export interface SimResource {
+  source: string
+  readonly: boolean
+  initial: Record<string, number | string>
+  note: string
+  error?: string | null
+  scenario?: ScenarioOutline | null
+}
+
+export interface ScenarioOutline {
+  description: string
+  parameters: Record<string, unknown>
+  phases: Record<string, string>
+  telemetry: { fields: string[]; rate_hz: number } | null
+}
+
+export async function simResource(controller: string, kind: string, name: string, source?: string, create = false): Promise<SimResource> {
+  const response = source === undefined
+    ? await fetch(`/api/sim/resource?${new URLSearchParams({ controller, kind, name })}`)
+    : await fetch('/api/sim/resource', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({controller, kind, name, source, create}) })
+  const payload = await response.json()
+  if (!response.ok) throw new Error(payload.message ?? 'Could not open SIM file')
+  return payload as SimResource
 }
 
 /** One GET /api/sim/state flight-log tail (webapp.sim._read_log). */
@@ -66,6 +97,7 @@ export interface SimState {
   command: string
   stdout: { offset: number; lines: string[] }
   log: SimLogState
+  telemetry_file: string | null
 }
 
 export interface SimStartResult {
@@ -78,7 +110,7 @@ function asSimOptions(payload: unknown): SimOptions | null {
   const candidate = payload as Partial<SimOptions>
   if (!Array.isArray(candidate.controllers) || !candidate.controllers.every((name) => typeof name === 'string')) return null
   if (!Array.isArray(candidate.inav_configs)) return null
-  if (!Array.isArray(candidate.scenarios) || !Array.isArray(candidate.starts) || !Array.isArray(candidate.start_options)) return null
+  if ((typeof candidate.scenarios !== "object" || candidate.scenarios === null) || !Array.isArray(candidate.starts) || !Array.isArray(candidate.start_options)) return null
   if (typeof candidate.launcher_defaults !== 'object' || candidate.launcher_defaults === null) return null
   if (typeof candidate.default_duration_s !== 'number') return null
   return candidate as SimOptions

@@ -2,9 +2,13 @@ import type { SceneItem } from './renderer'
 
 export type LineLevel = 'info' | 'warning' | 'problem'
 
+export type ComponentKind = 'surface' | 'part' | 'volume' | 'mount' | 'section' | 'battery' | 'fuselage'
+export interface ComponentSelection { kind: ComponentKind; index: number; label?: string }
+
 export interface ReportLine {
   text: string
   level: LineLevel
+  target?: ComponentSelection | null
 }
 
 export interface ReportMetric {
@@ -29,6 +33,7 @@ export interface ReportSection {
   notes: ReportLine[]
   table: ReportTable | null
   collapsible: boolean
+  children: ReportSection[]
 }
 
 export interface ReportPages {
@@ -89,7 +94,14 @@ export interface PackSummary {
   capacity_mah: number
 }
 
+export interface ResolvedMassPoint {
+  name: string
+  mass_kg: [number, number]
+  estimate_kg: number | null
+}
+
 export interface ResolvedSnapshot {
+  mass_points: ResolvedMassPoint[]
   sections: ResolvedSection[]
   controls?: ResolvedControl[]
   [key: string]: unknown
@@ -162,6 +174,7 @@ export interface Snapshot {
   /** Bumped on every accepted part-library save/delete (webapp/library.py); the editor-context cache follows it. */
   library_revision: number
   definition_valid: boolean
+  dirty: boolean
   preset_status: string
   /** libs.presets.preset_spars for the definition's preset label: new spars prefilled from it, or null. */
   preset_spars: Record<string, unknown> | null
@@ -187,7 +200,7 @@ export interface StateMessage extends Snapshot {
 /** webapp/model3d.py build_model3d: one component as a flat triangle mesh in metres, airframe frame (x forward). */
 export interface Model3DMesh {
   name: string
-  kind: 'body' | 'panel' | 'control' | 'volume' | 'part' | 'motor' | 'prop' | 'rod' | 'spar'
+  kind: 'body' | 'pod' | 'panel' | 'control' | 'volume' | 'part' | 'motor' | 'prop' | 'rod' | 'spar'
   /** Flat x,y,z triples. */
   positions: number[]
   indices: number[]
@@ -283,14 +296,7 @@ export interface EditorContext {
   layout_panel_counts: Record<string, number>
   placement_keys: string[]
   orientation_keys: string[]
-  new_surface: Record<string, unknown>
-  new_control: Record<string, unknown>
-  new_spars: Record<string, unknown>
-  new_carry_through: Record<string, unknown>
-  new_root_base: Record<string, unknown>
   new_mount: Record<string, unknown>
-  new_volume: Record<string, unknown>
-  new_pod: Record<string, unknown>
   /** Propulsion and wiring (webapp/editor.py context()): model labels, add templates and motorlib combo lists. */
   battery_model_labels: Record<string, string>
   new_motor: Record<string, unknown>

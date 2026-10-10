@@ -1,0 +1,68 @@
+{
+    "schema": "airframe/2",
+    "powered": false,
+    "vtol": false,
+    "tailsitter": false,
+    "name": "test2",
+    "operating_point": {
+        "aoa_deg": 3.0,
+        "airspeed_m_s": 20.0,
+        "altitude_m": 0.0
+    },
+    "print": {
+        "material": "elegoo_pla_plus",
+        "bulk_density_kg_m3": 318.3,
+        "printer_bed_m": [
+            0.24,
+            0.24,
+            0.25
+        ]
+    },
+    "fuselage": {
+        "length_m": 0.4,
+        "section": {
+            "width_m": 0.05,
+            "height_m": 0.05,
+            "shape": 2.0,
+            "wall_radial_m": 0.00125
+        },
+        "nose": {
+            "profile": "elliptical",
+            "length_m": 0.05,
+            "params": {}
+        },
+        "tail": {
+            "profile": "parabolic",
+            "length_m": 0.05,
+            "params": {
+                "k_prime": 1.0
+            }
+        },
+        "joints": {
+            "type": "radial_screws",
+            "count": 8,
+            "screw": "M3",
+            "insertion_depth_m": 0.01,
+            "coupler_wall_m": 0.0045,
+            "fit_clearance_m": 0.0003,
+            "socket_wall_m": 0.00125,
+            "hole_edge_dist_m": 0.006,
+            "hole_diameter_m": 0.003,
+            "hole_angle_offset_deg": 22.5
+        },
+        "channels": []
+    },
+    "surfaces": [],
+    "volumes": [],
+    "parts": [],
+    "sections": {
+        "cuts_m": [],
+        "per_section": [
+            {
+                "solid": false,
+                "section": {}
+            }
+        ],
+        "cut_joints": []
+    }
+}

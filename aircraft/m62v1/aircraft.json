@@ -4,7 +4,6 @@
     "vtol": true,
     "tailsitter": true,
     "name": "62mm Quad 7in v1",
-    "notes": "Pure dart: m62v2 without the horizontal main-wing section (section 3, 230-380 mm, and its main-wing removed; everything aft moved 150 mm forward). Section masses as in m62v2.",
     "preset": "tube62",
     "operating_point": {
         "aoa_deg": 5.0,
@@ -21,7 +20,7 @@
         ]
     },
     "fuselage": {
-        "length_m": 0.52,
+        "length_m": 0.5,
         "section": {
             "width_m": 0.062,
             "height_m": 0.062,
@@ -72,7 +71,7 @@
             "sweep_le_deg": 25.0,
             "incidence_deg": 0.0,
             "incidence_mode": "symmetric",
-            "airfoil": "naca0012",
+            "airfoil": "naca0016",
             "spars": {
                 "material": "carbon_rod",
                 "diameter_m": 0.0064,
@@ -91,16 +90,16 @@
         },
         {
             "name": "tailfin",
-            "x_root_le_m": 0.423,
+            "x_root_le_m": 0.4,
             "layout": "+",
             "fin_position": "top",
             "dihedral_deg": 0.0,
             "vertical_offset": 0.0,
             "root": "axis",
-            "span_m": 0.055,
+            "span_m": 0.04,
             "chord_root_m": 0.1,
             "chord_tip_m": 0.005,
-            "sweep_le_deg": 60.0,
+            "sweep_le_deg": 67,
             "incidence_deg": 0.0,
             "incidence_mode": "symmetric",
             "airfoil": "naca0008",
@@ -180,18 +179,20 @@
     "volumes": [
         {
             "name": "battery",
-            "shape": "box",
-            "x_m": 0.14875,
+            "shape": "rounded_box",
+            "x_m": 0.14655,
             "size_m": [
-                0.11,
-                0.0355,
-                0.049
-            ]
+                0.12,
+                0.04,
+                0.05
+            ],
+            "axis": "x",
+            "corner_radius_m": 0.004
         },
         {
             "name": "ESC",
             "shape": "bore",
-            "x_m": 0.416,
+            "x_m": 0.40014,
             "length_m": 0.05
         }
     ],
@@ -201,34 +202,47 @@
             "part": "esc:esc-4in1-60a",
             "volume": "ESC",
             "mass_kg": 0.0
+        },
+        {
+            "name": "FC",
+            "part": "fc:fc-generic-30x30",
+            "x_m": 0.26955,
+            "y_m": 0.0,
+            "z_m": 0,
+            "pitch_deg": 90
         }
     ],
     "sections": {
         "cuts_m": [
             0.08248,
-            0.23,
-            0.38,
-            0.452
+            0.24231,
+            0.37281,
+            0.42827
         ],
         "per_section": [
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.047
             },
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.065
             },
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.122
             },
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.055
             },
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.015
             }
         ],

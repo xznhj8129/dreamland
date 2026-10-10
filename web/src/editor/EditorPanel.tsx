@@ -14,18 +14,32 @@ import type { EditorSession, FormApi } from './session'
 import { SurfacesTab } from './SurfacesTab'
 import { VolumesTab } from './VolumesTab'
 import { WiringTab } from './WiringTab'
+import { useSelection } from './selection'
 
-const DESIGN_TABS = ['Airframe', 'Fuselage', 'Sections', 'Surfaces', 'Volumes', 'Motor mounts'] as const
+const DESIGN_TABS = ['Airframe', 'Fuselage', 'Sections', 'Surfaces', 'Volumes', 'Motor mounts', 'Optimization'] as const
 const BUILD_TABS = ['Propulsion', 'Parts', 'Wiring'] as const
 
+const SELECTION_TABS = { surface: 'Surfaces', volume: 'Volumes', mount: 'Motor mounts', section: 'Sections', fuselage: 'Fuselage' } as const
 type Group = 'Design' | 'Build'
 
-/** The Tk editor's notebook (EDITOR_TABS, editor_view.py 82): Design and Build groups with nine tabs. */
+/** Aircraft forms grouped into Design and Build; Optimization is a planned evaluator view. */
 export function EditorPanel({ snapshot }: { snapshot: Snapshot | null }): ReactElement {
+  const { active } = useSelection()
   const [group, setGroup] = useState<Group>('Design')
   const [designTab, setDesignTab] = useState<string>(DESIGN_TABS[0])
   const [buildTab, setBuildTab] = useState<string>(BUILD_TABS[0])
   const [context, setContext] = useState<EditorContext | null>(null)
+
+  useEffect(() => {
+    if (active === null) return
+    if (active.kind === 'part' || active.kind === 'battery') {
+      setGroup('Build')
+      setBuildTab(active.kind === 'part' ? 'Parts' : 'Propulsion')
+    } else {
+      setGroup('Design')
+      setDesignTab(SELECTION_TABS[active.kind])
+    }
+  }, [active])
 
   // Loads once the snapshot is known, and reloads when a part-library save/delete moves library_revision:
   // loadEditorContext refetches only when the revision it is asked under differs from the cached one.
@@ -124,6 +138,10 @@ function EditorForms({ snapshot, context, group, tab, onPresetsChanged }: Editor
       </div>
       <div className="editor-forms" hidden={!design || tab !== 'Motor mounts'}>
         <MountsTab />
+      </div>
+      <div className="editor-forms" hidden={!design || tab !== 'Optimization'}>
+        <h3>Optimization</h3>
+        <p className="form-hint">Planned: choose an objective and ranges on part values, then evaluate candidates in the simulator.</p>
       </div>
       <div className="editor-forms" hidden={design || tab !== 'Propulsion'}>
         <PropulsionTab snapshot={snapshot} />

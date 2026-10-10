@@ -2,20 +2,14 @@ User added TODOs (do not remove/change unless done)
 
 - changing xyz positions entry (which specifically, some must stay mm) from abs mm to relative frac to allow scaling without one-by-one mm adjustment
 
-- rename surface "root offset" to "vertical offset"
-
-- surfaces must not start outside fuselage (seperate bodies)
-
-- scroll zoom still hangs until view change (click-drag)
-
 - fuselage cross-sections with different shapes 
+    * Per-section airframe size and shape overrides (loft), with smooth transitions between sections (deferred).
 
 - SIM:
-    * Re-design testing scenarios to be scripts with starting conditions, measurement points and goal/stop conditions
-    * Scenario method of control for Flight Controller SITL is what a pilot would traditionally use: RC channels.  MSP/Mavlink commands (maybe complicated, not right now)
-    * Center pane should have editor for the current INAV Diff
-    * Start INAV SITL without flight to allow configurator connection
-    * Center pane should have a Scenario text editor where the script can be edited as python
+    * MSP/Mavlink commands (maybe complicated, not right now)
+    * SIM priority: flexibility and realism; editor stability estimate versus JSBSim flight response.
+    * Performance flash card: efficiency, stall speed, sustained turn rate, acceleration/speed per axis, range, maximum altitude.
+    * Optimization tab: optimize for X within user ranges on part values; big outlines and features first.
         
 - Hatches (for now simple rounded rectangle polar cut with width, length, gap; fasteners and hinges deferred)
 
@@ -23,8 +17,6 @@ User added TODOs (do not remove/change unless done)
     * Auto-conduits from wires
     * Wire placement (think drawio, horizontal/vertical)
     
-- Motor mount holes, set in motor mount section; either single-hole D1 or adjustable D1 and D2 diameters (drone motor mount), hole size, center hole diameter + depth, bolt head diameter and depth (remove all material before for bolt entry)
-
 
 
 ---
@@ -61,9 +53,10 @@ Agent added TODOs, freeform, remove done ones
 - D. Aero:
         - Let surfaces use imported DAT airfoils (data/airfoils.json); they take AeroSandbox names only.
 
-- F. JSBSim export (libs/jsbsim.py, sim_inav.py), INAV SITL via inav_development/inav-jsbsim-bench:
+- F. JSBSim export (libs/jsbsim.py, sim_flight.py), INAV SITL via inav_development/inav-jsbsim-bench:
         - FC part position and orientation not used in INAV SITL yet (the script controller's IMU uses them): bench change to read sensors at the FC (lever arm, axes) and matching board alignment in the generated diff.
-        - Aero tables have no downwash between surfaces (AeroBuildup): the sim's pitch stability differs from the builder's (simpleplane Cm -0.34 against -0.13 at AoA 0).
+        - Validate shared forward lifting-line aero against real flight; sideslip and rate damping remain AeroBuildup, with a blended outer envelope.
+        - Expand/validate the 5–50 m/s Reynolds grid and altitude dependence before accepting performance outside it.
         - quadlancer62 hover with INAV 10 default PIDs oscillates (~1 Hz pitch/yaw, tilt to 30 deg): needs a hover tune.
         - NAV ALTHOLD climbs steadily (0.5-1 m/s) at mid stick; unexplained.
         - Fixed-wing INAV tuning (trim, PIDs).
@@ -71,15 +64,14 @@ Agent added TODOs, freeform, remove done ones
         - Fixed-wing ground start (`--start ground`): export wheels or a launcher (structure contacts only now).
 
 - G. Aero validation and optimization:
-        - Fly m62v1 in sim at the logged motor command and pack voltage (Projects/M62X4/logs, 2025-08-22 .06: 30-36 m/s GPS at 57-77 % motor, 21-23 V; sim_inav.py --pack-voltage) and compare speed.
+        - Fly m62v1 in sim at the logged motor command and pack voltage (Projects/M62X4/logs, 2025-08-22 .06: 30-36 m/s GPS at 57-77 % motor, 21-23 V; sim_flight.py --pack-voltage) and compare speed.
         - VSPAERO (/usr/local/bin/vspaero) as a third estimate: fix its divergence (CL ~ -300 at 0 deg) on AeroSandbox's export_OpenVSP_vspscript geometry first.
-        - Performance evaluator (headless, no INAV): aero tables + motor/prop model -> level trim over speed: stall speed, best-range/endurance speed, Wh/km, hover throttle, static margin, mass.
-        - Optimizer on the evaluator: wing span/chords/sweep/dihedral/incidence, wing position, X/H, battery position, motor/prop; constraints: printer bed, static-margin band, stall speed, hover throttle, wing mass. Best few flown in SITL (sim_inav.py cruise).
+        - Performance evaluator: stall detection, sustained turns, axis acceleration/rate limits, service ceiling; trim feasibility separate from simple-pilot limits.
+        - Optimizer on the evaluator: wing span/chords/sweep/dihedral/incidence, wing position, X/H, battery position, motor/prop; constraints: printer bed, static-margin band, stall speed, hover throttle, wing mass. Best few flown in SITL (sim_flight.py).
         - CFD, GPU (on ice): FluidX3D (Software/other_software/FluidX3D, built): compile and run cfd/fluidx3d_setup.cpp; runner cfd_fluidx3d.py (install setup as src/quadrocket_setup.cpp, enable FORCE_FIELD/EQUILIBRIUM_BOUNDARIES/SUBGRID, BENCHMARK off, fused binary STL in mm, average the last flow-through, compare with LL/AeroBuildup).
         - CFD, CPU: OpenFOAM (Docker opencfd/openfoam-default) simpleFoam k-omega SST half-model AoA sweeps, overnight.
 
 - Printable sections (libs/cad.py export_sections):
-        - m62v2 and m62v1: tailfin root chord (573-673 mm) runs past the 602 mm cut into the tail section (S05 exports as 2 solids).
         - Cut fuselage.channels (a channel has no radial position yet).
         - Blend fin root base (surfaces[].root_base, recorded only) into the body.
         - Build auto sectioning (PLAN.md section 4).

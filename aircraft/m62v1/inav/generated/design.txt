@@ -1,9 +1,9 @@
-# SITL diff from the design, rewritten by sim_inav.py on every run from it; to edit, copy it into inav/
+# SITL diff from the design, rewritten by controllers/inav.py on every run from it; to edit, copy it into inav/
 # quadrocketbuilder export of 62mm Quad 7in v1: INAV mixer profiles of the tailsitter, structured as the real m62v1
 # config that flew forward (Aug 2025): profile 1 hover (multirotor, tailsitter offset), profile 2 forward flight on
 # the motors (multirotor platform, nose-first mix). Motor outputs in INAV quad X order where it applies.
 set throttle_idle = 8
-set nav_mc_hover_thr = 1395    # predicted motor command 0.443 for 2.81 N per motor
+set nav_mc_hover_thr = 1391    # predicted motor command 0.440 for 2.77 N per motor
 mixer_profile 1
 set platform_type = MULTIROTOR
 set tailsitter_orientation_offset = ON
@@ -14,15 +14,6 @@ mmix 0 1.000 -1.000 +1.000 +1.000    # motor 1 qrwing-7in 1, ccw
 mmix 1 1.000 -1.000 -1.000 -1.000    # motor 1 qrwing-7in 3, cw
 mmix 2 1.000 +1.000 +1.000 -1.000    # motor 1 qrwing-7in 2, cw
 mmix 3 1.000 +1.000 -1.000 +1.000    # motor 1 qrwing-7in 4, ccw
-smix reset
-smix 0 0 1 -100 0 -1    # S1 pitch: C1 wing 1 panel 1
-smix 1 0 0 100 0 -1    # S1 yaw: C1 wing 1 panel 1
-smix 2 1 1 -100 0 -1    # S2 pitch: C4 wing 1 panel 2
-smix 3 1 0 -100 0 -1    # S2 yaw: C4 wing 1 panel 2
-smix 4 2 1 -100 0 -1    # S3 pitch: C2 wing 1 panel 3
-smix 5 2 0 -100 0 -1    # S3 yaw: C2 wing 1 panel 3
-smix 6 3 1 -100 0 -1    # S4 pitch: C3 wing 1 panel 4
-smix 7 3 0 100 0 -1    # S4 yaw: C3 wing 1 panel 4
 mixer_profile 2
 set platform_type = MULTIROTOR
 set tailsitter_orientation_offset = OFF
@@ -33,15 +24,6 @@ mmix 0 1.000 -1.000 +1.000 -1.000    # motor 1 qrwing-7in 1, ccw
 mmix 1 1.000 +1.000 -1.000 -1.000    # motor 1 qrwing-7in 3, cw
 mmix 2 1.000 +1.000 +1.000 +1.000    # motor 1 qrwing-7in 2, cw
 mmix 3 1.000 -1.000 -1.000 +1.000    # motor 1 qrwing-7in 4, ccw
-smix reset
-smix 0 0 1 -100 0 -1    # S1 pitch: C1 wing 1 panel 1
-smix 1 0 2 100 0 -1    # S1 yaw: C1 wing 1 panel 1
-smix 2 1 1 -100 0 -1    # S2 pitch: C4 wing 1 panel 2
-smix 3 1 2 -100 0 -1    # S2 yaw: C4 wing 1 panel 2
-smix 4 2 1 -100 0 -1    # S3 pitch: C2 wing 1 panel 3
-smix 5 2 2 -100 0 -1    # S3 yaw: C2 wing 1 panel 3
-smix 6 3 1 -100 0 -1    # S4 pitch: C3 wing 1 panel 4
-smix 7 3 2 100 0 -1    # S4 yaw: C3 wing 1 panel 4
 mixer_profile 1
 # Generated SITL diff of a tailsitter: after the design's mixer, before the bench and battery lines.
 set mag_hardware = FAKE

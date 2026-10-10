@@ -23,6 +23,14 @@ export function formatG(value: number): string {
   return String(rounded)
 }
 
+const FIELD_NAMES: Record<string, string> = {
+  x_root_le_m: 'Root leading-edge x', chord_root_m: 'Root chord', chord_tip_m: 'Tip chord',
+  sweep_le_deg: 'Leading-edge sweep', chord_start: 'Hinge position (chord fraction)',
+  span_start: 'Start (span fraction)', span_end: 'End (span fraction)', k_prime: "Parabolic K′",
+  fin_position: 'Fin position', wall_radial_m: 'Radial wall thickness',
+  vertical_offset: 'Vertical offset (body radius fraction)', bulk_density_kg_m3: 'Printed bulk density',
+}
+
 /** editor_view.field_label (104-111). */
 export function fieldLabel(key: string, context: EditorContext): string {
   let base = key
@@ -47,7 +55,7 @@ export function fieldLabel(key: string, context: EditorContext): string {
               : key.endsWith('_m')
                 ? 'm'
                 : ''
-  const label = base.replace(/_/g, ' ')
+  const label = FIELD_NAMES[key] ?? base.replace(/_/g, ' ')
   return unit === '' ? label : `${label} (${unit})`
 }
 
@@ -60,6 +68,7 @@ export function displayFactor(key: string, context: EditorContext): number {
 export function formatValue(key: string, value: unknown, context: EditorContext): string {
   if (value === null || value === undefined) return ''
   if (Array.isArray(value)) {
+    if (value.length === 2 && value[0] === value[1] && typeof value[0] === 'number') return formatG(value[0] * displayFactor(key, context))
     return value.map((item) => formatG((typeof item === 'number' ? item : Number.NaN) * displayFactor(key, context))).join('-')
   }
   if (typeof value === 'number') {
@@ -89,7 +98,7 @@ function parseInteger(text: string): number {
  */
 export function parseValue(key: string, text: string, existing: unknown, context: EditorContext): unknown {
   const trimmed = text.trim()
-  if (typeof existing === 'string') return trimmed
+  if (typeof existing === 'string' || key === 'notes' || key === 'name') return trimmed
   if (context.integer_keys.includes(key)) return parseInteger(trimmed)
   if (key === 'mass_kg') {
     const separator = trimmed.indexOf('-', 1)

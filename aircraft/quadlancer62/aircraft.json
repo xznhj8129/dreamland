@@ -251,30 +251,37 @@
         "per_section": [
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.047
             },
             {
                 "solid": true,
+                "section": {},
                 "empty_mass_kg": 0.065
             },
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.085
             },
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.05
             },
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.055
             },
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.122
             },
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.015
             }
         ],

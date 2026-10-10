@@ -7,7 +7,8 @@ Solid-geometry export of the assembled airframe and of its printable parts, and 
 ```text
 CADView [fill]
 
-    * SolidGeometryExportPanel [top]
+    * Export cards [two-column grid on wide screens, single column below 1000 px]
+        Whole airframe, Printable parts, Drawings, FreeCAD varsets
         - STEP mode radio buttons
         - propeller-disc checkbox
         - Export STEP button
@@ -22,15 +23,13 @@ CADView [fill]
 
 ```text
 SolidGeometryExportPanel
-    - title = "Solid Geometry Export"
+    - per-export results show written file links and notes
     - STEP mode radio options:
         "Component assembly (named parts, for CAD)"
         "Fused OML (single watertight solid, for CFD)"
     - checkbox: "Include propeller discs (actuator-disc CFD markers)"
-    - Export STEP opens a save dialog (in the project's cad/, default <project>.step), then
-      writes the current analysis geometry in the selected mode
-    - Export STL opens a save dialog (in cad/, default <project>.stl), then
-      writes a fused single mesh
+    - Export STEP writes cad/<project>.step in the selected mode
+    - Export STL writes cad/<project>.stl as a fused single mesh
     - Export printable sections writes every fuselage section (S01.., with the surfaces and pods
       attached in it) and every coupler (C01.., by cut) as STEP and STL into cad/sections/;
       the status line gives the part count; problems (a root chord past a section end, a part

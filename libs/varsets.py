@@ -85,6 +85,9 @@ def airframe_varset(airframe: Airframe) -> dict:
         groups["Sections"] |= {f"Cut{index}": length(cut), f"Cut{index}Joint": text(joint)}
     for index, row in enumerate(sections.per_section, start=1):
         groups["Sections"][f"Section{index}Solid"] = flag(row.solid)
+        for key, value in (("Width", row.section.width_m), ("Height", row.section.height_m), ("Shape", row.section.shape)):
+            if value is not None:
+                groups["Sections"][f"Section{index}{key}"] = number(value) if key == "Shape" else length(value)
     return groups
 
 
@@ -136,6 +139,12 @@ def mount_varset(mount: Mount) -> dict:
         pod = mount.pod
         groups["Pod"] = {"Diameter": length(pod.diameter_m), "FlatLength": length(pod.flat_length_m), "CurveLength": length(pod.curve_length_m),
                          "Profile": text(pod.profile)}
+    if mount.holes is not None:
+        holes = mount.holes
+        groups["MountingHoles"] = {"Pattern": text(holes.pattern), "D1": length(holes.d1_m), "D2": length(holes.d2_m),
+                                  "HoleDiameter": length(holes.hole_diameter_m), "CenterDiameter": length(holes.center_diameter_m),
+                                  "CenterDepth": length(holes.center_depth_m), "HeadDiameter": length(holes.head_diameter_m),
+                                  "HeadDepth": length(holes.head_depth_m)}
     return groups
 
 

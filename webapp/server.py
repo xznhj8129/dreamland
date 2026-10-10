@@ -70,6 +70,8 @@ def create_app(state: AppState, dist_dir: Path) -> web.Application:
     app.router.add_post("/api/cad/sections", handle_cad_sections)
     app.router.add_post("/api/cad/drawings", handle_cad_drawings)
     app.router.add_post("/api/cad/varsets", handle_cad_varsets)
+    app.router.add_get("/api/sim/resource", handle_sim_resource)
+    app.router.add_post("/api/sim/resource", handle_sim_resource)
     app.router.add_get("/api/sim/options", handle_sim_options)
     app.router.add_post("/api/sim/run", handle_sim_run)
     app.router.add_post("/api/sim/abort", handle_sim_abort)
@@ -523,6 +525,18 @@ async def handle_cad_drawings(request: web.Request) -> web.Response:
 async def handle_cad_varsets(request: web.Request) -> web.Response:
     """POST /api/cad/varsets: one FreeCAD varset JSON per varset into cad/varsets/."""
     return await _run_cad_export(_state(request), cad_export.export_varsets)
+
+
+async def handle_sim_resource(request: web.Request) -> web.Response:
+    try:
+        if request.method == "GET":
+            payload = sim_backend.read_resource(_state(request), request.query.get("kind", ""), request.query.get("name", ""), request.query.get("controller", ""))
+        else:
+            body = await _json_object(request)
+            payload = sim_backend.save_resource(_state(request), body.get("kind", ""), body.get("name", ""), body.get("source"), body.get("controller", ""), body.get("create", False))
+    except (ValueError, OSError, SyntaxError) as error:
+        return web.json_response({"message": str(error)}, status=400)
+    return web.json_response(payload)
 
 
 async def handle_sim_options(request: web.Request) -> web.Response:

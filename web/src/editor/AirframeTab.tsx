@@ -45,7 +45,7 @@ export function AirframeTab(): ReactElement {
     <>
       <Card title="Airframe">
         <EntryField path={['name']} unitKey="name" />
-        <EntryField path={['notes']} unitKey="notes" optional blankHint="blank = none" />
+        <EntryField path={['notes']} unitKey="notes" />
         <div className="form-row">
           <span className="form-label">type</span>
           <div className="check-row">

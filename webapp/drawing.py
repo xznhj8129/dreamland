@@ -12,7 +12,7 @@ import math
 from typing import Any
 
 from libs.airframe import BATTERY_PART_NAME
-from libs.geometry import superellipse_radius
+from libs.geometry import body_section_at, superellipse_radius
 from libs.graphics import (
     POINT_MASS_MARK_PX, ROD_COLOR, SECTION_OUTLINE_SAMPLES, convex_hull, draw_canvas_view, longitudinal_transverse,
     part_corners, rounded_rectangle, volume_half_extents,
@@ -387,7 +387,7 @@ def _front_structure_handles(resolved, view: ViewState, project, metrics: dict[s
             coords: list[float] = []
             for sample in range(SECTION_OUTLINE_SAMPLES + 1):
                 angle = 2.0 * math.pi * sample / SECTION_OUTLINE_SAMPLES
-                radius = superellipse_radius(half_y, half_z, resolved.body.shape, angle)
+                radius = superellipse_radius(half_y, half_z, body_section_at(resolved.body, volume.x_m).shape, angle)
                 coords += [center_x + radius * math.cos(angle) * scale, center_y - radius * math.sin(angle) * scale]
         elif volume.shape == "cylinder" and volume.axis == "x":
             coords = _circle_points(center_x, center_y, half_y * scale)

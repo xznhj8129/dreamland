@@ -1,6 +1,6 @@
 # SIM View
 
-This file covers flying the current project's airframe in simulation, with INAV SITL or one of the project's flight controller scripts, and watching its flight log.
+This file covers flying the current project's airframe in simulation, with the selected controller and a scenario script, and watching its flight log.
 
 ## Layout
 
@@ -9,11 +9,14 @@ SimView [fill, split:h]
 
     * LeftPane [split:v]
         SITLRunPanel
-        SummaryPanel
+        RunOutputPanel
 
     * MiddlePane [ui:tabs]
         Plots     FlightLogPlot
         3D View   FlightPath3D
+        Scenario  Python editor
+        INAV diff Diff editor
+        Performance Measured cards and speed-sweep samples
 
     * RightPane
         XAxisPanel
@@ -33,34 +36,35 @@ SimView split behavior
 SITLRunPanel [arrange:column]
 
     - Flight controller [ui:dropdown, readonly]
-        values = "INAV SITL", then "script: <name>" for every script in the project's controllers/
-        default = INAV SITL
-        a script greys out Scenario and FC settings and enables Duration
+        values = available controller modules: inav, mcu
+        default = inav
+        selected controller chooses the scenarios/<controller>/ script directory; FC settings apply to INAV
 
     - Scenario [ui:dropdown, readonly]
-        values = the scenarios this aircraft can fly, out of:
+        values = data/scenarios/<controller>/*.py with project scenarios/<controller>/*.py overrides:
             hover        VTOL: hover motor command vs prediction, position hold
-            efficiency   powered: from its top speed, a speed sweep down to the slowest level flight; Wh/km, best range and endurance
+            efficiency   powered: from the upper aero speed grid, a speed sweep down to the slowest level flight; Wh/km, best range and endurance
             top-speed    powered: full-throttle level speed
             controls     any: roll, pitch and yaw stick steps, each checked to move the commanded way
             glide        any: motors off from 1000 m, airspeeds fast to slow until the ground; smallest sink rate, best glide
 
     - Start [ui:dropdown, readonly]
-        air      held level at 150 m: a fixed-wing at its operating airspeed, a tailsitter from rest (forward-flight scenarios)
+        air      held level at 150 m and the operating airspeed unless START or explicit overrides specify otherwise
         ground   take off and transition first (VTOL); hover always starts here
-        catapult the bench's catapult: held and spun up, fired along its rail, then the ordinary air-start hold
-        rail     the bench's unpowered launch rail: the motor's own thrust runs it up, then the ordinary air-start hold
-        only the starts this aircraft and scenario can use are offered (catapult/rail: fixed wings; a tailsitter takes off standing)
+        catapult the bench's catapult: held and spun up, fired along its rail; forward-flight scenarios then use the air-start hold
+        rail     the bench's unpowered launch rail: the motor's own thrust runs it up; forward-flight scenarios then use the air-start hold
+        catapult and rail are available to fixed wings and tailsitters; ground requires VTOL; hover starts on the ground
 
-    - Start conditions [ui:textbox x13, blank = default]
+    - Start conditions [ui:collapsed group, defaults shown, per-field Override]
         Altitude (m), Speed (m/s), Heading (deg), Latitude, Longitude, Pitch (deg), Roll (deg), Wind from (deg), Wind (m/s)
         Launcher pitch (deg), Launcher length (m), Catapult speed (m/s), Launcher height (m)
-        defaults: 150 m (glide 1000 m), the operating airspeed (tailsitter: from rest), heading 0, the bench's home
+        defaults: START from the scenario, otherwise 150 m, operating airspeed, heading 0, the bench's home
         (Sneedville), level, still air; launcher defaults: catapult 10 deg / 2.0 m / 15 m/s / 1.5 m,
         rail 20 deg / 3.0 m / 1.0 m (the rail is unpowered, so Catapult speed is catapult-only)
-        Altitude, Speed, Pitch and Roll are greyed out on a ground start (standing on the tail, at rest)
-        the launcher fields are greyed out unless a launcher start is chosen, and the selected launcher's
-        defaults show as placeholders; the resolved values appear in the summary's start line
+        defaults come from the runners; Override enables entry; an empty override disables Run
+        only fields applicable to the selected start are shown
+        launcher fields appear for catapult/rail; Catapult speed appears only for catapult
+        the resolved values appear in the summary's start line
         a value that is not a number stops Run and says which; a non-positive launcher value stops it too
 
     - FC settings [ui:dropdown, readonly]
@@ -71,8 +75,8 @@ SITLRunPanel [arrange:column]
         "generated" and a real FC diff are written to inav/generated/ (rewritten on every such run), and that file flies;
         to edit one, copy it into inav/ and pick it as a SITL diff
 
-    - Duration (s) [ui:textbox, script only]
-        simulated seconds the script flies; default 60
+    - Time limit (s) [ui:textbox]
+        maximum simulated seconds for any scenario; default 600
         a value that is not a number stops Run and says which
 
     - Run [ui:button]
@@ -85,7 +89,7 @@ SITLRunPanel [arrange:column]
         enabled only while a run is going
 
     - StatusText [ui:text]
-        Idle | No valid airframe | Running <scenario>... | Running script: <name>... | Aborting... | Aborted |
+        Idle | No valid airframe | Running <controller>: <scenario>... | Aborting... | Aborted |
         Finished (exit code N)
 ```
 
@@ -95,22 +99,50 @@ SITLRunPanel [arrange:column]
 Run
     - saves the airframe (File -> Save) first; what flies is the file on disk
     - clears the summary and the plot
-    - an INAV run takes real time: the simulation runs at wall-clock speed
-    - a script run is in simulated time, as fast as the computer allows; it ends after Duration, when the script stops it, or on the ground
+    - all controllers: Realtime, Stepped, or Stepped faster; tick rate defaults to 200 Hz; INAV uses the shared build
+    - MSP and MAVLink checkboxes enable external configurator/telemetry links; the internal bench MSP link stays active
+    - shared scenarios are readonly templates; Save copy creates an editable project override
+    - Python scenarios define literal START conditions and run(flight); they own arming, modes, launch, control and stop conditions
+    - START defaults appear in the condition fields; UI start and explicit condition overrides take precedence
+    - changing start method uses only applicable START defaults and names the omitted defaults in run output; incompatible START definitions are refused
+    - New scenario copies the selected controller's example (INAV experiment, MCU stability) into scenarios/<controller>/<name>.py
+    - one run(flight) sequence; import the selected controllers module for commands
+    - optional PARAMETERS and TELEMETRY (fields and rate_hz, maximum 50) apply to every scenario
+    - flight.phase(name, description) gives arbitrary labels in telemetry and the sidebar
+    - flight.sensors, truth, state, raw, initial, elapsed, wait, measure and stop have the same API for every controller
+    - LOG_FIELDS declares extra numeric CSV columns written with flight.log(name, value)
+    - selected telemetry runs alongside every phase on simulator ticks; CSV includes simulated time and phase
+    - telemetry fields: truth (agl_m, roll/pitch/yaw, vn/ve/vd), airspeed_m_s, aoa_deg, sideslip_deg, p/q/r_deg_s, motor1..., servo0..., battery_w/a/v when powered; raw sensor columns are shared; the full INAV CSV also records FC telemetry
+    - Scenario sidebar shows the template/saved scenario outline and parameters; Save refreshes it
+    - failed conditions, ground impact and Abort retain partial logs and skip the completion manoeuvre
+    - experiment template checks settled roll/pitch/climb before the test; customize ground/VTOL launch and transitions explicitly
+    - Scenario and INAV diff tabs: edit, Save, Save copy, Discard edits; unsaved edits disable Run
+    - generated design diff is shown as the last generated file, readonly; Save copy writes an editable project diff
+    - Configurator only holds physics disarmed, exposes MSP on TCP 5761, and runs until Abort
+    - MCU transport: configured tick rate, 50 Hz wait callbacks; cached exports, cold control-table exports may take minutes
+    - efficiency default sweep stays within the aero speed grid; out-of-grid top-speed points are marked
+    - MCU: esc[index] and servo[index] PWM in us, or outputs(motors_us, servos_us); arm enables outputs, release handles the simulated launcher
+    - MCU scripts read shared raw sensors and contain their own control logic; the backend has no autopilot or mixer
+    - controller commands own launch and transitions; controller directory determines which scripts are offered
+    - Performance separates the editor static estimate from measured JSBSim motion; range/endurance extrapolate measured power
+    - stall, sustained turn and ceiling cards remain Not measured until a matching experiment supplies them
+    - every run follows the selected clock; return, time limit, stop condition, ground impact or Abort ends it
     - the scenario, start and FC settings lists refresh whenever the view is shown and after Load
     - a run started on the ground, catapult or rail logs to its own file, next to the air-start one
-    - a script run logs to logs/script_<name>.csv
+    - logs/<controller>_<scenario>_<start>.csv; measurements and selected telemetry use the same stem
     - the run belongs to the server: every open tab shows it, and a page reload or a closed browser does not stop it
     - stopping the server aborts a live run, as Abort does
 ```
 
-## SummaryPanel
+## RunOutputPanel
 
 ```text
-SummaryPanel [scrollable, copyable, readonly, word-wrapped]
+RunOutputPanel [scrollable, copyable, readonly, word-wrapped]
 
+    - before a run: No simulation run yet.
     - first line: the equivalent command line
     - then the simulation's output as it runs: per-second reports, tables, the final result, or the error traceback
+    - CSV, Measurements and Selected telemetry download links appear when available; measurement points are saved beside the CSV as .measurements.json, selected telemetry as .telemetry.csv
 ```
 
 ## FlightLogPlot
@@ -118,7 +150,8 @@ SummaryPanel [scrollable, copyable, readonly, word-wrapped]
 ```text
 FlightLogPlot [fill]
 
-    - one stacked subplot per picked Y value, all sharing the X axis
+    - one subplot per picked Y value, fitted to the pane, all sharing the X axis
+    - click a subplot name to maximize it; click again to restore all picked plots
     - updates about twice a second while a run is going
     - redraws at once when the X axis or a Y value changes
     - the last run stays shown until the next Run
@@ -133,11 +166,13 @@ FlightLogPlot [fill]
 ```text
 FlightPath3D [fill]
 
+    - before a run: Run a simulation to see its flight path.
     - the flight path in 3D: east, north (m from home) and height above ground (m), from the log's
       east_m, north_m, agl_m; start marked green, end red
     - the box starts 50 m either side of the start point east and north (one scale for both) and 0-50 m high, also
       before any data, and grows to fit the path; height runs from 0 (the ground) up (a path below the ground is clipped)
-    - drag to rotate; the angle is kept across live updates and runs
+    - drag to rotate, wheel to zoom, pan with the mouse; any interaction disables Auto fit and retains the camera through live updates
+    - Fit path recentres once; Auto fit follows the growing bounds until the next interaction
     - drawn when shown, then updated live like the plots
 ```
 

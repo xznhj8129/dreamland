@@ -6,6 +6,7 @@ import { Card, CheckboxField, ChoiceField, EntryField, Fields, OptionalBlock } f
 import { fieldLabel } from './format'
 import { isObject } from './patch'
 import { useFormApi } from './session'
+import { ComponentPicker, useComponentIndex, useSelection } from './selection'
 
 /** editor_view.build_surfaces_tab (852-942): per-set card, generic fields, control surface, spars, root base. */
 export function SurfacesTab({ snapshot }: { snapshot: Snapshot }): ReactElement {
@@ -13,10 +14,13 @@ export function SurfacesTab({ snapshot }: { snapshot: Snapshot }): ReactElement 
   const definition = api.definition
   const surfaces = Array.isArray(definition.surfaces) ? definition.surfaces.filter(isObject) : []
   const [notice, setNotice] = useState('')
+  const selected = useComponentIndex('surface', surfaces.length)
+  const { select } = useSelection()
 
   const run = async (body: Record<string, unknown>): Promise<void> => {
     const result = await editorOp(api.sessionId, body)
     setNotice(result.ok ? '' : result.message)
+    if (result.ok && body.op === 'surface.add') select('surface', surfaces.length)
   }
 
   const numbers = new Map<string, number>()
@@ -34,8 +38,9 @@ export function SurfacesTab({ snapshot }: { snapshot: Snapshot }): ReactElement 
         </div>
         {notice !== '' && <div className="field-error">{notice}</div>}
       </Card>
+      <ComponentPicker kind="surface" items={surfaces.map((item, index) => ({ name: String(item.name ?? `surface ${index + 1}`) }))} />
       {surfaces.map((surface, index) => (
-        <SurfaceCard key={index} index={index} surface={surface} numbers={numbers} onOp={run} />
+        <div key={index} hidden={index !== selected}><SurfaceCard index={index} surface={surface} snapshot={snapshot} numbers={numbers} onOp={run} /></div>
       ))}
     </>
   )
@@ -43,6 +48,7 @@ export function SurfacesTab({ snapshot }: { snapshot: Snapshot }): ReactElement 
 
 interface SurfaceCardProps {
   index: number
+  snapshot: Snapshot
   surface: Record<string, unknown>
   /** Resolved control numbers by `${surface name}#${panel index}` (build_control 891-896). */
   numbers: Map<string, number>
@@ -50,7 +56,7 @@ interface SurfaceCardProps {
 }
 
 /** editor_view.build_surfaces_tab 855-865: one LabelFrame per set, titled with its name. */
-function SurfaceCard({ index, surface, numbers, onOp }: SurfaceCardProps): ReactElement {
+function SurfaceCard({ index, surface, snapshot, numbers, onOp }: SurfaceCardProps): ReactElement {
   const api = useFormApi()
   const context = api.context
   const path = ['surfaces', index]
@@ -72,7 +78,8 @@ function SurfaceCard({ index, surface, numbers, onOp }: SurfaceCardProps): React
         // 858: a layout change fits the servos, keeping one per panel.
         onChoice={{ layout: (value) => void onOp({ op: 'surface.layout', index, layout: value }) }}
       />
-      <EntryField path={[...path, 'mass_kg']} unitKey="mass_kg" optional />
+      <EntryField path={[...path, 'mass_kg']} unitKey="mass_kg" optional defaultLabel="Geometry estimate"
+        defaultValue={snapshot.definition_valid ? snapshot.resolved?.mass_points?.find(point => point.name === `surface ${String(surface.name)}`)?.estimate_kg ?? undefined : undefined} />
       <OptionalBlock
         label="control surface"
         present={control !== null}
@@ -112,13 +119,11 @@ function SurfaceCard({ index, surface, numbers, onOp }: SurfaceCardProps): React
           </>
         )}
       </OptionalBlock>
-      <OptionalBlock
-        label="root base (not built yet)"
-        present={rootBase !== null}
-        onToggle={(checked) => void onOp({ op: 'surface.root_base.toggle', index, enabled: checked })}
-      >
-        {rootBase !== null && <Fields data={rootBase} path={[...path, 'root_base']} context={context} />}
-      </OptionalBlock>
+      <details className="advanced-fields">
+        <summary>Root base <span>Not implemented</span></summary>
+        <p className="form-hint">These stored dimensions are not used to build geometry yet.</p>
+        {rootBase !== null && <fieldset disabled className="form-group"><Fields data={rootBase} path={[...path, 'root_base']} context={context} /></fieldset>}
+      </details>
     </Card>
   )
 }

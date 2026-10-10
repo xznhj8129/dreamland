@@ -7,6 +7,7 @@ its result back through a queue drained on the loop (the retired guibuilder.Buil
 from __future__ import annotations
 
 import asyncio
+import copy
 import json
 import queue
 import threading
@@ -42,6 +43,7 @@ class AppState:
         self.parts_data = load_parts_data()
         with open(project.build_path, "r") as file:
             self.definition: dict[str, Any] = json.load(file)
+        self._saved_definition = copy.deepcopy(self.definition)
         self.resolved: ResolvedAirframe | None = None
         self.problems: list[str] = []
         self.propulsion: PropulsionSummary | None = None
@@ -60,8 +62,12 @@ class AppState:
         self._listeners: list[Callable[[], None]] = []
 
     @property
+    def dirty(self) -> bool:
+        return self.definition != self._saved_definition
+
+    @property
     def title(self) -> str:
-        return f"quadrocketbuilder - {self.project.name} ({self.definition.get('name', 'unnamed')})"
+        return f"Dreamland - {self.project.name} ({self.definition.get('name', 'unnamed')})"
 
     def add_listener(self, listener: Callable[[], None]) -> None:
         self._listeners.append(listener)
@@ -127,6 +133,7 @@ class AppState:
 
         self.project = project
         self.definition = definition
+        self._saved_definition = copy.deepcopy(definition)
         self.session_id += 1
         self.definition_revision += 1
         self.resolved = None
@@ -219,3 +226,5 @@ class AppState:
     def save(self) -> None:
         with open(self.project.build_path, "w") as file:
             json.dump(self.definition, file, indent=4)
+        self._saved_definition = copy.deepcopy(self.definition)
+        self.notify()

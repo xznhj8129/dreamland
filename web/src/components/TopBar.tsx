@@ -4,6 +4,8 @@ import { listProjects, newProject, openProject, saveProject, saveProjectAs } fro
 import type { CommandResult } from '../store'
 import { Modal } from './Modal'
 
+const PLANNED_VIEWS: readonly string[] = ['Aero Analysis', 'VLM']
+
 type DialogKind = 'new' | 'load' | 'saveAs'
 
 /** The main views, in order (App renders the matching one). */
@@ -15,13 +17,14 @@ interface TopBarProps {
   onView: (view: View) => void
   project: string | null
   aircraftName: string | null
+  dirty: boolean
 }
 
 /**
  * The File menu: New, Load, Save, Save As, ported from the retired Tk menu bar (guibuilder.BuilderApp.build_menu;
  * see git history), with the main-view buttons beside it instead of a separate bottom bar.
  */
-export function TopBar({ view, onView, project, aircraftName }: TopBarProps): ReactElement {
+export function TopBar({ view, onView, project, aircraftName, dirty }: TopBarProps): ReactElement {
   const [menuOpen, setMenuOpen] = useState(false)
   const [dialog, setDialog] = useState<DialogKind | null>(null)
   const [notice, setNotice] = useState('')
@@ -61,7 +64,13 @@ export function TopBar({ view, onView, project, aircraftName }: TopBarProps): Re
 
   return (
     <header className="top-bar" ref={barRef}>
-      <span className="app-name">quadrocketbuilder</span>
+      <div className="app-brand">
+        <img className="app-logo" src="/dreamland-logo.jpg" alt="" width="40" height="40" />
+        <span className="brand-copy">
+          <span className="app-name">Dreamland</span>
+          <span className="brand-tagline">Virtual Aerospace Proving Ground</span>
+        </span>
+      </div>
       <div className="menu-root">
         <button
           type="button"
@@ -93,17 +102,21 @@ export function TopBar({ view, onView, project, aircraftName }: TopBarProps): Re
         {VIEWS.map((name) => (
           <button
             key={name}
+            disabled={PLANNED_VIEWS.includes(name)}
+            title={PLANNED_VIEWS.includes(name) ? 'Not implemented yet' : undefined}
             type="button"
             className={name === view ? 'view-button active' : 'view-button'}
             aria-current={name === view ? 'page' : undefined}
             onClick={() => onView(name)}
           >
-            {name}
+            {name}{PLANNED_VIEWS.includes(name) && <span className="planned-view">Planned</span>}
           </button>
         ))}
       </nav>
       {project !== null && (
         <div className="project-context" aria-label="Current project">
+          <span className={dirty ? "save-status unsaved" : "save-status"} role="status">{dirty ? "Unsaved changes" : "Saved"}</span>
+          <button type="button" disabled={!dirty} onClick={save}>Save</button>
           <span className="project-name" title={project}>{project}</span>
           {aircraftName !== null && aircraftName !== project && <span>{aircraftName}</span>}
         </div>

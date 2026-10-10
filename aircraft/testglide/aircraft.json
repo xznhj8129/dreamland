@@ -21,7 +21,7 @@
         ]
     },
     "fuselage": {
-        "length_m": 0.4,
+        "length_m": 0.45,
         "section": {
             "width_m": 0.062,
             "height_m": 0.062,
@@ -58,7 +58,7 @@
     "surfaces": [
         {
             "name": "qrwing-7in",
-            "x_root_le_m": 0.25,
+            "x_root_le_m": 0.26326,
             "layout": "X",
             "fin_position": "top",
             "dihedral_deg": 45.0,
@@ -75,7 +75,7 @@
         },
         {
             "name": "canards",
-            "x_root_le_m": 0.075,
+            "x_root_le_m": 0.08,
             "layout": "+",
             "fin_position": "top",
             "dihedral_deg": 0.0,
@@ -83,11 +83,11 @@
             "root": "body",
             "span_m": 0.04,
             "chord_root_m": 0.06,
-            "chord_tip_m": 0.01,
-            "sweep_le_deg": 50.0,
+            "chord_tip_m": 0.03,
+            "sweep_le_deg": 30,
             "incidence_deg": 0.0,
             "incidence_mode": "symmetric",
-            "airfoil": "naca2412",
+            "airfoil": "naca0008",
             "control": {
                 "kind": "all_moving",
                 "roles": [
@@ -112,9 +112,10 @@
         {
             "name": "balllast",
             "shape": "bore",
-            "x_m": 0.1606,
+            "x_m": 0.20509,
             "mass_kg": 0.2,
-            "length_m": 0.15
+            "length_m": 0.15,
+            "z_m": 0
         }
     ],
     "parts": [],
@@ -122,23 +123,27 @@
         "cuts_m": [
             0.06,
             0.1551,
-            0.2932
+            0.27123
         ],
         "per_section": [
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.047
             },
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.065
             },
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.122
             },
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.07
             }
         ],

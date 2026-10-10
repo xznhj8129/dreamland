@@ -1,4 +1,4 @@
-# GUIBuilder Main Window
+# Dreamland Main Window
 
 This file covers the persistent shell of the web front end (`web/src/App.tsx`, `web/src/components/TopBar.tsx`): the top bar with the File menu and the main-view buttons, and the central view host.
 
@@ -23,9 +23,10 @@ Theme
 ## Window
 
 ```text
-GUIBuilderWindow [fill]
+DreamlandWindow [fill]
 
     * TopBar [docked:top, arrange:row]
+        - Dreamland name, supplied logo and Virtual Aerospace Proving Ground tagline
         - File menu
         - main-view buttons
 
@@ -42,8 +43,9 @@ GUIBuilderWindow [fill]
 
 ```text
 Startup
-    - window title = "quadrocketbuilder - <project> (<aircraft name>)"
+    - window title = "Dreamland - <project> (<aircraft name>)"
     - opens the project given on the command line (`webbuilder.py <project>`)
+    - binds to 127.0.0.1 by default; `--host 0.0.0.0` enables phone/LAN access
     - default visible view = Editor
     - F5 triggers heavy recompute while the Editor view is active
 ```
@@ -66,6 +68,10 @@ TopBar [docked:top, arrange:row]
     * ViewButtons [arrange:row]
         - Editor, Aero Analysis, VLM, SIM, CAD, Part Editor
             on:click -> raise the view; the visible view's button is highlighted
+            Aero Analysis and VLM disabled and labelled Planned
+
+    * ProjectStatus
+        Saved | Unsaved changes; Save button enabled when changed
 ```
 
 ### Load / Save behavior
@@ -114,7 +120,7 @@ CAD            -> cad_view.md
 Part Editor    -> part_editor_view.md
 ```
 
-Aero Analysis and VLM are placeholder views in the web front end; their engines
+Aero Analysis and VLM are planned, disabled views in the web front end; their engines
 (VLM sweep, NeuralFoil airfoil comparison) run headless.
 
 ## Error handling

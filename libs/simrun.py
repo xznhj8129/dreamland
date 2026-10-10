@@ -2,7 +2,7 @@
 Usage:
 from libs.simrun import StartState, add_start_arguments, resolve_start, build_vehicle, write_plots
 
-What every simulated run shares, whoever flies it (INAV SITL in sim_inav.py, a script controller in sim_script.py):
+What every simulated run shares, whoever flies it (the selected controller in sim_flight.py):
 start conditions, the JSBSim vehicle at its start, the ground rule, the electrical model and the flight-log plots.
 """
 
@@ -11,13 +11,10 @@ import math
 from dataclasses import dataclass, replace
 from pathlib import Path
 
-import matplotlib
 import numpy as np
 from inavbench import Catapult, LaunchRail
 from inavbench.vehicles import HOME, Vehicle
 
-matplotlib.use("Agg")
-import matplotlib.pyplot as plt  # noqa: E402  (after choosing the non-GUI backend)
 
 @dataclass(frozen=True)
 class StartOption:
@@ -27,6 +24,10 @@ class StartOption:
     air_only: bool = False
     launcher_only: bool = False
     catapult_only: bool = False
+
+    def applies_to(self, start: str) -> bool:
+        return not (self.air_only and start != "air" or self.launcher_only and start not in ("catapult", "rail")
+                    or self.catapult_only and start != "catapult")
 
 
 # Start conditions a run may set (StartState); those marked air-only are fixed by a ground or launcher start.
@@ -129,15 +130,15 @@ def start_reasons(airframe) -> dict[str, str | None]:
     return {
         "air": None,
         "ground": None if airframe.vtol else "a fixed-wing cannot roll: use a catapult or rail launch",
-        "catapult": None if not airframe.vtol else "a tailsitter takes off standing",
-        "rail": None if not airframe.vtol else "a tailsitter takes off standing",
+        "catapult": None,
+        "rail": None,
     }
 
 
 def add_start_arguments(parser) -> None:
     """--start and the START_OPTIONS, for any runner."""
     parser.add_argument("--start", choices=list(STARTS), default=None,
-                        help="air (default, held in the air), ground (standing on its tail, VTOL), catapult or rail (fixed wing)")
+                        help="air (default, held in the air), ground (standing on its tail, VTOL), catapult or rail (including tailsitters)")
     for option, spec in START_OPTIONS.items():
         if spec.air_only:
             suffix = "; air start only"
@@ -240,6 +241,10 @@ def electrical_columns(fdm, export, motor_count: int) -> dict[str, float]:
 
 def plot_flight_path(log_path: Path, png_path: Path, title: str) -> None:
     """Altitude above ground against distance flown over the ground, both axes to the same scale."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
     with open(log_path) as file:
         rows = list(csv.DictReader(file))
     north, east, agl, armed = (np.array([float(row[key]) for row in rows]) for key in ("north_m", "east_m", "agl_m", "armed"))
@@ -273,6 +278,10 @@ class Elevator:
 def plot_pitch_time(log_path: Path, png_path: Path, title: str, elevators: list[Elevator]) -> None:
     """Airspeed, altitude, pitch, pitch stick (when the log has RC) and elevator deflection against time, each on its own
     axis (normalised, scales shown)."""
+    import matplotlib
+    matplotlib.use("Agg")
+    import matplotlib.pyplot as plt
+
     with open(log_path) as file:
         rows = list(csv.DictReader(file))
 
@@ -320,11 +329,11 @@ def write_plots(run_log: Path, resolved, title: str) -> None:
     airframe = resolved.airframe
     png_path = run_log.with_name(f"{run_log.stem}_path.png")
     plot_flight_path(run_log, png_path, title)
-    print(f"flight path: {png_path}")
+    print(f"flight path: {png_path.name}")
     definitions = {surface_set.name: surface_set.definition.control for surface_set in resolved.surfaces}
     elevators = [Elevator(f"C{control.number} {control.surface}", int(control.servo[1:]) - 1, definitions[control.surface].deflection_min_deg,
                           definitions[control.surface].deflection_max_deg)
                  for control in resolved.controls if "pitch" in definitions[control.surface].roles and not airframe.tailsitter]
     time_path = run_log.with_name(f"{run_log.stem}_pitch.png")
     plot_pitch_time(run_log, time_path, f"{title}, pitch", elevators)
-    print(f"pitch over time: {time_path}")
+    print(f"pitch over time: {time_path.name}")

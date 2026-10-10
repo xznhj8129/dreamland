@@ -4,6 +4,7 @@ import { editorOp } from '../store'
 import { Card, ChoiceField, EntryField, VectorField } from './fields'
 import { isObject } from './patch'
 import { useFormApi } from './session'
+import { ComponentPicker, useComponentIndex, useSelection } from './selection'
 
 /** editor_view.build_volumes_tab (1124-1172): per-volume card, shape fields, contents, delete freezes placements. */
 export function VolumesTab(): ReactElement {
@@ -11,11 +12,15 @@ export function VolumesTab(): ReactElement {
   const definition = api.definition
   const volumes = Array.isArray(definition.volumes) ? definition.volumes.filter(isObject) : []
   const parts = Array.isArray(definition.parts) ? definition.parts.filter(isObject) : []
+  const battery = isObject(definition.propulsion) && isObject(definition.propulsion.battery) ? definition.propulsion.battery : null
   const [notice, setNotice] = useState('')
+  const selected = useComponentIndex('volume', volumes.length)
+  const { select } = useSelection()
 
   const run = async (body: Record<string, unknown>): Promise<void> => {
     const result = await editorOp(api.sessionId, body)
     setNotice(result.ok ? '' : result.message)
+    if (result.ok && body.op === 'volume.add') select('volume', volumes.length)
   }
 
   return (
@@ -32,14 +37,14 @@ export function VolumesTab(): ReactElement {
         </div>
         {notice !== '' && <div className="field-error">{notice}</div>}
       </Card>
+      <ComponentPicker kind="volume" items={volumes.map((item, index) => ({ name: String(item.name ?? `volume ${index + 1}`) }))} />
       {volumes.map((volume, index) => (
-        <VolumeCard
-          key={index}
+        <div key={index} hidden={index !== selected}><VolumeCard
           index={index}
           volume={volume}
-          contents={parts.filter((part) => part.volume === volume.name).map((part) => (typeof part.name === 'string' ? part.name : ''))}
+          contents={[...parts.filter((part) => part.volume === volume.name).map((part) => (typeof part.name === 'string' ? part.name : '')), ...(battery?.volume === volume.name ? ['battery'] : [])]}
           onOp={run}
-        />
+        /></div>
       ))}
     </>
   )
@@ -76,8 +81,8 @@ function VolumeCard({ index, volume, contents, onOp }: VolumeCardProps): ReactEl
         onValue={(value) => void onOp({ op: 'volume.shape', index, shape: value })}
       />
       <EntryField path={[...path, 'x_m']} unitKey="x_m" />
-      <EntryField path={[...path, 'y_m']} unitKey="y_m" optional />
-      <EntryField path={[...path, 'z_m']} unitKey="z_m" optional />
+      <EntryField path={[...path, 'y_m']} unitKey="y_m" optional blankHint="blank = 0" />
+      <EntryField path={[...path, 'z_m']} unitKey="z_m" optional blankHint="blank = 0" />
       {Object.keys(shapeFields).map((key) => {
         if (key === 'size_m') {
           return <VectorField key={key} path={[...path, 'size_m']} unitKey="size_m" axes={['x', 'y', 'z']} />

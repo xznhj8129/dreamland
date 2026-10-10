@@ -24,6 +24,7 @@ from webapp.server import close_websockets, create_app
 from webapp.state import AppState
 
 DEFAULT_PROJECT = PROJECTS_DIR / "example"
+DEFAULT_HOST = "127.0.0.1"
 DEFAULT_PORT = 8765
 WEB_DIST = Path(__file__).resolve().parent / "web" / "dist"
 SHUTDOWN_TIMEOUT_S = 1.0  # caps how long a non-responsive client can hold up Ctrl+C
@@ -46,7 +47,8 @@ async def serve(app: web.Application, host: str, port: int) -> None:
 def main() -> None:
     parser = argparse.ArgumentParser(description="Plane-first airframe builder, browser front end")
     parser.add_argument("project", type=Path, nargs="?", default=DEFAULT_PROJECT, help="aircraft project directory (aircraft/<name>)")
-    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="port on 127.0.0.1")
+    parser.add_argument("--host", default=DEFAULT_HOST, help="bind address; 0.0.0.0 allows access from other devices")
+    parser.add_argument("--port", type=int, default=DEFAULT_PORT, help="server port")
     parser.add_argument("--no-browser", action="store_true", help="do not open the default browser")
     args = parser.parse_args()
 
@@ -58,12 +60,13 @@ def main() -> None:
     state.recompute(run_aero=True)
     app = create_app(state, WEB_DIST)
 
-    url = f"http://127.0.0.1:{args.port}/"
-    print(f"quadrocketbuilder browser front end: {url}  (project {project.name})")
+    browser_host = "127.0.0.1" if args.host == "0.0.0.0" else args.host
+    url = f"http://{browser_host}:{args.port}/"
+    print(f"Dreamland browser front end: {url}  (bind {args.host}, project {project.name})")
     if not args.no_browser:
         webbrowser.open(url)
     try:
-        asyncio.run(serve(app, "127.0.0.1", args.port))
+        asyncio.run(serve(app, args.host, args.port))
     except KeyboardInterrupt:
         pass
 

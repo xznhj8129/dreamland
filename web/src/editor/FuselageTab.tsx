@@ -138,7 +138,8 @@ export function FuselageTab({ snapshot, onPresetsChanged }: { snapshot: Snapshot
       </Card>
 
       <Card title="Fuselage">
-        <EntryField path={['fuselage', 'length_m']} unitKey="length_m" />
+        <EntryField path={['fuselage', 'length_m']} unitKey="length_m" label="Airframe length (mm)" />
+        <p className="form-hint">Resizes unfixed sections and longitudinal placements together. Fixed section lengths and component sizes are preserved.</p>
         <fieldset className="form-group">
           <legend>section</legend>
           <Fields data={section} path={['fuselage', 'section']} context={context} />

@@ -4,6 +4,9 @@ import { editorOp } from '../store'
 import { Card, ChoiceField, EntryField, Fields, OptionalBlock } from './fields'
 import { isObject } from './patch'
 import { useFormApi } from './session'
+import { ComponentPicker, useComponentIndex, useSelection } from './selection'
+
+const MOUNT_PATTERN_LABELS = { single: 'Single central hole', radial_slots: 'Four radial slots' }
 
 /** editor_view.build_mounts_tab (1021-1042), normalize_mount (1100-1113), add_mount (1115-1118). */
 export function MountsTab(): ReactElement {
@@ -13,10 +16,13 @@ export function MountsTab(): ReactElement {
   const surfaces = Array.isArray(definition.surfaces) ? definition.surfaces.filter(isObject) : []
   const surfaceNames = surfaces.map((surface) => (typeof surface.name === 'string' ? surface.name : ''))
   const [notice, setNotice] = useState('')
+  const selected = useComponentIndex('mount', (propulsion !== null && Array.isArray(propulsion.mounts) ? propulsion.mounts.length : 0))
+  const { select } = useSelection()
 
   const run = async (body: Record<string, unknown>): Promise<void> => {
     const result = await editorOp(api.sessionId, body)
     setNotice(result.ok ? '' : result.message)
+    if (result.ok && body.op === 'mount.add') select('mount', (propulsion !== null && Array.isArray(propulsion.mounts) ? propulsion.mounts.length : 0))
   }
 
   if (propulsion === null) {
@@ -39,8 +45,9 @@ export function MountsTab(): ReactElement {
         </div>
         {notice !== '' && <div className="field-error">{notice}</div>}
       </Card>
+      <ComponentPicker kind="mount" items={mounts.map((item, index) => ({ name: `Mount ${index + 1} · ${String(item.on)}` }))} />
       {mounts.map((mount, index) => (
-        <MountCard key={index} index={index} mount={mount} surfaceNames={surfaceNames} onOp={run} />
+        <div key={index} hidden={index !== selected}><MountCard index={index} mount={mount} surfaceNames={surfaceNames} onOp={run} /></div>
       ))}
     </>
   )
@@ -60,6 +67,7 @@ function MountCard({ index, mount, surfaceNames, onOp }: MountCardProps): ReactE
   const path = ['propulsion', 'mounts', index]
   const on = typeof mount.on === 'string' ? mount.on : ''
   const pod = isObject(mount.pod) ? mount.pod : null
+  const holes = isObject(mount.holes) ? mount.holes : null
   // 1039: a surface mount's motors spin out|in, a nose or tail mount's cw|ccw.
   const spins = on === 'surface' ? context.surface_prop_spins : context.single_prop_spins
 
@@ -82,6 +90,22 @@ function MountCard({ index, mount, surfaceNames, onOp }: MountCardProps): ReactE
       <ChoiceField path={[...path, 'direction']} value={mount.direction} options={context.choices.direction ?? []} />
       <ChoiceField path={[...path, 'spin']} value={mount.spin} options={spins} />
       <EntryField path={[...path, 'thrust_axis_tilt_deg']} unitKey="thrust_axis_tilt_deg" />
+      <OptionalBlock label="Mounting holes" present={holes !== null} onToggle={(checked) => void onOp({ op: 'mount.holes.toggle', index, enabled: checked })}>
+        {holes !== null && <>
+          <ChoiceField path={[...path, 'holes', 'pattern']} value={holes.pattern} options={Object.keys(MOUNT_PATTERN_LABELS)} optionLabels={MOUNT_PATTERN_LABELS} label="Pattern" />
+          <EntryField path={[...path, 'holes', 'd1_m']} unitKey="d1_m" label={holes.pattern === 'single' ? 'Single hole diameter (mm)' : 'D1 · inner spacing diameter (mm)'} />
+          {holes.pattern === 'radial_slots' && <>
+            <EntryField path={[...path, 'holes', 'd2_m']} unitKey="d2_m" label="D2 · outer spacing diameter (mm)" />
+            <EntryField path={[...path, 'holes', 'hole_diameter_m']} unitKey="hole_diameter_m" label="Slot width (mm)" />
+            <p className="form-hint">Four radial slots from D1 to D2. M3 width: 3 mm. Equal D1/D2 makes round holes.</p>
+          </>}
+          <EntryField path={[...path, 'holes', 'center_diameter_m']} unitKey="center_diameter_m" label="Center relief diameter (mm)" />
+          <EntryField path={[...path, 'holes', 'center_depth_m']} unitKey="center_depth_m" label="Center relief depth (mm)" />
+          <EntryField path={[...path, 'holes', 'head_diameter_m']} unitKey="head_diameter_m" label="Bolt head diameter (mm)" />
+          <EntryField path={[...path, 'holes', 'head_depth_m']} unitKey="head_depth_m" label="Head seat depth from mount face (mm)" />
+          <p className="form-hint">Zero relief/head diameter disables that cut. Material behind the head seat is cleared for bolt entry. Cuts appear in CAD exports.</p>
+        </>}
+      </OptionalBlock>
       <OptionalBlock label="pod" present={pod !== null} onToggle={(checked) => void onOp({ op: 'mount.pod.toggle', index, enabled: checked })}>
         {pod !== null && <Fields data={pod} path={[...path, 'pod']} context={context} />}
       </OptionalBlock>

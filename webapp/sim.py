@@ -1,14 +1,4 @@
-"""The web server's SIM run backend: one INAV SITL or controller-script run at a time, ported from the retired Tk
-SIM view (libs/views/sim_view.py; user-visible behavior in docs/ui/sim_view.md).
-
-options() is the panel's option lists, start_run() saves the definition and starts the same subprocess the Tk view
-started (sim_inav.py or sim_script.py), the stdout reader thread fills the summary lines, and state_payload() tails
-the CSV flight log through client-held offsets. Only one run exists at a time (the SITL bench uses fixed TCP ports)
-and it is SIGINT-ed on Abort or server shutdown, then killed if it outlives SHUTDOWN_WAIT_S.
-
-sim_inav.py / sim_script.py / libs.simrun load lazily inside the functions that need them: they pull in inavbench,
-matplotlib and AeroSandbox, which server startup must not pay for (webapp.cad keeps its imports lazy the same way).
-"""
+"""One server-owned scheduled flight run, incremental output/log reading, Abort and shutdown."""
 
 from __future__ import annotations
 
@@ -26,9 +16,8 @@ if TYPE_CHECKING:
     from libs.project import Project
     from webapp.state import AppState
 
-REPO_DIR = Path(__file__).resolve().parent.parent  # the runners and their cwd, as sim_inav.REPO_DIR
-SIM_INAV = REPO_DIR / "sim_inav.py"
-SIM_SCRIPT = REPO_DIR / "sim_script.py"
+REPO_DIR = Path(__file__).resolve().parent.parent  # simulation runner and its cwd
+SIM_FLIGHT = REPO_DIR / "sim_flight.py"
 
 SHUTDOWN_WAIT_S = 5.0  # after SIGINT, for the runner to stop its SITL and write its log, before it is killed
 
@@ -54,147 +43,173 @@ class _Refused(Exception):
     """A start request the SIM panel refuses before saving or launching anything."""
 
 
+def resource_path(state: AppState, kind: str, name: str, controller: str) -> Path:
+    from libs.scenario import CONTROLLERS
+    if kind == "scenario":
+        if controller not in CONTROLLERS:
+            raise ValueError(f"Choose a controller from {CONTROLLERS}")
+        directory, suffix = state.project.scenarios_dir / controller, ".py"
+    elif kind == "diff":
+        directory, suffix = state.project.inav_dir, ".txt"
+    else:
+        raise ValueError("kind must be scenario or diff")
+    if not name or Path(name).name != name or not name.endswith(suffix):
+        raise ValueError(f"Choose a plain filename ending in {suffix}")
+    path = directory / name
+    if path.resolve().parent != directory.resolve():
+        raise ValueError("File must be inside the project's directory")
+    return path
+
+
+def read_resource(state: AppState, kind: str, name: str, controller: str) -> dict:
+    if kind == "diff" and name == "generated":
+        path = state.project.generated_inav_dir / "design.txt"
+        if not path.is_file():
+            raise ValueError("Run once to generate the design diff, or choose a project diff")
+        return {"source": path.read_text(), "readonly": True, "initial": {}, "scenario": None,
+                "note": "Last generated design diff. A run regenerates it; save a copy to edit and fly it as written."}
+    path = resource_path(state, kind, name, controller)
+    readonly = False
+    if kind == "scenario":
+        from libs.scenario import scenario_path
+        path = scenario_path(state.project.scenarios_dir, controller, name.removesuffix(".py"))
+        readonly = path.parent != state.project.scenarios_dir / controller
+    source = path.read_text()
+    initial, spec, error = {}, None, None
+    if kind == "scenario":
+        from libs.scenario import ScenarioSpec, starting_conditions
+        try:
+            initial = starting_conditions(source)
+            spec = ScenarioSpec.from_source(source, controller).payload()
+        except (ValueError, SyntaxError) as problem:
+            error = str(problem)
+    note = "Shared scenario. Save a project copy to edit." if readonly else path.relative_to(state.project.root).as_posix()
+    return {"source": source, "readonly": readonly, "initial": initial, "scenario": spec, "error": error, "note": note}
+
+
+def save_resource(state: AppState, kind: str, name: str, source: str, controller: str, create: bool = False) -> dict:
+    with _RUN._lock:
+        if _RUN.process is not None:
+            raise ValueError("Abort the active simulation before saving SIM files")
+    path = resource_path(state, kind, name, controller)
+    if not isinstance(source, str):
+        raise ValueError("source must be text")
+    if kind == "scenario":
+        from libs.scenario import ScenarioSpec, starting_conditions
+        compile(source, name, "exec")
+        starting_conditions(source)
+        ScenarioSpec.from_source(source, controller)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    with path.open("x" if create else "w") as file:
+        file.write(source)
+    return read_resource(state, kind, name, controller)
+
+
 def options(state: AppState) -> dict[str, Any]:
-    """What the SIM panel offers for the current project (sim_view.SimMainView.refresh).
-
-    The starts are the forward-flight ones start_reasons() allows (air, then ground or a launcher); hover is INAV-only
-    and always starts on the ground, which start_run() enforces by omitting --start exactly as the Tk view did.
-    start_options carries each condition's flags (air_only, launcher_only, catapult_only) and launcher_defaults the
-    placeholder values each launch start's launcher fields show.
-    """
-    from libs.controller import controller_names
-    from libs.simrun import START_OPTIONS, launcher_defaults, start_reasons
-    from sim_inav import is_real_fc_diff, tests_for
-    from sim_script import DEFAULT_DURATION_S
-
-    project = state.project
-    resolved = state.resolved
+    from controllers.inav import DEFAULT_SITL_PATH, is_real_fc_diff
+    from libs.scenario import CONTROLLERS, DEFAULT_LIMIT_S, scenario_names
+    from libs.simrun import HOME, START_ALT_M, START_OPTIONS, launcher_defaults, start_reasons
+    from libs.jsbsim import AERO_PROVENANCE
+    project, resolved = state.project, state.resolved
     airframe = resolved.airframe if resolved is not None else None
+    defaults = {"alt": START_ALT_M, "heading": 0.0, "lat": HOME[0], "lon": HOME[1], "pitch": 0.0,
+                "roll": 0.0, "wind-from": 0.0, "wind-speed": 0.0}
+    if airframe is not None:
+        defaults["speed"] = airframe.operating_point.airspeed_m_s
     return {
-        "controllers": controller_names(project.controllers_dir),
-        "inav_configs": [
-            {
-                "file": path.name,
-                "label": ("real FC diff: " if is_real_fc_diff(path) else "SITL diff: ") + path.name,
-            }
-            for path in sorted(project.inav_dir.glob("*.txt"))
-        ],
-        "scenarios": tests_for(airframe) if airframe is not None else [],
+        "controllers": list(CONTROLLERS),
+        "scenarios": {controller: scenario_names(project.scenarios_dir, controller) if airframe is not None else []
+                      for controller in CONTROLLERS},
+        "scenario_templates": {controller: read_resource(state, "scenario", "stability.py" if controller == "mcu" else "experiment.py", controller)
+                               for controller in CONTROLLERS},
+        "aero_model": AERO_PROVENANCE,
+        "firmware": DEFAULT_SITL_PATH.relative_to(REPO_DIR.parent).as_posix(),
+        "condition_defaults": defaults,
+        "inav_configs": [{"file": path.name, "label": ("real FC diff: " if is_real_fc_diff(path) else "SITL diff: ") + path.name}
+                         for path in sorted(project.inav_dir.glob("*.txt"))],
         "starts": [start for start, reason in start_reasons(airframe).items() if reason is None] if airframe is not None else [],
-        "start_options": [
-            {"key": key, "label": START_LABELS[key], "air_only": spec.air_only,
-             "launcher_only": spec.launcher_only, "catapult_only": spec.catapult_only}
-            for key, spec in START_OPTIONS.items()
-        ],
+        "start_options": [{"key": key, "label": START_LABELS[key], "air_only": spec.air_only,
+                           "launcher_only": spec.launcher_only, "catapult_only": spec.catapult_only}
+                          for key, spec in START_OPTIONS.items()],
         "launcher_defaults": launcher_defaults(),
-        "default_duration_s": DEFAULT_DURATION_S,
+        "default_duration_s": DEFAULT_LIMIT_S,
     }
 
 
 def _plan(state: AppState, body: dict[str, Any]) -> tuple[list[str], str, str, Path]:
-    """Validate one run request and build (argv, status, shown command line, log path), as Tk start_run did.
-
-    The body names the controller kind ("inav" or "script"); an INAV run carries "scenario" and an optional
-    "inav_config" file name (absent/"generated" = generated from the design), a script run carries "script".
-    Both carry "start" and "conditions" (a number per START_OPTIONS key; blank = the runner's default).
-    """
-    from libs.controller import controller_names
+    from libs.scenario import CONTROLLERS, DEFAULT_LIMIT_S, ScenarioSpec, scenario_names, scenario_path, starting_conditions
+    from libs.flightlog import flight_log_path
     from libs.simrun import START_OPTIONS, start_reasons
-    from sim_inav import flight_log_path, tests_for
-    from sim_script import script_log_path
-
     if state.resolved is None:
         raise _Refused("No valid airframe; fix the definition first.")
-    airframe = state.resolved.airframe
-    project = state.project
-    controller = body.get("controller", "inav")
-    if controller not in ("inav", "script"):
-        raise _Refused(f"controller must be 'inav' or 'script', not {controller!r}")
-
-    given: dict[str, str] = {}
+    project, airframe = state.project, state.resolved.airframe
+    controller, scenario = body.get("controller"), body.get("scenario")
+    if controller not in CONTROLLERS:
+        raise _Refused(f"Choose a controller from {CONTROLLERS}")
+    if scenario not in scenario_names(project.scenarios_dir, controller):
+        raise _Refused(f"Choose a saved {controller} scenario")
+    path = scenario_path(project.scenarios_dir, controller, scenario)
+    try:
+        source = path.read_text()
+        initial = starting_conditions(source)
+        ScenarioSpec.from_source(source, controller)
+    except (ValueError, SyntaxError, OSError) as problem:
+        raise _Refused(str(problem)) from problem
+    start = body.get("start", initial.get("start", "air"))
+    starts = [name for name, reason in start_reasons(airframe).items() if reason is None]
+    if start not in starts:
+        raise _Refused(f"start must be one of {starts}")
+    command = [sys.executable, "-u", str(SIM_FLIGHT), str(project.root), scenario, "--controller", controller, "--start", start]
+    clock = body.get("clock", "realtime")
+    if clock not in ("realtime", "stepped", "stepped-faster"):
+        raise _Refused("clock must be realtime, stepped or stepped-faster")
+    command += ["--clock", clock]
+    for field, default, label in (("rate", 200.0, "Tick rate"), ("duration", DEFAULT_LIMIT_S, "Time limit")):
+        value = body.get(field, default)
+        try:
+            number = float(value)
+        except (ValueError, TypeError):
+            raise _Refused(f"{label} must be a number") from None
+        if not math.isfinite(number) or number <= 0:
+            raise _Refused(f"{label} must be finite and positive")
+        command += [f"--{field}", f"{number:g}"]
     conditions = body.get("conditions") or {}
     if not isinstance(conditions, dict):
         raise _Refused("conditions must be an object of start conditions")
-    for key, value in conditions.items():
-        option = str(key).replace("_", "-")  # wind_from is accepted as wind-from
-        if option not in START_OPTIONS:
-            raise _Refused(f"unknown start condition: {key!r}")
-        given[option] = (value if isinstance(value, str) else str(value)).strip()
-
-    if controller == "script":
-        script = body.get("script")
-        if script not in controller_names(project.controllers_dir):
-            raise _Refused(f"no controller script {script!r} in {project.controllers_dir}")
-        starts = [start for start, reason in start_reasons(airframe).items() if reason is None]
-        start = body.get("start", "air")
-        if start not in starts:
-            raise _Refused(f"start must be one of {starts}")
-        scenario = None
-    else:
-        tests = tests_for(airframe)
-        scenario = body.get("scenario")
-        if scenario not in tests:
-            raise _Refused(f"scenario must be one of {tests}")
-        if scenario == "hover":
-            start = "ground"  # hover always stands on the ground (sim_inav forces it too)
-        else:
-            starts = [s for s, reason in start_reasons(airframe).items() if reason is None]
-            start = body.get("start", "air")
-            if start not in starts:
-                raise _Refused(f"start must be one of {starts}")
-
-    # The conditions in START_OPTIONS order, %g and blank values skipped, exactly as the Tk entries built them; an
-    # air-only condition is skipped whenever the start is not air, a launcher condition whenever the start is not a
-    # launch, and launch-speed on a rail (the runner refuses one passed by hand anyway).
-    args: list[str] = []
+    given = {str(key).replace("_", "-"): value for key, value in conditions.items()}
+    unknown = given.keys() - START_OPTIONS.keys()
+    if unknown:
+        raise _Refused(f"unknown start condition: {sorted(unknown)}")
     for option, spec in START_OPTIONS.items():
-        text = given.get(option, "")
+        if option not in given or not spec.applies_to(start):
+            continue
+        text = str(given[option]).strip()
         if not text:
-            continue
-        if spec.air_only and start != "air":
-            continue
-        if spec.launcher_only and start not in ("catapult", "rail"):
-            continue
-        if spec.catapult_only and start != "catapult":
-            continue
+            raise _Refused(f"{START_LABELS[option]}: enter a value")
         try:
             number = float(text)
         except ValueError:
             raise _Refused(f"{START_LABELS[option]}: {text!r} is not a number") from None
-        args += [f"--{option}", f"{number:g}"]
-
-    if controller == "script":
-        duration = body.get("duration", "")
-        duration = "" if duration is None else (duration if isinstance(duration, str) else str(duration))
-        duration = duration.strip()
-        if duration:
-            try:
-                seconds = float(duration)
-            except ValueError:
-                raise _Refused(f"Duration (s): {duration!r} is not a number") from None
-            args += ["--duration", f"{seconds:g}"]
-        command = [sys.executable, "-u", str(SIM_SCRIPT), str(project.root), script, "--start", start, *args]
-        status = f"Running script: {script}..."
-        log_path = script_log_path(project, script)
-    else:
-        config = body.get("inav_config")
-        if config in (None, "", "generated", "generated from the design"):
-            config = None
-        else:
+        if not math.isfinite(number):
+            raise _Refused(f"{START_LABELS[option]}: must be finite")
+        command += [f"--{option}", f"{number:g}"]
+    config = body.get("inav_config")
+    if controller == "inav":
+        if config not in (None, "", "generated"):
             configs = {path.name for path in project.inav_dir.glob("*.txt")}
-            if not isinstance(config, str) or config not in configs:
-                raise _Refused(f"inav_config must be a .txt diff in {project.inav_dir}, or 'generated'")
-        command = [sys.executable, "-u", str(SIM_INAV), scenario, str(project.root)]
-        if scenario != "hover":
-            command += ["--start", start]
-        command += args
-        if config is not None:
+            if config not in configs:
+                raise _Refused("Choose an INAV .txt diff, or generated")
             command += ["--inav-config", str(project.inav_dir / config)]
-        status = f"Running {scenario}..."
-        log_path = flight_log_path(project, scenario, start)
-
+        for protocol in ("msp", "mavlink"):
+            enabled = body.get(protocol, True)
+            if not isinstance(enabled, bool):
+                raise _Refused(f"{protocol} must be true or false")
+            if not enabled:
+                command += [f"--no-{protocol}"]
+    elif config not in (None, "", "generated") or "msp" in body or "mavlink" in body:
+        raise _Refused("INAV settings and external links require the INAV controller")
     shown = ["python", *(os.path.relpath(part, REPO_DIR) if os.path.isabs(part) else part for part in command[2:])]
-    return command, status, " ".join(shown), log_path
+    return command, f"Running {controller}: {scenario}...", " ".join(shown), flight_log_path(project, controller, scenario, start)
 
 
 def _project_file(project: Project, path: Path) -> str:
@@ -300,7 +315,7 @@ class SimRun:
                 self.status = "Aborted" if self.aborting else f"Finished (exit code {code})"
 
     def abort_run(self) -> bool:
-        """SIGINT as for closing the window; the runner writes its log and sim_inav stops its SITL."""
+        """SIGINT as for closing the window; the runner writes its log and the controller closes its transport."""
         with self._lock:
             process = self.process
             if process is None or self.aborting:
@@ -339,6 +354,12 @@ class SimRun:
             log_path, log_file, run_started = self.log_path, self.log_file, self.run_started
         header, rows, next_offset = _read_log(log_path, run_started, 0 if reset else log_offset)
         payload["log"] = {"file": log_file, "reset": reset, "offset": next_offset, "header": header, "rows": rows}
+        payload["telemetry_file"] = None
+        if log_path is not None:
+            from libs.flightlog import telemetry_path
+            path = telemetry_path(log_path)
+            if path.is_file() and path.stat().st_mtime >= run_started:
+                payload["telemetry_file"] = str(Path(log_file).with_suffix(".telemetry.csv"))
         return payload
 
     def shutdown(self) -> None:

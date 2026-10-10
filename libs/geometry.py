@@ -22,10 +22,11 @@ from dataclasses import dataclass
 
 import aerosandbox as asb
 
-from libs.airframe import AXES, BOX_SHAPES, Airframe, AirframeError, CarryThrough, ControlSurface, Mount, PlacedPart, Reinforcement, Surface, Volume
+from libs.airframe import AXES, BOX_SHAPES, Airframe, AirframeError, CarryThrough, ControlSurface, MotorMountHoles, Mount, PlacedPart, Reinforcement, Surface, Volume
 from libs.pointed_shapes import sample_pointed_profile
 
 END_PROFILE_SAMPLES = 14
+BODY_LOFT_SAMPLES = 32  # sampled cubic transitions for drawing, aero and CAD
 POD_PROFILE_SAMPLES = 14
 PERIMETER_SAMPLES = 72
 SPAN_STRIPS = 64
@@ -60,15 +61,17 @@ class BodyStation:
     x_m: float
     width_m: float
     height_m: float
+    shape: float
 
 
 @dataclass(frozen=True)
 class Body:
     stations: tuple[BodyStation, ...]
-    shape: float
     length_m: float
     nose_end_x_m: float
     tail_start_x_m: float
+    loft_stations: tuple[BodyStation, ...]
+    taper_stations: tuple[BodyStation, ...]  # normalized nose/tail widths and heights
 
 
 @dataclass(frozen=True)
@@ -164,6 +167,9 @@ class MotorPlacement:
     spin: str  # "cw" / "ccw" seen from where the thrust points (from above in hover)
     mount_x_m: float  # where it is attached to the fuselage: where its surface set meets the body (exposed root LE), the nose (0) or the tail (length)
     panel: Panel | None  # the surface panel it sits on; None on the nose or tail
+    mount_holes: MotorMountHoles | None
+    mount_face: Vec
+    mount_inward: Vec  # physical bell and pod axes are X
 
 
 @dataclass(frozen=True)
@@ -321,35 +327,62 @@ def superellipse_perimeter(width_m: float, height_m: float, shape: float) -> flo
     return sum(math.dist(a, b) for a, b in zip(points, points[1:] + points[:1]))
 
 
-def build_body(airframe: Airframe, end_samples: int = END_PROFILE_SAMPLES) -> Body:
-    """Body stations; end_samples sets the nose/tail sampling density (CAD asks for more than aero)."""
-    fuselage = airframe.fuselage
-    width, height = fuselage.section.width_m, fuselage.section.height_m
-    aspect = height / width
-    nose = sample_pointed_profile(fuselage.nose.profile, fuselage.nose.length_m, width / 2.0, end_samples, fuselage.nose.params)
-    tail = sample_pointed_profile(fuselage.tail.profile, fuselage.tail.length_m, width / 2.0, end_samples, fuselage.tail.params)
-    tail_start = fuselage.length_m - fuselage.tail.length_m
-    raw = [(x, r) for x, r in nose] + [(tail_start, width / 2.0)] + [(fuselage.length_m - x, r) for x, r in reversed(tail)]
-    stations = []
-    for x, radius in raw:
-        if stations and abs(x - stations[-1].x_m) < 1e-9:
-            continue
-        stations.append(BodyStation(x_m=x, width_m=2.0 * radius, height_m=2.0 * radius * aspect))
-    return Body(
-        stations=tuple(stations), shape=fuselage.section.shape, length_m=fuselage.length_m,
-        nose_end_x_m=fuselage.nose.length_m, tail_start_x_m=tail_start,
-    )
-
-
-def body_half_extents(body: Body, x_m: float) -> tuple[float, float]:
-    stations = body.stations
-    if not stations[0].x_m <= x_m <= stations[-1].x_m:
-        return 0.0, 0.0
+def _interpolate_section(stations: tuple[BodyStation, ...], x_m: float, smooth: bool = False) -> BodyStation:
+    """Interpolate section parameters; cubic easing has zero slope at each loft control."""
+    if x_m <= stations[0].x_m:
+        return BodyStation(x_m, stations[0].width_m, stations[0].height_m, stations[0].shape)
+    if x_m >= stations[-1].x_m:
+        return BodyStation(x_m, stations[-1].width_m, stations[-1].height_m, stations[-1].shape)
     for a, b in zip(stations, stations[1:]):
         if a.x_m <= x_m <= b.x_m:
             t = (x_m - a.x_m) / (b.x_m - a.x_m)
-            return (a.width_m + (b.width_m - a.width_m) * t) / 2.0, (a.height_m + (b.height_m - a.height_m) * t) / 2.0
+            if smooth:
+                t = t * t * (3.0 - 2.0 * t)
+            return BodyStation(x_m, a.width_m + (b.width_m - a.width_m) * t,
+                               a.height_m + (b.height_m - a.height_m) * t, a.shape + (b.shape - a.shape) * t)
     raise AssertionError(f"x {x_m} not bracketed by body stations")
+
+
+def _loft_section_at(loft: tuple[BodyStation, ...], taper: tuple[BodyStation, ...], x_m: float) -> BodyStation:
+    section = _interpolate_section(loft, x_m, smooth=True)
+    if not taper[0].x_m <= x_m <= taper[-1].x_m:
+        return BodyStation(x_m, 0.0, 0.0, section.shape)
+    factor = _interpolate_section(taper, x_m).width_m
+    return BodyStation(x_m, section.width_m * factor, section.height_m * factor, section.shape)
+
+
+def build_body(airframe: Airframe, end_samples: int = END_PROFILE_SAMPLES) -> Body:
+    """Shared loft: section-midpoint controls, smooth cubic transitions, existing nose/tail taper."""
+    fuselage = airframe.fuselage
+    bounds = (0.0, *airframe.sections.cuts_m, fuselage.length_m)
+    loft = tuple(BodyStation((x0 + x1) / 2.0, section.width_m, section.height_m, section.shape)
+                 for row, x0, x1 in zip(airframe.sections.per_section, bounds, bounds[1:])
+                 for section in (row.section.resolve(fuselage.section),))
+    nose_end, tail_start = fuselage.nose.length_m, fuselage.length_m - fuselage.tail.length_m
+    nose_radius = _interpolate_section(loft, nose_end, smooth=True).width_m / 2.0
+    tail_radius = _interpolate_section(loft, tail_start, smooth=True).width_m / 2.0
+    nose = sample_pointed_profile(fuselage.nose.profile, nose_end, nose_radius, end_samples, fuselage.nose.params)
+    tail = sample_pointed_profile(fuselage.tail.profile, fuselage.tail.length_m, tail_radius, end_samples, fuselage.tail.params)
+    factors = {x: r / nose_radius for x, r in nose}
+    factors[tail_start] = 1.0
+    factors.update({fuselage.length_m - x: r / tail_radius for x, r in reversed(tail)})
+    taper = tuple(BodyStation(x, factor, factor, fuselage.section.shape) for x, factor in sorted(factors.items()))
+    xs = set(factors)
+    for a, b in zip(loft, loft[1:]):
+        if (a.width_m, a.height_m, a.shape) != (b.width_m, b.height_m, b.shape):
+            xs.update(a.x_m + (b.x_m - a.x_m) * k / BODY_LOFT_SAMPLES for k in range(BODY_LOFT_SAMPLES + 1))
+    stations = tuple(_loft_section_at(loft, taper, x) for x in sorted(xs))
+    return Body(stations, fuselage.length_m, nose_end, tail_start, loft, taper)
+
+
+def body_section_at(body: Body, x_m: float) -> BodyStation:
+    """Exact cubic loft envelope at x, multiplied by the sampled nose/tail taper."""
+    return _loft_section_at(body.loft_stations, body.taper_stations, x_m)
+
+
+def body_half_extents(body: Body, x_m: float) -> tuple[float, float]:
+    section = body_section_at(body, x_m)
+    return section.width_m / 2.0, section.height_m / 2.0
 
 
 def panel_normal(dir_y: float, dir_z: float) -> Vec:
@@ -362,7 +395,7 @@ def panel_normal(dir_y: float, dir_z: float) -> Vec:
 def body_surface_point(body: Body, x_m: float, angle_rad: float) -> tuple[Vec, float]:
     """Point on the body surface at station x and section angle; also returns its radius (0 off the body)."""
     half_w, half_h = body_half_extents(body, x_m)
-    radius = superellipse_radius(half_w, half_h, body.shape, angle_rad) if half_w > 0.0 and half_h > 0.0 else 0.0
+    radius = superellipse_radius(half_w, half_h, body_section_at(body, x_m).shape, angle_rad) if half_w > 0.0 and half_h > 0.0 else 0.0
     return (x_m, radius * math.cos(angle_rad), radius * math.sin(angle_rad)), radius
 
 
@@ -618,7 +651,7 @@ def inner_wall_distance(body: Body, wall_m: float, x_m: float, start: Vec, direc
 
     def outside(t: float) -> bool:
         y, z = start[1] + t * direction[1], start[2] + t * direction[2]
-        return math.hypot(y, z) > superellipse_radius(inner_w, inner_h, body.shape, math.atan2(z, y))
+        return math.hypot(y, z) > superellipse_radius(inner_w, inner_h, body_section_at(body, x_m).shape, math.atan2(z, y))
 
     low, high = 0.0, 2.0 * max(inner_w, inner_h)
     for _ in range(60):
@@ -714,9 +747,9 @@ def build_carry_through(surfaces: tuple[SurfaceSet, ...], body: Body, wall_m: fl
             wall_half = (half_w - wall_m, half_h - wall_m)
             arms.append(CarryThroughArm(
                 surface=surface_set.name, panel_index=panel.index, start=start, direction=panel.span_dir, across=across, wall_distance_m=wall_distance,
-                wall_half_extents_m=wall_half, section_shape=body.shape, meet_m=mitre,
+                wall_half_extents_m=wall_half, section_shape=body_section_at(body, start[0]).shape, meet_m=mitre,
                 side_profile=carry_through_side_profile(spars.carry_through, mitre, wall_distance, wall_distance),
-                front_profile=carry_through_front_profile(spars.carry_through, start, across, panel.span_dir, wall_half, body.shape, 0.0),
+                front_profile=carry_through_front_profile(spars.carry_through, start, across, panel.span_dir, wall_half, body_section_at(body, start[0]).shape, 0.0),
             ))
     return tuple(arms)
 
@@ -867,10 +900,10 @@ def surface_mass_point(surface_set: SurfaceSet, density_kg_m3: float | None) -> 
 def shell_between(body: Body, x0: float, x1: float, wall_m: float, density_kg_m3: float) -> tuple[float, Vec, Inertia]:
     """(mass, centroid, inertia per kg) of the body shell between two stations, as thin rings along x."""
     xs = [x0] + [station.x_m for station in body.stations if x0 < station.x_m < x1] + [x1]
-    sections = [(x, *body_half_extents(body, x)) for x in xs]
+    sections = [(x, *body_half_extents(body, x), body_section_at(body, x).shape) for x in xs]
     rings = []
-    for (xa, wa, ha), (xb, wb, hb) in zip(sections, sections[1:]):
-        perimeter = (superellipse_perimeter(2.0 * wa, 2.0 * ha, body.shape) + superellipse_perimeter(2.0 * wb, 2.0 * hb, body.shape)) / 2.0
+    for (xa, wa, ha, sa), (xb, wb, hb, sb) in zip(sections, sections[1:]):
+        perimeter = (superellipse_perimeter(2.0 * wa, 2.0 * ha, sa) + superellipse_perimeter(2.0 * wb, 2.0 * hb, sb)) / 2.0
         segment = perimeter * math.hypot(xb - xa, ((wb - wa) + (hb - ha)) / 2.0) * wall_m * density_kg_m3  # mean wall slope
         ring = ring_inertia((wa + wb) / 2.0, (ha + hb) / 2.0)
         length_term = (xb - xa) ** 2 / 12.0
@@ -891,7 +924,7 @@ def volume_size(volume: Volume, body: Body, wall_m: float) -> tuple[float, float
         return math.pi * radius * radius * volume.length_m, volume.length_m if volume.axis == "x" else volume.diameter_m
     if volume.shape == "bore":
         half_w, half_h = body_half_extents(body, volume.x_m)
-        return superellipse_area(2.0 * (half_w - wall_m), 2.0 * (half_h - wall_m), body.shape) * volume.length_m, volume.length_m
+        return superellipse_area(2.0 * (half_w - wall_m), 2.0 * (half_h - wall_m), body_section_at(body, volume.x_m).shape) * volume.length_m, volume.length_m
     return 0.0, 0.0
 
 
@@ -899,10 +932,10 @@ def solid_between(body: Body, x0: float, x1: float, volumes: tuple[Volume, ...],
     """(mass, centroid, inertia per kg) of the body printed solid between two stations, less the volumes inside it.
     Each volume counts by the fraction of its x extent inside the stations; volumes enter as negative masses."""
     xs = [x0] + [station.x_m for station in body.stations if x0 < station.x_m < x1] + [x1]
-    sections = [(x, *body_half_extents(body, x)) for x in xs]
+    sections = [(x, *body_half_extents(body, x), body_section_at(body, x).shape) for x in xs]
     pieces = []
-    for (xa, wa, ha), (xb, wb, hb) in zip(sections, sections[1:]):
-        area = (superellipse_area(2.0 * wa, 2.0 * ha, body.shape) + superellipse_area(2.0 * wb, 2.0 * hb, body.shape)) / 2.0
+    for (xa, wa, ha, sa), (xb, wb, hb, sb) in zip(sections, sections[1:]):
+        area = (superellipse_area(2.0 * wa, 2.0 * ha, sa) + superellipse_area(2.0 * wb, 2.0 * hb, sb)) / 2.0
         half_w, half_h, length_term = (wa + wb) / 2.0, (ha + hb) / 2.0, (xb - xa) ** 2 / 12.0
         pieces.append((area * (xb - xa) * density_kg_m3, ((xa + xb) / 2.0, 0.0, 0.0),
                        ((half_w ** 2 + half_h ** 2) / 4.0, half_h ** 2 / 4.0 + length_term, half_w ** 2 / 4.0 + length_term, 0.0, 0.0, 0.0)))
@@ -1006,13 +1039,26 @@ def socket_checks(airframe: Airframe, body: Body) -> list[str]:
         if joint == "none":  # no female end: the sections butt, nothing enters the skin
             continue
         ends = {"coupler": ((index, -1.0), (index + 1, 1.0)), "front_male": ((index + 1, 1.0),), "rear_male": ((index, -1.0),)}[joint]
-        socket = min(body_half_extents(body, cut)) - joints.socket_wall_m
+        face = body_section_at(body, cut)
+        socket_half = (face.width_m / 2.0 - joints.socket_wall_m, face.height_m / 2.0 - joints.socket_wall_m)
+        if min(socket_half) <= joints.fit_clearance_m + joints.coupler_wall_m:
+            problems.append(f"section {index + 1}: coupler wall and clearance fill the socket at the {cut * 1000:.1f} mm cut")
+            continue
         for section, direction in ends:
             depth = [cut + direction * joints.insertion_depth_m * k / ROOT_CHORD_SAMPLES for k in range(ROOT_CHORD_SAMPLES + 1)]
-            thinnest = min(min(body_half_extents(body, x)) for x in depth)
-            if thinnest <= socket:
-                problems.append(f"section {section + 1}: its {socket * 2000:.1f} mm socket at the {cut * 1000:.1f} mm cut ({joint}) breaks through the skin, "
-                                f"the body tapers to {thinnest * 2000:.1f} mm within the {joints.insertion_depth_m * 1000:.0f} mm insertion depth; "
+            clearance = math.inf
+            for x in depth:
+                local = body_section_at(body, x)
+                if min(local.width_m, local.height_m) <= 0.0 or min(socket_half) <= 0.0:
+                    clearance = -math.inf
+                    break
+                for k in range(PERIMETER_SAMPLES):
+                    angle = 2.0 * math.pi * k / PERIMETER_SAMPLES
+                    clearance = min(clearance, superellipse_radius(local.width_m / 2.0, local.height_m / 2.0, local.shape, angle)
+                                    - superellipse_radius(*socket_half, face.shape, angle))
+            if clearance <= 0.0:
+                problems.append(f"section {section + 1}: its socket at the {cut * 1000:.1f} mm cut ({joint}) breaks through the skin "
+                                f"within the {joints.insertion_depth_m * 1000:.0f} mm insertion depth; "
                                 f"make that end male or move the cut")
     return problems
 
@@ -1029,6 +1075,11 @@ def preset_checks(airframe: Airframe) -> list[str]:
               ("wall", section.wall_radial_m, limits.wall_radial_m)]
     bounds = [0.0, *airframe.sections.cuts_m, airframe.fuselage.length_m]
     checks += [(f"section {index + 1} length", x1 - x0, limits.section_length_m) for index, (x0, x1) in enumerate(zip(bounds, bounds[1:]))]
+    for index, row in enumerate(airframe.sections.per_section):
+        profile = row.section.resolve(section)
+        if row.section.width_m is not None or row.section.height_m is not None:
+            checks += [(f"section {index + 1} inner width", profile.width_m - 2.0 * section.wall_radial_m, limits.inner_diameter_m),
+                       (f"section {index + 1} inner height", profile.height_m - 2.0 * section.wall_radial_m, limits.inner_diameter_m)]
     for label, value, (low, high) in checks:
         if not low - 1e-9 <= value <= high + 1e-9:
             problems.append(f"{label} {value * 1000:.2f} mm outside the {preset.name} limits {low * 1000:.2f}-{high * 1000:.2f} mm")
@@ -1129,15 +1180,17 @@ def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[
                 curve = sample_pointed_profile(mount.pod.profile, mount.pod.curve_length_m, pod_radius, POD_PROFILE_SAMPLES)
                 stations += [(flat_end - prop_side * (mount.pod.curve_length_m - x), r) for x, r in curve[:-1]]
                 pod_stations = tuple(sorted(stations))
-            placements.append((f"motor {mount_index + 1} {name}", position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel))
+            placements.append((f"motor {mount_index + 1} {name}", position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel, mount.holes))
     return tuple(
         MotorPlacement(
             name=name, position=position, thrust_dir=thrust_dir,
             prop_center=tuple(p - prop_side * (bell_len / 2.0 + PROP_SHAFT_LEN_M) * t for p, t in zip(position, thrust_dir)),
             prop_radius_m=propulsion.prop_diameter_m / 2.0, bell_diameter_m=propulsion.bell_diameter_m,
             bell_length_m=bell_len, pod_stations=pod_stations, spin=spin, mount_x_m=mount_x, panel=panel,
+            mount_holes=holes, mount_face=(position[0] - prop_side * bell_len / 2.0, position[1], position[2]),
+            mount_inward=(-prop_side, 0.0, 0.0),
         )
-        for name, position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel in placements
+        for name, position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel, holes in placements
     )
 
 
@@ -1153,7 +1206,7 @@ def build_reference(surfaces: tuple[SurfaceSet, ...], body: Body) -> Reference:
     candidates = [item for item in surfaces if horizontal_area(item) > 1e-12]
     if not candidates:
         widest = max(body.stations, key=lambda station: station.width_m)
-        return Reference("body", superellipse_area(widest.width_m, widest.height_m, body.shape), widest.width_m, widest.width_m)
+        return Reference("body", superellipse_area(widest.width_m, widest.height_m, widest.shape), widest.width_m, widest.width_m)
     wing = max(candidates, key=horizontal_area)
     tips_y = [panel.tip_le[1] for panel in wing.panels]
     return Reference(f"surface:{wing.name}", wing.planform_area_m2, wing.mac_m, max(tips_y) - min(tips_y))
@@ -1167,7 +1220,7 @@ def wall_excess(body: Body, wall_m: float, x: float, centre_yz: tuple[float, flo
     if inner_w <= 0.0 or inner_h <= 0.0:
         return None
     corners = [(centre_yz[0] + sy * half_yz[0], centre_yz[1] + sz * half_yz[1]) for sy in (-1, 1) for sz in (-1, 1)]
-    return max(math.hypot(*c) - superellipse_radius(inner_w, inner_h, body.shape, math.atan2(c[1], c[0])) for c in corners)
+    return max(math.hypot(*c) - superellipse_radius(inner_w, inner_h, body_section_at(body, x).shape, math.atan2(c[1], c[0])) for c in corners)
 
 
 def volume_checks(airframe: Airframe, body: Body) -> list[str]:
@@ -1185,7 +1238,7 @@ def volume_checks(airframe: Airframe, body: Body) -> list[str]:
         else:
             half = (volume.length_m / 2.0, 0.0, 0.0)
         x0, x1 = volume.x_m - half[0], volume.x_m + half[0]
-        for x in (x0, volume.x_m, x1):
+        for x in sorted({x0, volume.x_m, x1, *(station.x_m for station in body.stations if x0 < station.x_m < x1)}):
             excess = wall_excess(body, wall, x, (volume.y_m, volume.z_m), (half[1], half[2]))
             if excess is None:
                 problems.append(f"volume {volume.name!r} reaches x {x:.3f} m, outside the fuselage interior")
@@ -1218,7 +1271,9 @@ def part_overhang_m(part: PlacedPart, volume: Volume, body: Body, wall_m: float)
         radial = math.hypot(abs(offset[across[0]]) + half[across[0]], abs(offset[across[1]]) + half[across[1]])
         return max(length_overhang, radial - volume.diameter_m / 2.0)
     position = part.position_m
-    excesses = [wall_excess(body, wall_m, x, (position[1], position[2]), (half[1], half[2])) for x in (position[0] - half[0], position[0], position[0] + half[0])]
+    x0, x1 = position[0] - half[0], position[0] + half[0]
+    xs = sorted({x0, position[0], x1, *(station.x_m for station in body.stations if x0 < station.x_m < x1)})
+    excesses = [wall_excess(body, wall_m, x, (position[1], position[2]), (half[1], half[2])) for x in xs]
     return math.inf if None in excesses else max(length_overhang, *excesses)
 
 

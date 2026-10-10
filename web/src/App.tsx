@@ -18,7 +18,7 @@ export function App(): ReactElement {
   }, [])
 
   useEffect(() => {
-    document.title = snapshot?.title ?? 'quadrocketbuilder'
+    document.title = snapshot?.title ?? 'Dreamland'
   }, [snapshot])
 
   useEffect(() => {
@@ -39,6 +39,7 @@ export function App(): ReactElement {
         view={view}
         onView={setView}
         project={snapshot?.project ?? null}
+        dirty={snapshot?.dirty ?? false}
         aircraftName={typeof snapshot?.definition.name === 'string' ? snapshot.definition.name : null}
       />
       <main className="view-host">

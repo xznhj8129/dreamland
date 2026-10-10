@@ -1,3 +1,4 @@
+import { handleFromSelection, selectionFromHandle, useSelection } from '../editor/selection'
 import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ChangeEvent, PointerEvent as ReactPointerEvent, ReactElement } from 'react'
 import { CanvasRenderer } from '../renderer'
@@ -129,6 +130,9 @@ function snapRoll(value: number, detents: readonly RollDetent[]): number {
 }
 
 export function SimpleView({ snapshot }: { snapshot: Snapshot | null }): ReactElement {
+  const { active, select } = useSelection()
+  const selectedRef = useRef<HandleKey | null>(null)
+  selectedRef.current = handleFromSelection(active)
   const paneRef = useRef<HTMLDivElement | null>(null)
   const canvasRef = useRef<HTMLCanvasElement | null>(null)
   const rendererRef = useRef<CanvasRenderer | null>(null)
@@ -228,7 +232,7 @@ export function SimpleView({ snapshot }: { snapshot: Snapshot | null }): ReactEl
     const renderer = rendererRef.current
     if (renderer === null) return
     const payload = payloadRef.current
-    const key = elementRef.current ?? hoverRef.current
+    const key = elementRef.current ?? hoverRef.current ?? selectedRef.current
     const handle =
       payload === null || key === null
         ? null
@@ -236,6 +240,8 @@ export function SimpleView({ snapshot }: { snapshot: Snapshot | null }): ReactEl
     const highlight: DrawHighlight | null = handle === null ? null : { kind: handle.kind, coords: handle.coords }
     renderer.setHighlight(highlight)
   }, [])
+
+  useEffect(() => { applyHighlight() }, [active, applyHighlight])
 
   const endElementDrag = useCallback((): void => {
     const drag = elementRef.current
@@ -413,6 +419,8 @@ export function SimpleView({ snapshot }: { snapshot: Snapshot | null }): ReactEl
     const hit = payload === null ? null : hitHandle(payload.handles, event.clientX - rect.left, event.clientY - rect.top)
     event.currentTarget.setPointerCapture(event.pointerId)
     if (hit !== null) {
+      const selection = selectionFromHandle(hit)
+      select(selection.kind, selection.index)
       if (elementRef.current !== null) return // one element drag at a time
       elementRef.current = {
         pointerId: event.pointerId,
@@ -518,6 +526,7 @@ export function SimpleView({ snapshot }: { snapshot: Snapshot | null }): ReactEl
     <div className="simple-view">
       <div className="graphics-controls">
         <span className="axes-label">X = Front   Y = Right   Z = Up</span>
+        <span className="axes-label">NP = static estimate</span>
         <label className="mode-radio">
           <input type="radio" name="view-mode" checked={mode === 'Longitudinal'} onChange={() => chooseMode('Longitudinal')} />
           Longitudinal

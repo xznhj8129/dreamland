@@ -13,7 +13,7 @@ from typing import Any
 from libs.airframe import (
     AXES, BATTERY_PART_NAME, CONTROL_KINDS, CONTROL_ROLES, CUT_JOINTS, FIN_POSITIONS, INCIDENCE_MODES, JOINT_TYPES,
     LAYOUT_PANEL_COUNTS, LAYOUTS, MOUNT_TARGETS, ORIENTATION_KEYS, PART_CATEGORIES, REINFORCEMENT_TYPES,
-    SERVO_OUTPUTS, SINGLE_PROP_SPINS, SURFACE_PROP_SPINS, SURFACE_ROOTS, THRUST_DIRECTIONS, VOLUME_SHAPES,
+    SECTION_PROFILE_KEYS, SERVO_OUTPUTS, SINGLE_PROP_SPINS, SURFACE_PROP_SPINS, SURFACE_ROOTS, THRUST_DIRECTIONS, VOLUME_SHAPES,
     AirframeError, cell_format, motor_count, motor_repo,
 )
 from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS
@@ -22,9 +22,11 @@ from libs.presets import (
     save_preset,
 )
 from webapp.state import AppState
+from webapp.resizing import resize_airframe, resize_section
 
 # editor_view.py 37-42
 MM_KEYS = {
+    "d1_m", "d2_m", "center_diameter_m", "center_depth_m", "head_diameter_m", "head_depth_m",
     "length_m", "width_m", "height_m", "wall_radial_m", "insertion_depth_m", "diameter_m", "radial_position_m",
     "from_x_m", "to_x_m", "x_root_le_m", "span_m", "chord_root_m", "chord_tip_m", "span_position_m",
     "x_offset_m", "y_offset_m", "z_offset_m", "x_m", "y_m", "z_m", "lead_length_m", "flat_length_m", "curve_length_m", "nose_radius", "size_m", "printer_bed_m", "cuts_m",
@@ -57,8 +59,6 @@ NEW_ROD_PATTERN = {"type": "cf_rod", "material": "carbon_rod", "diameter_m": 0.0
 NO_PRESET = "(none)"
 # editor_view.py 98
 TYPE_FLAGS = ("tailsitter", "vtol", "powered")
-# editor_view.py 96
-NEW_CUT_JOINT = "coupler"
 # Every place parse_airframe coerces a definition value to int (libs/airframe.py 527, 561, 563, 696, 946-947,
 # 960, 984, 1110), which is what makes type(existing) is int in editor_view.parse_value: those fields take whole
 # numbers only. stacking is the battery's per-axis cell counts (editor_view.py 1002 uses it as the unit key).
@@ -83,6 +83,8 @@ NEW_CONTROL = {"kind": "split", "roles": [], "deflection_min_deg": -25.0, "defle
                "gap_m": 0.0005, "spar_diameter_m": 0.003}  # + kind fields, servos
 # editor_view.py 71
 NEW_POD = {"diameter_m": 0.035, "flat_length_m": 0.02, "curve_length_m": 0.05, "profile": "elliptical"}
+NEW_MOUNT_HOLES = {"pattern": "single", "d1_m": 0.003, "d2_m": 0.003, "hole_diameter_m": 0.003,
+                   "center_diameter_m": 0.0, "center_depth_m": 0.0, "head_diameter_m": 0.0, "head_depth_m": 0.0}
 # editor_view.py 73-75: spars and carry-through for an aircraft without a preset to take them from (the tube62 values).
 NEW_SPARS = {"material": "carbon_rod", "diameter_m": 0.0064, "count": 2, "spacing_m": 0.0075, "x_offset_m": 0.02, "y_offset_m": 0.0}
 NEW_CARRY_THROUGH = {"stem_width_m": 0.01, "length_m": 0.02, "flare_radius_m": 0.02, "root_length_m": 0.04, "wall_fillet_m": 0.004}
@@ -146,10 +148,8 @@ def context(state: AppState) -> dict[str, Any]:
 
     Only global data belongs here: parts_data and the preset names/rod patterns are read from data/parts/ and
     data/presets/, the motorlib combo lists (motors by manufacturer, props, cells, connectors, gauges) come from
-    libs.motorlib, and the rest are code constants and the add templates (NEW_SURFACE 65-68, NEW_CONTROL 70,
-    NEW_SPARS 73, NEW_CARRY_THROUGH 74, NEW_ROOT_BASE 75, NEW_MOUNT from add_mount 1115-1118, NEW_VOLUME from
-    add_volume 1242-1249, NEW_PART from add_part 1227-1234, NEW_MOTOR/NEW_PROP/NEW_BATTERY_RUN/NEW_MOTOR_RUN
-    76-87). Per-definition state (preset_status, preset spars, a reinforcement pattern computed from the fuselage,
+    libs.motorlib, and the rest are code constants and the propulsion defaults used by new_propulsion.
+    Per-definition state (preset_status, preset spars, a reinforcement pattern computed from the fuselage,
     new_propulsion 597-609) comes from the snapshot or is built client-side from these, so a stale context cannot
     override it. The client caches this per browser session and refreshes it after a preset op; a part-library
     save/delete bumps the snapshot's library_revision, which invalidates the cache the same way.
@@ -192,14 +192,7 @@ def context(state: AppState) -> dict[str, Any]:
         "layout_panel_counts": LAYOUT_PANEL_COUNTS,
         "placement_keys": list(PLACEMENT_KEYS),
         "orientation_keys": list(ORIENTATION_KEYS),
-        "new_surface": NEW_SURFACE,
-        "new_control": NEW_CONTROL,
-        "new_spars": NEW_SPARS,
-        "new_carry_through": NEW_CARRY_THROUGH,
-        "new_root_base": NEW_ROOT_BASE,
         "new_mount": NEW_MOUNT,
-        "new_volume": NEW_VOLUME,
-        "new_pod": NEW_POD,
         # Propulsion and wiring (editor_view.build_propulsion_tab 944-1019, build_wiring_tab 627-682): the model
         # labels and the add templates, plus the global motorlib lists the combos read (motorlib_lists).
         "battery_model_labels": BATTERY_MODEL_LABELS,
@@ -251,6 +244,18 @@ def apply_set(state: AppState, body: dict[str, Any]) -> None:
         raise ValueError("path must be a non-empty list of keys and indices")
     if not remove and "value" not in body:
         raise ValueError("a set needs a value, or remove: true")
+    if path == ["fuselage", "length_m"] and not remove:
+        resize_airframe(state.definition, body["value"])
+        sync_motor_runs(state.definition)
+        state.set_definition(state.definition)
+        return
+    if (len(path) == 5 and path[:2] == ["sections", "per_section"] and type(path[2]) is int
+            and path[3] == "section" and path[4] in SECTION_PROFILE_KEYS):
+        rows = state.definition["sections"]["per_section"]
+        if 0 <= path[2] < len(rows) and "section" not in rows[path[2]]:
+            if remove:
+                return
+            rows[path[2]]["section"] = {}
     node: Any = state.definition
     for step in path[:-1]:
         if type(step) is str and isinstance(node, dict) and step in node:
@@ -280,28 +285,23 @@ def _valid_preset_name(name: str) -> bool:
     return not any(char in name for char in ("/", "\\", "\x00"))
 
 
-def add_cut(definition: dict) -> None:
-    """editor_view.add_cut (825-834): split the longest section in two; both halves keep its solid flag and lose
-    its weighed masses."""
-    sections = definition["sections"]
-    cuts, rows = sections["cuts_m"], sections["per_section"]
-    bounds = [0.0, *cuts, definition["fuselage"]["length_m"]]
-    longest = max(range(len(bounds) - 1), key=lambda index: bounds[index + 1] - bounds[index])
-    cuts.insert(longest, round((bounds[longest] + bounds[longest + 1]) / 2.0, 4))
-    sections["cut_joints"].insert(longest, NEW_CUT_JOINT)
-    rows[longest:longest + 1] = [{"solid": rows[longest]["solid"]}, {"solid": rows[longest]["solid"]}]
-
-
 def delete_cut(definition: dict, index: int) -> None:
     """editor_view.delete_cut (836-847): merge the sections either side of a cut: the left one's solid flag,
     each weighed mass summed when both have one."""
     sections = definition["sections"]
     if not 0 <= index < len(sections["cuts_m"]):
         raise ValueError(f"cut index {index} is out of range")
+    left, right = sections["per_section"][index:index + 2]
+    default = definition["fuselage"]["section"]
+    if any(left.get("section", {}).get(key, default[key]) != right.get("section", {}).get(key, default[key]) for key in SECTION_PROFILE_KEYS):
+        raise ValueError("Cannot merge sections with different cross-sections; give them the same width, height and shape first")
     sections["cuts_m"].pop(index)
     sections["cut_joints"].pop(index)
-    left, right = sections["per_section"][index:index + 2]
     merged = {"solid": left["solid"]}
+    if "section" in left:
+        merged["section"] = copy.deepcopy(left["section"])
+    if left.get("fixed_length", False) and right.get("fixed_length", False):
+        merged["fixed_length"] = True
     for key in ("empty_mass_kg", "complete_mass_kg"):
         if key in left and key in right:
             merged[key] = left[key] + right[key]
@@ -608,13 +608,13 @@ def apply_op(state: AppState, body: dict[str, Any]) -> None:
     check_session(state, body)
     op = body.get("op")
     definition = state.definition
-    if op == "section.add_cut":
-        add_cut(definition)
-    elif op == "section.delete_cut":
+    if op == "section.delete_cut":
         index = body.get("index")
         if type(index) is not int:
             raise ValueError("section.delete_cut needs an integer index")
         delete_cut(definition, index)
+    elif op == "section.length":
+        resize_section(definition, body.get("index"), body.get("value"))
     # The nose/tail profile pick (build_fuselage_tab 696-698, reset_profile_params 849-850): profile and its params
     # are one mutation, so the definition never holds the old profile's params under the new profile.
     elif op == "fuselage.profile":
@@ -694,12 +694,13 @@ def apply_op(state: AppState, body: dict[str, Any]) -> None:
             raise ValueError(f"mount on must be one of {MOUNT_TARGETS}, got {on!r}")
         mount["on"] = on
         normalize_mount(definition, mount)
-    elif op == "mount.pod.toggle":
+    elif op in ("mount.pod.toggle", "mount.holes.toggle"):
         propulsion = definition.get("propulsion")
         if not isinstance(propulsion, dict):
             raise ValueError("the aircraft is not powered")
         mount = _indexed(propulsion["mounts"], body.get("index"), "mount")
-        toggle_block(mount, "pod", NEW_POD, enabled=body.get("enabled") is True)
+        key, defaults = ("pod", NEW_POD) if op == "mount.pod.toggle" else ("holes", NEW_MOUNT_HOLES)
+        toggle_block(mount, key, defaults, enabled=body.get("enabled") is True)
     # The propulsion battery's place (build_battery_group 1003 calls add_placement 1190-1207 with BATTERY_PART_NAME).
     elif op == "propulsion.battery.volume":
         propulsion = definition.get("propulsion")

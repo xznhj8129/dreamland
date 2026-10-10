@@ -4,6 +4,7 @@ import { editorOp } from '../store'
 import { Card, ChoiceField, EntryField, PlacementFields } from './fields'
 import { isObject } from './patch'
 import { useFormApi } from './session'
+import { ComponentPicker, useComponentIndex, useSelection } from './selection'
 
 /** editor_view.build_parts_tab (1174-1234): library component, volume placement or own x, y, z, orientation, mass. */
 export function PartsTab(): ReactElement {
@@ -20,10 +21,13 @@ export function PartsTab(): ReactElement {
       .map((name) => `${category}:${name}`),
   )
   const [notice, setNotice] = useState('')
+  const selected = useComponentIndex('part', parts.length)
+  const { select } = useSelection()
 
   const run = async (body: Record<string, unknown>): Promise<void> => {
     const result = await editorOp(api.sessionId, body)
     setNotice(result.ok ? '' : result.message)
+    if (result.ok && body.op === 'part.add') select('part', parts.length)
   }
 
   return (
@@ -40,8 +44,9 @@ export function PartsTab(): ReactElement {
         </div>
         {notice !== '' && <div className="field-error">{notice}</div>}
       </Card>
+      <ComponentPicker kind="part" items={parts.map((item, index) => ({ name: String(item.name ?? `part ${index + 1}`) }))} />
       {parts.map((part, index) => (
-        <PartCard key={index} index={index} part={part} library={library} volumeNames={volumeNames} onOp={run} />
+        <div key={index} hidden={index !== selected}><PartCard index={index} part={part} library={library} volumeNames={volumeNames} onOp={run} /></div>
       ))}
     </>
   )
@@ -76,7 +81,7 @@ function PartCard({ index, part, library, volumeNames, onOp }: PartCardProps): R
         // 1182: a rename must carry to the propulsion ESC reference.
         onValue={(value) => void onOp({ op: 'part.rename', index, name: String(value) })}
       />
-      <ChoiceField path={[...path, 'part']} value={part.part} options={library} />
+      <ChoiceField path={[...path, 'part']} value={part.part} options={library} searchable />
       {/* 1190-1207: the volume and offsets or own x, y, z, then the orientation, shared with the battery. */}
       <PlacementFields
         path={path}
@@ -85,7 +90,7 @@ function PartCard({ index, part, library, volumeNames, onOp }: PartCardProps): R
         // 1197 and set_part_volume 1209-1220: into a volume at its centre; out of one frozen where it resolves.
         onVolume={(value) => void onOp({ op: 'part.volume', index, volume: value })}
       />
-      <EntryField path={[...path, 'mass_kg']} unitKey="mass_kg" optional blankHint={massHint} />
+      <EntryField path={[...path, 'mass_kg']} unitKey="mass_kg" optional blankHint={massHint} defaultValue={libraryMass} defaultLabel="Library mass" />
     </Card>
   )
 }

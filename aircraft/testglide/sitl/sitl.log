@@ -4,7 +4,7 @@ INAV 9.1.0 SITL (0d69e2b4)
 [EEPROM] Saved '/media/anon/WD2TB/DataVault/TechProjects/Software/GitRepos/quadrocketbuilder/aircraft/testglide/sitl/eeprom.bin'
 [SOCKET] Bind TCP [::]:5760 to UART1
 [SOCKET] Bind TCP [::]:5761 to UART2
-[SOCKET] [::ffff:127.0.0.1]:48646 connected to UART1
+[SOCKET] [::ffff:127.0.0.1]:46136 connected to UART1
 [EEPROM] Loaded '/media/anon/WD2TB/DataVault/TechProjects/Software/GitRepos/quadrocketbuilder/aircraft/testglide/sitl/eeprom.bin' (32768 of 32768 bytes)
 [EEPROM] Saved '/media/anon/WD2TB/DataVault/TechProjects/Software/GitRepos/quadrocketbuilder/aircraft/testglide/sitl/eeprom.bin'
 [GIMBAL]: serial Detect...
@@ -18,8 +18,8 @@ INAV 9.1.0 SITL (0d69e2b4)
 [EEPROM] Loaded '/media/anon/WD2TB/DataVault/TechProjects/Software/GitRepos/quadrocketbuilder/aircraft/testglide/sitl/eeprom.bin' (32768 of 32768 bytes)
 [SOCKET] Bind TCP [::]:5760 to UART1
 [SOCKET] Bind TCP [::]:5761 to UART2
-[SOCKET] [::ffff:127.0.0.1]:48674 connected to UART1
+[SOCKET] [::ffff:127.0.0.1]:46154 connected to UART1
 [SOCKET] Bind TCP [::]:5762 to UART3
 [GIMBAL]: serial Detect...
 [GIMBAL]: gimbalPort: (nil)
-[SOCKET] [::ffff:127.0.0.1]:48674 disconnected from UART1
+[SOCKET] [::ffff:127.0.0.1]:46154 disconnected from UART1

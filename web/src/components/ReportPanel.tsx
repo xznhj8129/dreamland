@@ -1,6 +1,9 @@
+import { useSelection } from '../editor/selection'
 import { useEffect, useId, useRef, useState } from 'react'
 import type { KeyboardEvent, ReactElement } from 'react'
-import type { LineLevel, LogEntry, ReportPages, ReportSection } from '../types'
+import type { ComponentSelection, LineLevel, LogEntry, ReportPages, ReportSection } from '../types'
+
+type InspectComponent = (target: ComponentSelection) => void
 
 const LEVEL_CLASS: Record<LineLevel, string> = {
   info: 'line-info',
@@ -16,15 +19,16 @@ const TABS = [
 ] as const
 type ReportTab = (typeof TABS)[number]['id']
 
-function SectionContent({ section }: { section: ReportSection }): ReactElement {
+function SectionContent({ section, onInspect }: { section: ReportSection; onInspect?: InspectComponent }): ReactElement {
   return <>
+    {section.children.length > 0 && <ReportSections sections={section.children} onInspect={onInspect} />}
     {section.metrics.length > 0 && <dl className="report-metrics">
       {section.metrics.map(metric => <div key={metric.label} className="report-metric">
         <dt>{metric.label}</dt>
         <dd className={LEVEL_CLASS[metric.level]}>{metric.value}</dd>
       </div>)}
     </dl>}
-    {section.notes.map((note, index) => <p key={index} className={`report-note ${LEVEL_CLASS[note.level]}`}>{note.text}</p>)}
+    {section.notes.map((note, index) => <p key={index} className={`report-note ${LEVEL_CLASS[note.level]}`}>{note.text}{note.target && onInspect && <button type="button" className="inspect-problem" onClick={() => { if (note.target) onInspect(note.target) }}>Inspect {note.target.label}</button>}</p>)}
     {section.table && <div className="report-table-scroll" tabIndex={0} role="region" aria-label={`${section.title} table`}>
       <table className="report-table">
         <thead><tr>{section.table.columns.map(column => <th scope="col" key={column}>{column}</th>)}</tr></thead>
@@ -38,19 +42,21 @@ function SectionContent({ section }: { section: ReportSection }): ReactElement {
   </>
 }
 
-function Sections({ sections }: { sections: ReportSection[] }): ReactElement {
+export function ReportSections({ sections, onInspect }: { sections: ReportSection[]; onInspect?: InspectComponent }): ReactElement {
   return <>{sections.map((section, index) => section.collapsible
     ? <details className="report-section" key={index}>
-        <summary>{section.title}{section.table && <span className="report-count">{section.table.rows.length} points</span>}</summary>
-        <SectionContent section={section} />
+        <summary>{section.title}{section.table && <span className="report-count"> {section.table.rows.length} points</span>}</summary>
+        <SectionContent section={section} onInspect={onInspect} />
       </details>
     : <section className="report-section" key={index}>
         <h3>{section.title}</h3>
-        <SectionContent section={section} />
+        <SectionContent section={section} onInspect={onInspect} />
       </section>)}</>
 }
 
-export function ReportPanel({ pages, log }: { pages: ReportPages | null; log: LogEntry[] }): ReactElement {
+export function ReportPanel({ pages, log, inspectEnabled = true }: { pages: ReportPages | null; log: LogEntry[]; inspectEnabled?: boolean }): ReactElement {
+  const { select } = useSelection()
+  const inspect: InspectComponent = target => select(target.kind, target.index)
   const [tab, setTab] = useState<ReportTab>('summary')
   const logLengthRef = useRef(0)
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
@@ -95,7 +101,7 @@ export function ReportPanel({ pages, log }: { pages: ReportPages | null; log: Lo
               <div className="log-heading"><time>{entry.time}</time><strong>{entry.title}</strong></div>
               <div className="log-text">{entry.text}</div>
             </div>)
-        : pages ? <Sections sections={pages[item.id]} /> : <p className="report-empty">No valid analysis yet. See Log for errors.</p>}
+        : pages ? <ReportSections sections={pages[item.id]} onInspect={inspectEnabled ? inspect : undefined} /> : <p className="report-empty">No valid analysis yet. See Log for errors.</p>}
     </div>)}
   </div>
 }

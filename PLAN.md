@@ -22,7 +22,7 @@ Status: draft spec, awaiting approval. Supersedes the Lego module-stack model as
 - Old part sums are approximately accurate (m62v2 ~1.1 kg real).
 - 2026-10-03: Goal: a do-it-all design framework for new-generation drone designs: quadcopter, plane, quadplane, rocket boosted, any mix. JSBSim simulates all of it. Next propulsion type: rocket motors, with staging (OpenRocket logic).
 - 2026-10-04: Right pane split into Design (the airframe) and Build (parts, wiring, electronics), towards a full design export per aircraft. Wiring is per aircraft (Build > Wiring: each auto-routed run's gauge and connectors); data/specs.json was an early sketch, not authoritative. Parts need not sit in volumes (volumes are a CAD pointer).
-- 2026-10-03: Flight controller scripts: Python for now (later ArduPilot/PX4/Arduino-level code). One `Controller` class defines the API; scripts in `aircraft/<project>/controllers/`; setup()/loop() at a chosen rate, lockstep simulated time; hardware units as an Arduino gets them (SPI IMU counts, Pa, NAV-PVT GPS, PWM us). Same flight log and plots as an INAV run.
+- 2026-10-10: One flight framework: `run(flight)`, scripts in `scenarios/<controller>/`, commands imported from `controllers.inav` or `controllers.mcu`. Shared scheduler, simulation state, conditions and raw sensors. `experiment` is an example scenario. MCU scripts read sensors and write PWM; no backend autopilot or mixer.
 
 ## 1. Aircraft definition (saved file, schema "airframe/2")
 
@@ -122,6 +122,10 @@ propulsion          required when powered, absent when not
                     nose/tail cw | ccw;
                     thrust_axis_tilt_deg: thrust line tilted up (+z) from the body axis, e.g. to pass through the CG;
                     pod optional: diameter_m, flat_length_m, curve_length_m, profile (parameter-free)
+                    holes optional: pattern single (D1 hole) or radial_slots (4 M3-width slots from D1 to D2);
+                      d1_m, d2_m (slot-centre circle diameters), hole_diameter_m (slot width),
+                      center_diameter_m + center_depth_m (relief), head_diameter_m + head_depth_m
+                      (head seat inward from mounting face; all material behind it cleared for bolt entry)
 volumes[]           internal space: name, x_m (centre), y_m and z_m (default 0), shape:
                       box: size_m [x, y, z]
                       rounded_box: size_m [x, y, z], axis x|y|z, corner_radius_m (the edges along axis rounded; fit and
@@ -142,9 +146,13 @@ sections
   cuts_m[]          cut stations (ascending, inside the fuselage); section i spans cut i-1 .. cut i; may be empty
                     (one uncut section: the whole fuselage, no couplers)
   per_section[]     one per section: solid (true: printed solid less the volumes inside it, x print.bulk_density_kg_m3;
+                    fixed_length (optional bool, default false: preserve section length during automatic editor resizing),
                     false: hollow shell wall), empty_mass_kg (optional: weighed printed mass), complete_mass_kg (optional:
                     weighed printed mass + everything attached in the section, which it replaces: points by position,
                     props with their motor, motors with their mount, surface sets where they meet the body: their exposed root LE)
+                    section (optional object): width_m, height_m, shape overrides; omitted keys inherit fuselage.section.
+                    Midpoints are loft stations; cubic easing joins their sizes and shapes; nose/tail profiles taper the loft.
+                    Wall thickness stays global. Existing files without overrides keep their geometry.
   cut_joints[]      one per cut: coupler (separate coupler into both sections; fuselage.joints.coupler_mass_kg at the
                     cut), front_male or rear_male (the section ahead of / behind the cut carries the male end, no coupler),
                     or none (the sections butt with no coupler or spigot; cut them in CAD as needed)

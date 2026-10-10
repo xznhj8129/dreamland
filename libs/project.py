@@ -10,13 +10,13 @@ aircraft/<project>/
     aircraft.json   airframe/2 build file
     inav/           INAV diffs: real FC diffs, SITL diffs flown as written
       generated/    SITL diffs written from the design or a real FC diff on every run from them
-    sitl/           SITL.elf (pinned), eeprom.bin, sitl.log: the bench's workdir
+    sitl/           eeprom.bin, sitl.log: the bench's workdir
     jsbsim/         JSBSim export
     logs/           SITL and script flight logs and plots
     cad/            STEP / STL exports, drawings: cutaway, threeview, xray (.svg / .png)
       sections/     printable sections S01.. and couplers C01.., STEP and STL
       varsets/      FreeCAD varsets, one JSON per varset (Varset_FROM_JSON.FCMacro)
-    controllers/    flight controller scripts (libs/controller.py)
+    scenarios/      run(flight) scripts under inav/, mcu/, or another controller directory
 """
 
 from __future__ import annotations
@@ -59,10 +59,6 @@ class Project:
         return self.root / "sitl"
 
     @property
-    def sitl_path(self) -> Path:
-        return self.sitl_dir / "SITL.elf"
-
-    @property
     def jsbsim_dir(self) -> Path:
         return self.root / "jsbsim"
 
@@ -83,8 +79,8 @@ class Project:
         return self.cad_dir / "varsets"
 
     @property
-    def controllers_dir(self) -> Path:
-        return self.root / "controllers"
+    def scenarios_dir(self) -> Path:
+        return self.root / "scenarios"
 
 
 def open_project(path: Path) -> Project:
@@ -111,7 +107,7 @@ def create_project(name: str, definition: dict) -> Project:
         raise ProjectError(f"{root} already exists")
     try:
         root.mkdir()
-        for relative in ("inav/generated", "sitl", "jsbsim", "logs", "cad/sections", "cad/varsets", "controllers"):
+        for relative in ("inav/generated", "sitl", "jsbsim", "logs", "cad/sections", "cad/varsets", "scenarios/inav", "scenarios/mcu"):
             (root / relative).mkdir(parents=True)
         with open(root / BUILD_FILE, "w") as file:
             json.dump(definition, file, indent=4)

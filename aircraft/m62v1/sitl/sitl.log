@@ -1,10 +1,10 @@
-INAV 9.1.0 SITL (0d69e2b4)
+INAV 10.0.0 SITL (4a18df1b)
 [SYSTEM] Init...
 [SIM] No interface specified. Configurator only.
 [EEPROM] Saved '/media/anon/WD2TB/DataVault/TechProjects/Software/GitRepos/quadrocketbuilder/aircraft/m62v1/sitl/eeprom.bin'
 [SOCKET] Bind TCP [::]:5760 to UART1
 [SOCKET] Bind TCP [::]:5761 to UART2
-[SOCKET] [::ffff:127.0.0.1]:44236 connected to UART1
+[SOCKET] [::ffff:127.0.0.1]:38666 connected to UART1
 [EEPROM] Loaded '/media/anon/WD2TB/DataVault/TechProjects/Software/GitRepos/quadrocketbuilder/aircraft/m62v1/sitl/eeprom.bin' (32768 of 32768 bytes)
 [EEPROM] Saved '/media/anon/WD2TB/DataVault/TechProjects/Software/GitRepos/quadrocketbuilder/aircraft/m62v1/sitl/eeprom.bin'
 [GIMBAL]: serial Detect...
@@ -16,13 +16,14 @@ INAV 9.1.0 SITL (0d69e2b4)
 [EEPROM] Loaded '/media/anon/WD2TB/DataVault/TechProjects/Software/GitRepos/quadrocketbuilder/aircraft/m62v1/sitl/eeprom.bin' (32768 of 32768 bytes)
 [EEPROM] Saved '/media/anon/WD2TB/DataVault/TechProjects/Software/GitRepos/quadrocketbuilder/aircraft/m62v1/sitl/eeprom.bin'
 [SYSTEM] Reset
-INAV 9.1.0 SITL (0d69e2b4)
+INAV 10.0.0 SITL (4a18df1b)
 [SYSTEM] Init...
 [SIM] No interface specified. Configurator only.
 [EEPROM] Loaded '/media/anon/WD2TB/DataVault/TechProjects/Software/GitRepos/quadrocketbuilder/aircraft/m62v1/sitl/eeprom.bin' (32768 of 32768 bytes)
 [SOCKET] Bind TCP [::]:5760 to UART1
 [SOCKET] Bind TCP [::]:5761 to UART2
-[SOCKET] [::ffff:127.0.0.1]:44260 connected to UART1
+[SOCKET] [::ffff:127.0.0.1]:38690 connected to UART1
 [SOCKET] Bind TCP [::]:5762 to UART3
 [GIMBAL]: serial Detect...
 [GIMBAL]: gimbalPort: (nil)
+[SYSTEM] Stepped clock from 3591236 us

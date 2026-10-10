@@ -38,7 +38,7 @@ from webapp.server import create_app  # noqa: E402
 from webapp.state import AppState  # noqa: E402
 
 EXAMPLE = ROOT / "aircraft" / "example"
-RUN_TIMEOUT_S = 300.0  # the first run exports the JSBSim model
+RUN_TIMEOUT_S = 600.0  # the first run exports the shared lifting-line and control tables
 POLL_S = 0.25
 
 
@@ -66,28 +66,30 @@ async def get_state(client: TestClient, stdout_offset: int = 0, log_offset: int 
 
 
 def check_argv(state: AppState) -> None:
-    """The exact argv both runner kinds build, without launching anything (webapp.sim._plan)."""
+    """Both controllers select scripts through the same CLI and scheduler arguments."""
     command, status, shown, log_path = sim._plan(state, {
-        "controller": "script", "script": "level", "start": "air",
+        "controller": "mcu", "scenario": "level", "clock": "stepped", "start": "air",
         "conditions": {"alt": "100", "roll": "5"}, "duration": "2",
     })
     assert command == [
-        sys.executable, "-u", str(ROOT / "sim_script.py"), str(state.project.root), "level", "--start", "air",
-        "--alt", "100", "--roll", "5", "--duration", "2",
+        sys.executable, "-u", str(ROOT / "sim_flight.py"), str(state.project.root), "level",
+        "--controller", "mcu", "--start", "air", "--clock", "stepped", "--rate", "200", "--duration", "2",
+        "--alt", "100", "--roll", "5",
     ], command
-    assert status == "Running script: level..." and log_path == state.project.logs_dir / "script_level.csv"
-    assert shown == f"python sim_script.py {os.path.relpath(state.project.root, ROOT)} level --start air --alt 100 --roll 5 --duration 2", shown
+    assert status == "Running mcu: level..." and log_path == state.project.logs_dir / "mcu_level_air.csv"
+    assert shown == f"python sim_flight.py {os.path.relpath(state.project.root, ROOT)} level --controller mcu --start air --clock stepped --rate 200 --duration 2 --alt 100 --roll 5", shown
 
     command, status, shown, log_path = sim._plan(state, {
         "controller": "inav", "scenario": "efficiency", "start": "air",
         "conditions": {"alt": "100", "wind_from": "270"}, "inav_config": "bench-sitl.txt",
     })
     assert command == [
-        sys.executable, "-u", str(ROOT / "sim_inav.py"), "efficiency", str(state.project.root), "--start", "air",
+        sys.executable, "-u", str(ROOT / "sim_flight.py"), str(state.project.root), "efficiency",
+        "--controller", "inav", "--start", "air", "--clock", "realtime", "--rate", "200", "--duration", "600",
         "--alt", "100", "--wind-from", "270", "--inav-config", str(state.project.inav_dir / "bench-sitl.txt"),
     ], command
-    assert status == "Running efficiency..." and log_path == state.project.logs_dir / "sim_inav_efficiency.csv"
-    print("ok   argv: the script and INAV commands and their repo-relative summary lines match the Tk view")
+    assert status == "Running inav: efficiency..." and log_path == state.project.logs_dir / "inav_efficiency_air.csv"
+    print("ok   argv: both controllers use sim_flight.py and common scheduling arguments")
 
 
 def check_launch_plan(state: AppState) -> None:
@@ -97,10 +99,10 @@ def check_launch_plan(state: AppState) -> None:
             "controller": "inav", "scenario": "controls", "start": start, "conditions": {},
         })
         assert command == [
-            sys.executable, "-u", str(ROOT / "sim_inav.py"), "controls", str(state.project.root), "--start", start,
+            sys.executable, "-u", str(ROOT / "sim_flight.py"), str(state.project.root), "controls", "--controller", "inav", "--start", start, "--clock", "realtime", "--rate", "200", "--duration", "600",
         ], command
-        assert status == "Running controls..." and log_path == state.project.logs_dir / f"sim_inav_controls_{start}.csv", (status, log_path)
-        assert shown == f"python sim_inav.py controls {os.path.relpath(state.project.root, ROOT)} --start {start}", shown
+        assert status == "Running inav: controls..." and log_path == state.project.logs_dir / f"inav_controls_{start}.csv", (status, log_path)
+        assert shown == f"python sim_flight.py {os.path.relpath(state.project.root, ROOT)} controls --controller inav --start {start} --clock realtime --rate 200 --duration 600", shown
 
     # launcher overrides pass through in START_OPTIONS order
     command, *_ = sim._plan(state, {
@@ -108,7 +110,7 @@ def check_launch_plan(state: AppState) -> None:
         "conditions": {"launch-speed": "20", "launch-pitch": "12"},
     })
     assert command == [
-        sys.executable, "-u", str(ROOT / "sim_inav.py"), "controls", str(state.project.root), "--start", "catapult",
+        sys.executable, "-u", str(ROOT / "sim_flight.py"), str(state.project.root), "controls", "--controller", "inav", "--start", "catapult", "--clock", "realtime", "--rate", "200", "--duration", "600",
         "--launch-pitch", "12", "--launch-speed", "20",
     ], command
 
@@ -116,7 +118,7 @@ def check_launch_plan(state: AppState) -> None:
     for start, conditions in (("air", {"launch-pitch": "12"}), ("rail", {"launch-speed": "20"})):
         command, *_ = sim._plan(state, {"controller": "inav", "scenario": "controls", "start": start, "conditions": conditions})
         assert command == [
-            sys.executable, "-u", str(ROOT / "sim_inav.py"), "controls", str(state.project.root), "--start", start,
+            sys.executable, "-u", str(ROOT / "sim_flight.py"), str(state.project.root), "controls", "--controller", "inav", "--start", start, "--clock", "realtime", "--rate", "200", "--duration", "600",
         ], (start, command)
 
     parser = argparse.ArgumentParser()
@@ -139,7 +141,7 @@ def check_launch_plan(state: AppState) -> None:
 
     # the runner itself refuses an air-only option for a launch start, naming the launcher, before anything flies
     refused(["--alt", "100"], "catapult", "--alt: a launcher start sits on the rail, at rest")
-    assert not (state.project.logs_dir / "sim_inav_controls_catapult.csv").exists(), "a refused start must not fly"
+    assert not (state.project.logs_dir / "inav_controls_catapult.csv").exists(), "a refused start must not fly"
 
     # the supplied overrides land on the resolved launcher, and the start line prints them
     catapult = resolve(["--launch-pitch", "12", "--launch-length", "2.5", "--launch-speed", "20", "--launch-height", "1.8"], "catapult")
@@ -166,12 +168,13 @@ async def check_options(client: TestClient) -> None:
     response = await client.get("/api/sim/options")
     assert response.status == 200, response.status
     payload = await response.json()
-    assert payload["controllers"] == ["level"], payload["controllers"]
+    assert payload["controllers"] == ["inav", "mcu"], payload["controllers"]
     configs = {item["file"]: item["label"] for item in payload["inav_configs"]}
     assert "generated" not in configs, "generated is the default, not an offered file"
     assert configs["bench-sitl.txt"] == "SITL diff: bench-sitl.txt", configs
     assert configs["bench-real.txt"] == "real FC diff: bench-real.txt", configs
-    assert payload["scenarios"] == ["efficiency", "top-speed", "controls", "glide"], payload["scenarios"]
+    assert {"efficiency", "top-speed", "controls", "glide", "experiment"} <= set(payload["scenarios"]["inav"]), payload["scenarios"]
+    assert {"level", "stability"} == set(payload["scenarios"]["mcu"]), payload["scenarios"]
     assert payload["starts"] == ["air", "catapult", "rail"], payload["starts"]
     options_list = payload["start_options"]
     assert [item["key"] for item in options_list] == [
@@ -189,7 +192,7 @@ async def check_options(client: TestClient) -> None:
         "catapult": {"launch-pitch": 10.0, "launch-length": 2.0, "launch-speed": 15.0, "launch-height": 1.5},
         "rail": {"launch-pitch": 20.0, "launch-length": 3.0, "launch-height": 1.0},
     }, payload["launcher_defaults"]
-    assert payload["default_duration_s"] == 60.0
+    assert payload["default_duration_s"] == 600.0
     print("ok   options: controllers, labelled diffs (no generated), scenarios, starts, nine start conditions, "
           "four labelled launcher fields and their per-start defaults")
 
@@ -197,17 +200,17 @@ async def check_options(client: TestClient) -> None:
 async def check_bad_condition(client: TestClient) -> None:
     before = await get_state(client)
     response = await client.post("/api/sim/run", json={
-        "controller": "script", "script": "level", "start": "air", "conditions": {"alt": "abc"}, "duration": "2",
+        "controller": "mcu", "clock": "stepped", "scenario": "level", "start": "air", "conditions": {"alt": "abc"}, "duration": "2",
     })
     assert response.status == 400, response.status
     payload = await response.json()
     assert payload == {"ok": False, "message": "Altitude (m): 'abc' is not a number"}, payload
     for bad in (
-        {"controller": "script", "script": "nope"},
+        {"controller": "mcu", "clock": "stepped", "scenario": "nope"},
         {"controller": "inav", "scenario": "nope"},
-        {"controller": "script", "script": "level", "start": "ground"},  # the example cannot take off yet
-        {"controller": "script", "script": "level", "conditions": {"bogus": "1"}},
-        {"controller": "script", "script": "level", "duration": "abc"},
+        {"controller": "mcu", "clock": "stepped", "scenario": "level", "start": "ground"},  # the example cannot take off yet
+        {"controller": "mcu", "clock": "stepped", "scenario": "level", "conditions": {"bogus": "1"}},
+        {"controller": "mcu", "clock": "stepped", "scenario": "level", "duration": "abc"},
         {"controller": "inav", "scenario": "efficiency", "inav_config": "../bench-sitl.txt"},
     ):
         response = await client.post("/api/sim/run", json=bad)
@@ -219,7 +222,7 @@ async def check_bad_condition(client: TestClient) -> None:
 
 async def check_script_run(client: TestClient) -> None:
     response = await client.post("/api/sim/run", json={
-        "controller": "script", "script": "level", "start": "air",
+        "controller": "mcu", "clock": "stepped", "scenario": "level", "start": "air",
         "conditions": {"alt": "100", "wind_from": "270"}, "duration": "2",
     })
     assert response.status == 200, response.status
@@ -252,10 +255,10 @@ async def check_script_run(client: TestClient) -> None:
     assert final["status"] == "Finished (exit code 0)" and final["exit_code"] == 0, (final["status"], final["exit_code"])
     assert first_lines == 1, f"the first poll should carry only the command line, saw {first_lines}"
     assert lines[0].startswith("python ") and lines[0] == final["command"], lines[0]
-    assert "sim_script.py" in lines[0] and "--duration 2" in lines[0], lines[0]
-    assert any("Ran the full 2 s." in line for line in lines), lines[-5:]
+    assert "sim_flight.py" in lines[0] and "--duration 2" in lines[0], lines[0]
+    assert any("Scenario stopped: 2 s simulated time limit" in line for line in lines), lines[-5:]
     assert len(lines) > first_lines, "no stdout delta arrived after the command line"
-    assert final["log"]["file"] == "logs/script_level.csv", final["log"]["file"]
+    assert final["log"]["file"] == "logs/mcu_level_air.csv", final["log"]["file"]
     assert header is not None and "t" in header and "agl_m" in header, header
     assert rows and all(len(row) == len(header) for row in rows), (len(rows), len(header) if header else None)
     assert all(isinstance(value, float) for value in rows[0]), "rows must be JSON numbers"
@@ -294,21 +297,23 @@ async def run_to_end(client: TestClient, body: dict) -> tuple[dict, list[str], l
 
 
 async def check_launch_runs(client: TestClient, state: AppState) -> None:
-    """Real script runs from both launchers, launch mechanics only (the dumb full-throttle, neutral-stick script
+    """Real script runs from both launchers, launch mechanics only (the dumb full-PWM, neutral-servo script
     makes no attempt to fly): the catapult fires at the hold, and either launcher is left behind (speed and height
     gained). No stability or flight assertion."""
-    (state.project.controllers_dir / "launch.py").write_text(
-        "from libs.controller import Controller\n\n\n"
-        "class Launch(Controller):\n"
-        '    """Test only: full throttle, neutral sticks (servos keep their centre)."""\n\n'
-        "    def loop(self):\n"
-        "        self.esc[0] = 2000\n"
+    (state.project.scenarios_dir / "mcu" / "launch.py").write_text(
+        "from controllers import mcu as controller\n\n"
+        "def run(flight):\n"
+        "    controller.esc[:] = [2000] * len(controller.esc)\n"
+        "    controller.arm()\n"
+        "    controller.release()\n"
+        "    while True:\n"
+        "        flight.wait(0.01)\n"
     )
     for start in ("catapult", "rail"):
         # the catapult run overrides its launcher (the start line must print the resolved values); the rail keeps the default
         conditions = {"launch-pitch": "12", "launch-length": "2.5", "launch-speed": "18", "launch-height": "1.8"} if start == "catapult" else {}
         final, lines, header, rows = await run_to_end(client, {
-            "controller": "script", "script": "launch", "start": start, "conditions": conditions, "duration": "5",
+            "controller": "mcu", "clock": "stepped", "scenario": "launch", "start": start, "conditions": conditions, "duration": "5",
         })
         assert final["status"] == "Finished (exit code 0)", (start, final["status"], lines[-5:])
         if start == "catapult":
@@ -337,7 +342,7 @@ async def check_nan_rows(client: TestClient, state: AppState) -> None:
     Appends one such row to the finished script run's log and reads it back through the real route: browser
     JSON.parse rejects the NaN token Python's json writes for a non-finite float.
     """
-    log_path = state.project.logs_dir / "script_level.csv"
+    log_path = state.project.logs_dir / "mcu_level_air.csv"
     assert log_path.exists(), log_path
     with open(log_path, "a") as file:
         file.write("nan,1.5,inf,-inf,2.5\n")
@@ -351,7 +356,7 @@ async def check_nan_rows(client: TestClient, state: AppState) -> None:
 
 
 async def check_abort_and_refusal(client: TestClient) -> None:
-    body = {"controller": "script", "script": "level", "start": "air", "conditions": {"alt": "100"}, "duration": "3600"}
+    body = {"controller": "mcu", "clock": "realtime", "scenario": "level", "start": "air", "conditions": {"alt": "100"}, "duration": "3600"}
     response = await client.post("/api/sim/run", json=body)
     assert response.status == 200 and await response.json() == {"ok": True}
 
@@ -398,7 +403,7 @@ async def check_abort_and_refusal(client: TestClient) -> None:
 
 async def check_shutdown(client: TestClient) -> None:
     """The server-exit path: shutdown() SIGINTs a live run and does not return before it is gone."""
-    body = {"controller": "script", "script": "level", "start": "air", "conditions": {"alt": "100"}, "duration": "3600"}
+    body = {"controller": "mcu", "clock": "realtime", "scenario": "level", "start": "air", "conditions": {"alt": "100"}, "duration": "3600"}
     response = await client.post("/api/sim/run", json=body)
     assert response.status == 200 and await response.json() == {"ok": True}
     run_id: int | None = None
@@ -434,7 +439,7 @@ async def check_routes(state: AppState) -> None:
         await check_options(client)
         await check_bad_condition(client)
         await check_script_run(client)
-        await check_nan_rows(client, state)  # appends to the script_level.csv the last finished run tracks
+        await check_nan_rows(client, state)  # appends to the mcu_level_air.csv the last finished run tracks
         await check_launch_runs(client, state)
         await check_abort_and_refusal(client)
         await check_shutdown(client)

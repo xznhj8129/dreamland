@@ -156,19 +156,24 @@
         "per_section": [
             {
                 "solid": false,
+                "section": {},
                 "empty_mass_kg": 0.047
             },
             {
-                "solid": false
+                "solid": false,
+                "section": {}
             },
             {
-                "solid": false
+                "solid": false,
+                "section": {}
             },
             {
-                "solid": false
+                "solid": false,
+                "section": {}
             },
             {
-                "solid": false
+                "solid": false,
+                "section": {}
             }
         ],
         "cut_joints": [
