@@ -10,7 +10,9 @@ Aerodynamics of a resolved airframe (libs/geometry.py). Geometry is read from th
   rocket-style cross-check. The lifting line is asb.LiftingLine's algorithm solved for every AoA at once
   (lifting_line_sweep); aero_check.py verifies it against asb.LiftingLine. Control surfaces are asb.ControlSurface
   on the moving segment of each panel (AeroSandbox's model: an effective AoA change of deflection x (1 - hinge^2.75)
-  in the section polar, plus a drag factor); lifting_line_sweep takes the deflections per control number.
+  in the section polar, plus a drag factor); lifting_line_sweep takes the deflections per control number. An
+  align_hinge_vertically split control carries an AlignedHingeSurface, whose straight hinge plane gives each strip
+  its own local hinge fraction.
 - VLM sweep (run_vlm_sweep): wings only, inviscid; see its report header.
 """
 
@@ -26,7 +28,7 @@ from threadpoolctl import threadpool_limits
 from aerosandbox.aerodynamics.aero_3D.singularities.uniform_strength_horseshoe_singularities import calculate_induced_velocity_horseshoe
 
 from libs.airframe import ControlSurface
-from libs.geometry import STANDARD_GRAVITY_M_S2, Panel, ResolvedAirframe
+from libs.geometry import STANDARD_GRAVITY_M_S2, Panel, ResolvedAirframe, control_cut_frames, control_hinge_fraction
 
 AERO_MODEL_SIZE = "large"
 # Beyond about +-35 deg the wind runs backwards along swept vertical fins in asb.LiftingLine's strip model
@@ -132,16 +134,52 @@ def barrowman_finset(
     return cna, x_root_le + x_cp_local, mid_chord_line
 
 
+class AlignedHingeSurface(asb.ControlSurface):
+    """A split control whose align_hinge_vertically hinge runs straight along the panel span. Carries the shared
+    straight hinge plane: control_cut_frames' hinge_point as origin and its hinge_dir as normal, which is the
+    panel's chord direction (the plane is square to the chord lines). hinge_point is the panel-level fraction at
+    the moving span's midpoint, for consumers that only read that."""
+
+    def __init__(self, name: str, hinge_point: float, hinge_origin, hinge_normal) -> None:
+        super().__init__(name=name, symmetric=True, deflection=0.0, hinge_point=hinge_point)
+        self.hinge_origin = hinge_origin
+        self.hinge_normal = hinge_normal
+
+    def local_hinge_fraction(self, xyz_le, chord: float) -> float:
+        """The hinge plane's fraction of a strip's chord at the strip's midpoint leading edge: the chord line runs
+        along the plane normal, so the plane's signed distance from the leading edge over the chord is the fraction."""
+        offset = tuple(origin - value for origin, value in zip(self.hinge_origin, xyz_le))
+        return sum(value * normal for value, normal in zip(offset, self.hinge_normal)) / chord
+
+
+class AlignedHingeWing(asb.Wing):
+    """Resolve straight hinge fractions when ASB subdivides a wing, shared by both lifting-line solvers."""
+
+    def subdivide_sections(self, ratio: int, spacing_function=asb_np.linspace) -> asb.Wing:
+        wing = super().subdivide_sections(ratio, spacing_function)
+        for start, end in zip(wing.xsecs[:-1], wing.xsecs[1:]):
+            start.control_surfaces = [copy.copy(surface) for surface in start.control_surfaces]
+            for surface in start.control_surfaces:
+                if isinstance(surface, AlignedHingeSurface):
+                    surface.hinge_point = surface.local_hinge_fraction((start.xyz_le + end.xyz_le) / 2.0, (start.chord + end.chord) / 2.0)
+        return wing
+
+
 def panel_sections(panel: Panel, control: ControlSurface | None, tip_first: bool) -> list[asb.WingXSec]:
     """Sections of one panel, split at a split control's span ends. Each moving segment carries an undeflected
     asb.ControlSurface on its first section in the final order (ASB applies a section's control surfaces to the segment
-    after it); an all-moving panel is a hinge at the leading edge (effectiveness 1: the deflection adds to the AoA)."""
-    fractions, hinge = [0.0, 1.0], None
+    after it); an all-moving panel is a hinge at the leading edge (effectiveness 1: the deflection adds to the AoA).
+    An align_hinge_vertically split control carries an AlignedHingeSurface instead: the shared straight hinge plane
+    plus the segment's midpoint hinge fraction as the ordinary hinge_point."""
+    fractions, hinge, frames = [0.0, 1.0], None, None
     if control is not None and control.kind == "split":
         fractions, hinge = sorted({0.0, control.span_start, control.span_end, 1.0}), control.chord_start
+        if control.align_hinge_vertically:
+            frames = control_cut_frames(panel, control)
     elif control is not None:
         hinge = 0.0
-    moving = [hinge is not None and (control.kind != "split" or control.span_start <= a and b <= control.span_end) for a, b in zip(fractions, fractions[1:])]
+    segments = list(zip(fractions, fractions[1:]))
+    moving = [hinge is not None and (control.kind != "split" or control.span_start <= a and b <= control.span_end) for a, b in segments]
     sections = [
         asb.WingXSec(xyz_le=[r + (t - r) * f for r, t in zip(panel.root_le, panel.tip_le)], chord=panel.chord_root_m + (panel.chord_tip_m - panel.chord_root_m) * f,
                      twist=panel.incidence_deg, airfoil=asb.Airfoil(panel.airfoil))
@@ -150,9 +188,17 @@ def panel_sections(panel: Panel, control: ControlSurface | None, tip_first: bool
     if tip_first:
         sections.reverse()
         moving.reverse()
-    for section, moves in zip(sections, moving):
-        if moves:
-            section.control_surfaces = [asb.ControlSurface(name=f"{panel.surface} {panel.index + 1}", symmetric=True, deflection=0.0, hinge_point=hinge)]
+        segments.reverse()
+    for section, moves, (start, end) in zip(sections, moving, segments):
+        if not moves:
+            continue
+        name = f"{panel.surface} {panel.index + 1}"
+        if frames is None:
+            section.control_surfaces = [asb.ControlSurface(name=name, symmetric=True, deflection=0.0, hinge_point=hinge)]
+        else:
+            section.control_surfaces = [AlignedHingeSurface(
+                name=name, hinge_point=control_hinge_fraction(panel, control, 0.5 * (start + end)),
+                hinge_origin=frames["hinge_point"], hinge_normal=frames["hinge_dir"])]
     return sections
 
 
@@ -195,7 +241,8 @@ def build_asb_airplane(resolved: ResolvedAirframe) -> asb.Airplane:
             # ASB's section normal for root->tip order is (0, -span_z, span_y); flip order to match the panel normal.
             asb_normal = (0.0, -panel.span_dir[2], panel.span_dir[1])
             sections = panel_sections(panel, surface_set.definition.control, tip_first=sum(a * b for a, b in zip(asb_normal, panel.normal)) < 0.0)
-            wings.append(asb.Wing(name=f"{panel.surface}_{panel.index + 1}", symmetric=panel.xz_mirror == "primary", xsecs=sections))
+            wing_type = AlignedHingeWing if any(isinstance(control, AlignedHingeSurface) for section in sections for control in section.control_surfaces) else asb.Wing
+            wings.append(wing_type(name=f"{panel.surface}_{panel.index + 1}", symmetric=panel.xz_mirror == "primary", xsecs=sections))
     propulsors = []
     for motor in resolved.motors:
         x, y, z = motor.position
@@ -251,7 +298,7 @@ def carried_to_axis(wing: asb.Wing) -> asb.Wing:
     span /= np.linalg.norm(span)
     root_yz = np.array(root.xyz_le[1:], dtype=float)
     inner = asb.WingXSec(xyz_le=[root.xyz_le[0], *(root_yz - float(root_yz @ span) * span)], chord=root.chord, twist=root.twist, airfoil=root.airfoil)
-    return asb.Wing(name=wing.name, symmetric=wing.symmetric, xsecs=[*sections, inner] if tip_first else [inner, *sections])
+    return type(wing)(name=wing.name, symmetric=wing.symmetric, xsecs=[*sections, inner] if tip_first else [inner, *sections])
 
 
 @dataclass(frozen=True)
@@ -325,7 +372,7 @@ class LiftingLineMesh:
     bound_legs: np.ndarray
     airfoil_groups: tuple[tuple[SectionPolarModel, np.ndarray], ...]  # prepared polar and its panel indices
     controls: np.ndarray  # control number of each panel's moving segment, 0 = fixed
-    hinges: dict[int, float]  # hinge chord fraction per control number (0 = all-moving)
+    hinges: np.ndarray  # hinge chord fraction per panel (0 = fixed/all-moving), aligned with controls
     induced: np.ndarray  # (3, panels, panels): velocity at panel i's centre per unit circulation of horseshoe j
 
 
@@ -341,26 +388,34 @@ class SurfaceLoads:
 
 def build_lifting_line_mesh(wing_plane: asb.Airplane, owners: tuple[int, ...], wing_controls: tuple[tuple[int, int], ...]) -> LiftingLineMesh:
     """The same panels, strip airfoils, control surfaces and induced-velocity kernel as asb.LiftingLine.wing_aerodynamics.
-    wing_controls: per wing, the control number of its own panel and of its mirrored side (HybridAirplanes.controls)."""
-    corners, airfoils, panel_owners, panel_controls, hinges = [], [], [], [], {}
+    wing_controls: per wing, the control number of its own panel and of its mirrored side (HybridAirplanes.controls).
+    hinges gets one local hinge fraction per strip: an AlignedHingeSurface's straight hinge plane evaluated at the
+    strip's midpoint, or the surface's scalar hinge_point otherwise."""
+    corners, airfoils, panel_owners, panel_controls, panel_hinges = [], [], [], [], []
     for wing, owner, (own_control, mirror_control) in zip(wing_plane.wings, owners, wing_controls):
         wing = wing.subdivide_sections(ratio=LIFTING_LINE_SPANWISE_RESOLUTION, spacing_function=asb_np.cosspace)
         points, faces = wing.mesh_thin_surface(method="quad", chordwise_resolution=1, add_camber=False)
         strip_airfoils = [a.airfoil.blend_with_another_airfoil(airfoil=b.airfoil, blend_fraction=0.5) for a, b in zip(wing.xsecs[:-1], wing.xsecs[1:])]
         strip_moving = [bool(a.control_surfaces) for a in wing.xsecs[:-1]]
+        strip_hinges = []
         for a in wing.xsecs[:-1]:
-            for surface in a.control_surfaces:
-                hinges[own_control] = hinges[mirror_control] = surface.hinge_point
+            if not a.control_surfaces:
+                strip_hinges.append(0.0)
+                continue
+            surface = a.control_surfaces[-1]
+            strip_hinges.append(surface.hinge_point)
         strip_controls = [own_control if moves else 0 for moves in strip_moving]
         if wing.symmetric:
             strip_airfoils *= 2  # mesh_thin_surface lists the right side, then the mirrored left side
             strip_controls += [mirror_control if moves else 0 for moves in strip_moving]
+            strip_hinges *= 2  # the mirrored strips carry the same local fractions
         if len(strip_airfoils) != len(faces):
             raise ValueError(f"lifting line mesh of {wing.name}: {len(faces)} panels but {len(strip_airfoils)} strip airfoils")
         corners.append(points[faces])
         airfoils += strip_airfoils
         panel_owners += [owner] * len(faces)
         panel_controls += strip_controls
+        panel_hinges += strip_hinges
     front_left, back_left, back_right, front_right = (np.concatenate([wing_corners[:, i] for wing_corners in corners]) for i in range(4))
     cross = np.cross(front_right - back_left, front_left - back_right)
     cross_norm = np.linalg.norm(cross, axis=1)
@@ -384,7 +439,7 @@ def build_lifting_line_mesh(wing_plane: asb.Airplane, owners: tuple[int, ...], w
         forward=np.cross(normals, bound_legs / np.linalg.norm(bound_legs, axis=1)[:, None]),
         centers=centers, bound_legs=bound_legs,
         airfoil_groups=tuple((SectionPolarModel.from_airfoil(airfoil), np.array(indices)) for airfoil, indices in groups.values()),
-        controls=np.array(panel_controls), hinges={number: hinge for number, hinge in hinges.items() if number},
+        controls=np.array(panel_controls), hinges=np.array(panel_hinges, dtype=float),
         induced=induced,
     )
 
@@ -413,7 +468,11 @@ def lifting_line_sweep(
             for number in np.unique(mesh.controls[group]):
                 indices = group[mesh.controls[group] == number]
                 deflection = deflections.get(int(number), 0.0) if number else 0.0
-                surfaces = [asb.ControlSurface(deflection=deflection, hinge_point=mesh.hinges[int(number)])] if deflection else None
+                if deflection:
+                    hinge = np.broadcast_to(mesh.hinges[indices, None], alpha[indices].shape).ravel()
+                    surfaces = [asb.ControlSurface(deflection=deflection, hinge_point=hinge)]
+                else:
+                    surfaces = None
                 aero = airfoil.get_aero_from_neuralfoil(
                     alpha=alpha[indices].ravel(), Re=reynolds[indices].ravel(), mach=mach[indices].ravel(), model_size=AERO_MODEL_SIZE,
                     control_surfaces=surfaces,

@@ -232,6 +232,12 @@ export function SimpleView({ snapshot }: { snapshot: Snapshot | null }): ReactEl
     const renderer = rendererRef.current
     if (renderer === null) return
     const payload = payloadRef.current
+    const selected = selectedRef.current
+    if (payload?.view.mode === 'Front' && (selected?.target === 'cut' || selected?.target === 'loft')) {
+      const coords = (selected.target === 'loft' ? payload.loft_outlines : payload.section_outlines)[selected.index]
+      renderer.setHighlight(coords === undefined ? null : { kind: 'polygon', coords })
+      return
+    }
     const key = elementRef.current ?? hoverRef.current ?? selectedRef.current
     const handle =
       payload === null || key === null

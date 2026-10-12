@@ -4,7 +4,7 @@ python analyze_airframe.py aircraft/m62v2
 python analyze_airframe.py aircraft/m62v2 --aoa 5 --airspeed 20
 python analyze_airframe.py aircraft/m62v2 --sweep
 python analyze_airframe.py aircraft/m62v2 --export-step out.step --step-mode fused --export-stl out.stl
-python analyze_airframe.py aircraft/m62v2 --export-sections   # printable sections and couplers into the project's cad/sections/
+python analyze_airframe.py aircraft/m62v2 --export-sections --sections-format stl  # printable sections/couplers into cad/sections/ (STEP default)
 python analyze_airframe.py aircraft/m62v2 --export-varsets     # FreeCAD varsets into the project's cad/varsets/
 python analyze_airframe.py aircraft/m62v2 --export-drawings    # blueprint drawings: cad/cutaway, threeview, xray (.svg and .png)
 
@@ -40,7 +40,8 @@ def main() -> None:
     parser.add_argument("--export-step", type=Path, default=None, help="Write the airframe as STEP")
     parser.add_argument("--step-mode", choices=["assembly", "fused"], default="assembly", help="STEP: named parts per section, or one fused outer shape")
     parser.add_argument("--export-stl", type=Path, default=None, help="Write the airframe as one STL mesh")
-    parser.add_argument("--export-sections", action="store_true", help="Write each printable section and coupler as STEP and STL into the project's cad/sections/")
+    parser.add_argument("--export-sections", action="store_true", help="Write each printable section and coupler as STEP or STL (--sections-format) into the project's cad/sections/")
+    parser.add_argument("--sections-format", choices=["step", "stl"], default="step", help="Format for --export-sections (default: step)")
     parser.add_argument("--export-drawings", action="store_true", help="Draw the blueprint cutaway, three-view and x-ray into the project's cad/ (.svg and .png)")
     parser.add_argument("--export-varsets", action="store_true", help="Write the FreeCAD varsets (one JSON each) into the project's cad/varsets/")
     parser.add_argument("--export-prop-discs", action="store_true", help="Include thin propeller discs in CAD exports (actuator-disc CFD)")
@@ -74,7 +75,7 @@ def main() -> None:
         written_mode = export_stl(resolved, args.export_stl, include_prop_discs=args.export_prop_discs)
         print(f"STL written ({written_mode}): {args.export_stl}")
     if args.export_sections:
-        written, notes = export_sections(resolved, project.sections_dir)
+        written, notes = export_sections(resolved, project.sections_dir, args.sections_format)
         print("\n".join(written))
         for note in notes:
             print(f"Section export: {note}", file=sys.stderr)

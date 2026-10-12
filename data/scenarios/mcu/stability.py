@@ -7,7 +7,6 @@ There is no attitude or altitude controller.
 
 from controllers import mcu as controller
 
-START = {"start": "air"}
 MOTOR_US = 1600
 SERVO_TRIM_US = 1500
 PITCH_OUTPUTS = (0, 1)

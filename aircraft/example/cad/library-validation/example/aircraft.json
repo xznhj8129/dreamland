@@ -1,0 +1,409 @@
+{
+    "schema": "airframe/2",
+    "powered": true,
+    "vtol": false,
+    "tailsitter": false,
+    "name": "ezplane",
+    "preset": "tube62",
+    "operating_point": {
+        "aoa_deg": 3,
+        "airspeed_m_s": 20.0,
+        "altitude_m": 0.0
+    },
+    "print": {
+        "material": "elegoo_pla_plus",
+        "bulk_density_kg_m3": 318.3,
+        "printer_bed_m": [
+            0.24,
+            0.24,
+            0.25
+        ]
+    },
+    "fuselage": {
+        "length_m": 0.672,
+        "section": {
+            "width_m": 0.062,
+            "height_m": 0.062,
+            "shape": 2.0,
+            "wall_radial_m": 0.00125
+        },
+        "nose": {
+            "profile": "elliptical",
+            "length_m": 0.06,
+            "params": {}
+        },
+        "tail": {
+            "profile": "elliptical",
+            "length_m": 0.06,
+            "params": {}
+        },
+        "channels": [],
+        "loft_stations": [
+            {
+                "x_m": 0.02849
+            },
+            {
+                "x_m": 0.08054,
+                "shape": 4,
+                "height_m": 0.065,
+                "width_m": 0.07
+            },
+            {
+                "x_m": 0.18442,
+                "width_m": 0.07,
+                "height_m": 0.075,
+                "shape": 4.0
+            },
+            {
+                "x_m": 0.30822,
+                "width_m": 0.07,
+                "height_m": 0.075,
+                "shape": 3
+            },
+            {
+                "x_m": 0.42392,
+                "shape": 3,
+                "width_m": 0.075,
+                "height_m": 0.07
+            },
+            {
+                "x_m": 0.54015
+            },
+            {
+                "x_m": 0.64285
+            }
+        ]
+    },
+    "surfaces": [
+        {
+            "name": "main-wing",
+            "x_root_le_m": 0.32705,
+            "layout": "H",
+            "fin_position": "top",
+            "dihedral_deg": 5.0,
+            "vertical_offset": 0.6,
+            "root": "body",
+            "span_m": 0.3,
+            "chord_root_m": 0.1,
+            "chord_tip_m": 0.07,
+            "sweep_le_deg": 3,
+            "incidence_deg": 3.0,
+            "incidence_mode": "symmetric",
+            "airfoil": "naca2412",
+            "mass_kg": 0.05,
+            "control": {
+                "align_hinge_vertically": true,
+                "kind": "split",
+                "roles": [
+                    "roll"
+                ],
+                "deflection_min_deg": -45.0,
+                "deflection_max_deg": 45.0,
+                "rate_deg_s": 300.0,
+                "gap_m": 0.001,
+                "rod_diameter_m": 0.002,
+                "chord_start": 0.7,
+                "span_start": 0.5,
+                "span_end": 1.0,
+                "servos": [
+                    "S4",
+                    "S5"
+                ],
+                "rod_x_offset_m": 0.0025,
+                "rod_y_offset_m": 0.001
+            },
+            "spars": {
+                "material": "carbon_rod",
+                "diameter_m": 0.0064,
+                "count": 2,
+                "spacing_m": 0.02,
+                "x_offset_m": 0.03,
+                "y_offset_m": 0.002,
+                "carry_through": {
+                    "stem_width_m": 0.015,
+                    "length_m": 0.03,
+                    "flare_radius_m": 0.01,
+                    "root_length_m": 0.04,
+                    "wall_fillet_m": 0.004
+                }
+            },
+            "root_base": {
+                "length_m": 0.096,
+                "width_m": 0.018,
+                "height_m": 0.0,
+                "forward_offset_m": 0.0,
+                "leading_cut_m": 0.01,
+                "trailing_cut_m": 0.06
+            },
+            "sections": {
+                "cuts_m": [
+                    0.015,
+                    0.16499999999999998
+                ]
+            }
+        },
+        {
+            "name": "elevators",
+            "x_root_le_m": 0.53179,
+            "layout": "H",
+            "fin_position": "top",
+            "dihedral_deg": 0.0,
+            "vertical_offset": 0.0,
+            "root": "body",
+            "span_m": 0.1,
+            "chord_root_m": 0.08,
+            "chord_tip_m": 0.07,
+            "sweep_le_deg": 5.0,
+            "incidence_deg": 0.0,
+            "incidence_mode": "symmetric",
+            "airfoil": "naca0008",
+            "control": {
+                "align_hinge_vertically": false,
+                "kind": "split",
+                "roles": [
+                    "pitch"
+                ],
+                "deflection_min_deg": -45.0,
+                "deflection_max_deg": 45.0,
+                "rate_deg_s": 300.0,
+                "gap_m": 0.0005,
+                "rod_diameter_m": 0.002,
+                "servos": [
+                    "S1",
+                    "S2"
+                ],
+                "chord_start": 0.55,
+                "span_start": 0.0,
+                "span_end": 1.0,
+                "rod_x_offset_m": 0.0025
+            },
+            "sections": {
+                "cuts_m": [
+                    0.01
+                ]
+            }
+        },
+        {
+            "name": "rudder",
+            "x_root_le_m": 0.5,
+            "layout": "1",
+            "fin_position": "top",
+            "dihedral_deg": 0.0,
+            "vertical_offset": 0.0,
+            "root": "body",
+            "span_m": 0.15,
+            "chord_root_m": 0.1,
+            "chord_tip_m": 0.07,
+            "sweep_le_deg": 10,
+            "incidence_deg": 0.0,
+            "incidence_mode": "symmetric",
+            "airfoil": "naca0008",
+            "control": {
+                "align_hinge_vertically": true,
+                "kind": "split",
+                "roles": [
+                    "yaw"
+                ],
+                "deflection_min_deg": -45.0,
+                "deflection_max_deg": 45.0,
+                "rate_deg_s": 300.0,
+                "gap_m": 0.0005,
+                "chord_start": 0.6,
+                "span_start": 0.05,
+                "span_end": 1.0,
+                "servos": [
+                    "S3"
+                ],
+                "rod_diameter_m": 0.002,
+                "rod_x_offset_m": 0.0025
+            },
+            "sections": {
+                "cuts_m": [
+                    0.01
+                ]
+            }
+        },
+        {
+            "name": "underfin",
+            "x_root_le_m": 0.52,
+            "layout": "1",
+            "fin_position": "bottom",
+            "dihedral_deg": 0.0,
+            "vertical_offset": 0.0,
+            "root": "body",
+            "span_m": 0.08,
+            "chord_root_m": 0.08,
+            "chord_tip_m": 0.05,
+            "sweep_le_deg": 20,
+            "incidence_deg": 0.0,
+            "incidence_mode": "symmetric",
+            "airfoil": "naca0012",
+            "sections": {
+                "cuts_m": [
+                    0.01
+                ]
+            }
+        }
+    ],
+    "propulsion": {
+        "motor": {
+            "manufacturer": "Brother Hobby",
+            "name": "Tornado T5 3115 PRO 900"
+        },
+        "prop": "APC SF 9x6",
+        "battery": {
+            "model": "commercial",
+            "part": "CNHL-2200mah-6S",
+            "volume": "battery"
+        },
+        "esc": "ESC",
+        "mounts": [
+            {
+                "on": "tail",
+                "direction": "pusher",
+                "spin": "cw",
+                "thrust_axis_tilt_deg": 0.0,
+                "pod": {
+                    "diameter_m": 0.035,
+                    "flat_length_m": 0.02,
+                    "curve_length_m": 0.02,
+                    "profile": "elliptical"
+                },
+                "x_offset_m": 0.01
+            }
+        ],
+        "wiring": {
+            "battery": {
+                "gauge_awg": 14,
+                "conductors": 2,
+                "plugs": [
+                    "XT60",
+                    "XT60"
+                ]
+            },
+            "motors": [
+                {
+                    "gauge_awg": 18,
+                    "conductors": 3,
+                    "plugs": [
+                        "MR60"
+                    ]
+                }
+            ]
+        }
+    },
+    "volumes": [
+        {
+            "name": "battery",
+            "shape": "rounded_box",
+            "x_m": 0.22745,
+            "size_m": [
+                0.125,
+                0.04,
+                0.0495
+            ],
+            "axis": "x",
+            "corner_radius_m": 0.002,
+            "z_m": 0.00118
+        },
+        {
+            "name": "ballast",
+            "shape": "bore",
+            "x_m": 0.1119,
+            "mass_kg": 0.02,
+            "length_m": 0.05
+        }
+    ],
+    "parts": [
+        {
+            "name": "ESC",
+            "part": "esc:esc-single-40a",
+            "mass_kg": 0.0,
+            "x_m": 0.5817,
+            "y_m": 0.0,
+            "z_m": 0.0
+        },
+        {
+            "name": "cam",
+            "part": "camera:camera-generic-micro",
+            "x_m": 0.02,
+            "y_m": 0.0,
+            "z_m": 0.0
+        },
+        {
+            "name": "fc",
+            "part": "fc:fc-generic-wing",
+            "x_m": 0.45,
+            "y_m": 0.0,
+            "z_m": 0.0
+        },
+        {
+            "name": "vtx",
+            "part": "vtx:vtx-generic-20x20",
+            "x_m": 0.5,
+            "y_m": 0.0,
+            "z_m": 0.0
+        },
+        {
+            "name": "gps",
+            "part": "gps:gps-generic",
+            "x_m": 0.4,
+            "y_m": 0.0,
+            "z_m": 0.03
+        }
+    ],
+    "sections": {
+        "cuts_m": [
+            0.05801,
+            0.1559,
+            0.30729,
+            0.4296,
+            0.6137
+        ],
+        "per_section": [
+            {
+                "solid": false,
+                "empty_mass_kg": 0.047
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.065
+            },
+            {
+                "solid": false
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.122
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.055
+            },
+            {
+                "solid": false,
+                "empty_mass_kg": 0.015
+            }
+        ],
+        "cut_joints": [
+            "front_male",
+            "front_male",
+            "rear_male",
+            "rear_male",
+            "rear_male"
+        ],
+        "joints": {
+            "type": "radial_screws",
+            "count": 8,
+            "screw": "M3",
+            "insertion_depth_m": 0.01,
+            "coupler_wall_m": 0.0045,
+            "fit_clearance_m": 0.0003,
+            "socket_wall_m": 0.00125,
+            "hole_edge_dist_m": 0.006,
+            "hole_diameter_m": 0.003,
+            "hole_angle_offset_deg": 22.5,
+            "coupler_mass_kg": 0.02136
+        }
+    }
+}

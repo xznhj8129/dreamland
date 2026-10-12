@@ -1,12 +1,12 @@
 """INAV SITL transport, settings, and controller commands."""
 
-import math
 import re
 import time
 from pathlib import Path
 
 from inavbench import Bench
 
+from libs.fdm import pitch_deg, pitch_rate_deg_s, roll_deg, roll_rate_deg_s
 from libs.project import Project
 from libs.inav_flight import ForwardFlight
 from libs.simrun import battery_power_w, build_vehicle, electrical_columns
@@ -181,8 +181,8 @@ def takeoff(throttle=0.7, modes=()):
 
 def attitude(*, pitch=0.0, roll=0.0, throttle=None):
     fdm = engine.plant.fdm
-    pitch_stick = -(ANGLE_GAIN * (pitch - fdm["attitude/theta-deg"]) - RATE_GAIN * math.degrees(fdm["velocities/q-rad_sec"]))
-    roll_stick = ANGLE_GAIN * (roll - fdm["attitude/phi-deg"]) - RATE_GAIN * math.degrees(fdm["velocities/p-rad_sec"])
+    pitch_stick = -(ANGLE_GAIN * (pitch - pitch_deg(fdm)) - RATE_GAIN * pitch_rate_deg_s(fdm))
+    roll_stick = ANGLE_GAIN * (roll - roll_deg(fdm)) - RATE_GAIN * roll_rate_deg_s(fdm)
     engine.sticks(pitch=pitch_stick, roll=roll_stick, throttle=throttle)
 
 

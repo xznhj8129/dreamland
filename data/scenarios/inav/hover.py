@@ -6,7 +6,6 @@ CLIMB_STICK_ABOVE_HOVER = 0.12  # throttle stick above the predicted hover stick
 ALTHOLD_STICK = 0.5  # stick centre: hold altitude
 
 
-START = {"start": "ground"}
 
 
 def run(mission):

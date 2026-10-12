@@ -67,5 +67,16 @@
             "Type": "App::PropertyString",
             "Value": "'naca0008'"
         }
+    },
+    "Sections": {
+        "CutCount": {
+            "Type": "App::PropertyInteger",
+            "Value": 1
+        },
+        "Cut1": {
+            "Type": "App::PropertyLength",
+            "Value": 10.0,
+            "Unit": "mm"
+        }
     }
 }

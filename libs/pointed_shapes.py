@@ -37,17 +37,17 @@ def ogive_radius(radius_value: float, length_value: float) -> float:
     return (radius_value * radius_value + length_value * length_value) / (2.0 * radius_value)
 
 
-def check_profile(shape_name: str, length_value: float, radius_value: float, shape_params: dict | None = None) -> None:
-    """Raise ValueError when the profile cannot be built at this length and base radius."""
+def check_profile(shape_name: str, length_value: float, radius_value: float | None, shape_params: dict | None = None) -> None:
+    """Validate profile parameters; include dimensional checks when a resolved base radius is supplied."""
     params = shape_params or {}
     shape_key = normalize_shape_name(shape_name)
-    if length_value < 0.0 or radius_value <= 0.0:
+    if length_value < 0.0 or (radius_value is not None and radius_value <= 0.0):
         raise ValueError(f"{shape_key}: length {length_value} must be >= 0 and base radius {radius_value} > 0")
     if length_value == 0.0:
         return  # a flat end
-    if shape_key == "tangent_ogive" and length_value < radius_value:
+    if shape_key == "tangent_ogive" and radius_value is not None and length_value < radius_value:
         raise ValueError(f"tangent_ogive: length {length_value} is shorter than the base radius {radius_value}, so it cannot close to a point; use elliptical or a blunted profile")
-    if shape_key in ("spherically_blunted_conic", "spherically_blunted_tangent_ogive") and not 0.0 <= params["nose_radius"] < radius_value:
+    if shape_key in ("spherically_blunted_conic", "spherically_blunted_tangent_ogive") and (params["nose_radius"] < 0.0 or (radius_value is not None and params["nose_radius"] >= radius_value)):
         raise ValueError(f"{shape_key}: nose_radius {params['nose_radius']} must be >= 0 and smaller than the base radius {radius_value}")
     if shape_key == "bi_conic":
         for key in ("break_fraction", "break_radius_fraction"):
@@ -60,7 +60,7 @@ def check_profile(shape_name: str, length_value: float, radius_value: float, sha
     if shape_key == "haack_series" and params["c"] < 0.0:
         raise ValueError(f"haack_series: c {params['c']} must be >= 0")
     if shape_key == "secant_ogive":
-        minimum = radius_value / math.hypot(radius_value, length_value)
+        minimum = 0.0 if radius_value is None else radius_value / math.hypot(radius_value, length_value)
         if params["rho_factor"] < minimum:
             raise ValueError(f"secant_ogive: rho_factor {params['rho_factor']} must be >= {minimum:.4f} at length {length_value}, radius {radius_value}")
 

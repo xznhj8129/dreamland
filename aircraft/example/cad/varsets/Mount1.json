@@ -10,6 +10,11 @@
             "Type": "App::PropertyString",
             "Value": "'tail'"
         },
+        "XOffset": {
+            "Type": "App::PropertyDistance",
+            "Value": 10.0,
+            "Unit": "mm"
+        },
         "Direction": {
             "Type": "App::PropertyString",
             "Value": "'pusher'"
@@ -43,6 +48,47 @@
         "Profile": {
             "Type": "App::PropertyString",
             "Value": "'elliptical'"
+        }
+    },
+    "MountingHoles": {
+        "Pattern": {
+            "Type": "App::PropertyString",
+            "Value": "'radial_slots'"
+        },
+        "D1": {
+            "Type": "App::PropertyLength",
+            "Value": 16.0,
+            "Unit": "mm"
+        },
+        "D2": {
+            "Type": "App::PropertyLength",
+            "Value": 19.0,
+            "Unit": "mm"
+        },
+        "HoleDiameter": {
+            "Type": "App::PropertyLength",
+            "Value": 3.2,
+            "Unit": "mm"
+        },
+        "CenterDiameter": {
+            "Type": "App::PropertyLength",
+            "Value": 10.0,
+            "Unit": "mm"
+        },
+        "CenterDepth": {
+            "Type": "App::PropertyLength",
+            "Value": 10.0,
+            "Unit": "mm"
+        },
+        "HeadDiameter": {
+            "Type": "App::PropertyLength",
+            "Value": 6.0,
+            "Unit": "mm"
+        },
+        "HeadDepth": {
+            "Type": "App::PropertyLength",
+            "Value": 5.0,
+            "Unit": "mm"
         }
     }
 }

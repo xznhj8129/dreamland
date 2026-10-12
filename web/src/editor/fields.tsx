@@ -135,6 +135,26 @@ export function EntryField({
     setText(event.target.value)
   }
 
+  const useAuto = (): void => {
+    setOverriding(false)
+    committedRef.current = ''
+    textRef.current = ''
+    latestRef.current = undefined
+    setText('')
+    if (value !== undefined && value !== null) void api.remove(path)
+  }
+
+  const useOverride = (): void => {
+    setOverriding(true)
+    if (text === '') {
+      const initial = Array.isArray(effectiveDefault) && unitKey !== 'mass_kg' ? '' : defaultText
+      textRef.current = initial
+      setText(initial)
+      commitText(initial)
+    }
+    inputRef.current?.focus()
+  }
+
   return (
     <div className={showLabel ? 'form-row' : 'form-row form-row-bare'}>
       {showLabel && (
@@ -144,22 +164,9 @@ export function EntryField({
       )}
       <div className={optional ? 'form-control optional-control' : 'form-control'}>
         {optional && <div className="optional-mode">
-          <button type="button" className={!overriding ? 'active' : ''} aria-pressed={!overriding} onClick={() => {
-            setOverriding(false)
-            committedRef.current = ''
-            textRef.current = ''
-            latestRef.current = undefined
-            setText('')
-            if (value !== undefined && value !== null) void api.remove(path)
-          }}>Auto</button>
-          <button type="button" className={overriding ? 'active' : ''} aria-pressed={overriding} onClick={() => {
-            setOverriding(true)
-            if (text === '') {
-              const initial = Array.isArray(effectiveDefault) && unitKey !== 'mass_kg' ? '' : defaultText
-              textRef.current = initial; setText(initial)
-            }
-            inputRef.current?.focus()
-          }}>Override</button>
+          <button type="button" className={!overriding ? 'active' : ''} aria-pressed={!overriding}
+            aria-label={`${label ?? fieldLabel(unitKey, api.context)} Auto`}
+            onClick={overriding ? useAuto : useOverride}>Auto</button>
         </div>}
         <input
           ref={inputRef}

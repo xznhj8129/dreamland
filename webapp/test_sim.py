@@ -2,12 +2,12 @@
 
 Run: /home/anon/miniconda3/envs/drone/bin/python webapp/test_sim.py
 
-Works on a temp copy of aircraft/example (the real project's logs/ are never touched): the exact argv (including both
+Works on a persistent fixture under aircraft/example/cad/sim-validation (the real project's logs/ are never touched): the exact argv (including both
 launch starts and their log suffixes), the launcher start-condition defaults, flags and refusals, the options payload,
 one finished script run with incremental stdout/log deltas and offset resume, catapult and rail script runs checked
 for launch mechanics only (the catapult with overridden launcher values), a nan/inf
 log cell that must reach the JSON as null, a refused bad condition, a refused second start while a run is live, a SIGINT
-abort (exit code 130) and the server-exit shutdown path. The first run exports the JSBSim model into the temp copy, so
+abort (exit code 130) and the server-exit shutdown path. The first run exports the JSBSim model into the persistent fixture, so
 the suite takes about a minute.
 """
 
@@ -21,7 +21,6 @@ import json
 import os
 import shutil
 import sys
-import tempfile
 import time
 from pathlib import Path
 
@@ -42,10 +41,10 @@ RUN_TIMEOUT_S = 600.0  # the first run exports the shared lifting-line and contr
 POLL_S = 0.25
 
 
-def make_state(tmp: Path) -> AppState:
-    """An AppState on a temp copy of aircraft/example, with bench diffs to exercise the FC settings list."""
-    root = tmp / "example"
-    shutil.copytree(EXAMPLE, root)
+def make_state(output: Path) -> AppState:
+    """Persistent simulation fixture; preserve exported models and logs between checks."""
+    root = output / "example"
+    shutil.copytree(EXAMPLE, root, dirs_exist_ok=True, ignore=shutil.ignore_patterns("cad", "logs", "jsbsim"))
     (root / "inav" / "bench-sitl.txt").write_text("set nav_fw_cruise_thr 1400\n")
     (root / "inav" / "bench-real.txt").write_text("# INAV/MATEKF405 7.0.0\nset nav_fw_cruise_thr 1500\n")
     state = AppState(Project(root=root))
@@ -431,6 +430,66 @@ async def check_shutdown(client: TestClient) -> None:
     print("ok   shutdown: a live run is gone before the server cleanup returns")
 
 
+def check_start_ownership(state: AppState) -> None:
+    """Initial conditions belong to the SIM toolbar/CLI: scenarios carry no START, and a run with no start plans air.
+
+    acro_climb used to declare a catapult start; that declaration is gone, so planning it without a start falls back
+    to air. Explicit toolbar start values are passed through to sim_flight.py unchanged. A script that still declares
+    START is rejected visibly, so its settings cannot be silently ignored.
+    """
+    from libs.scenario import ScenarioSpec
+
+    def start_value(command: list[str], option: str) -> str:
+        return command[command.index(option) + 1]
+
+    # 1. the acro_climb resource and the options scenario templates carry no initial-conditions payload, and all parse
+    acro = sim.read_resource(state, "scenario", "acro_climb.py", "inav")
+    assert "initial" not in acro, sorted(acro)
+    assert acro["error"] is None, acro["error"]
+    ScenarioSpec.from_source(acro["source"], "inav")
+    templates = sim.options(state)["scenario_templates"]
+    for controller in ("inav", "mcu"):
+        payload = templates[controller]
+        assert "initial" not in payload, (controller, sorted(payload))
+        assert payload["error"] is None, (controller, payload["error"])
+        ScenarioSpec.from_source(payload["source"], controller)
+
+    # 2. acro_climb, which used to declare a catapult start, now defaults to air with no start supplied
+    command, status, _shown, log_path = sim._plan(state, {"controller": "inav", "scenario": "acro_climb"})
+    assert start_value(command, "--start") == "air", command
+    assert status == "Running inav: acro_climb..." and log_path.name == "inav_acro_climb_air.csv", (status, log_path)
+
+    # 3. explicit toolbar values reach sim_flight.py and resolve to the real launcher unchanged
+    command, *_ = sim._plan(state, {"controller": "inav", "scenario": "experiment", "start": "catapult",
+                                    "conditions": {"launch-pitch": "30", "launch-speed": "20"}})
+    assert start_value(command, "--start") == "catapult", command
+    assert start_value(command, "--launch-pitch") == "30" and start_value(command, "--launch-speed") == "20", command
+    parser = argparse.ArgumentParser()
+    add_start_arguments(parser)
+    args = parser.parse_args(["--start", start_value(command, "--start"),
+                              "--launch-pitch", start_value(command, "--launch-pitch"),
+                              "--launch-speed", start_value(command, "--launch-speed")])
+    resolved = resolve_start(parser, args, args.start, 150.0, 15.0)
+    assert (resolved.launcher.pitch_deg, resolved.launcher.speed_ms) == (30.0, 20.0), resolved.launcher
+
+    # 4. the CLI parser with no --start defaults to air
+    bare = parser.parse_args([])
+    assert bare.start == "air", bare.start
+
+    # 5. a script that still declares START is refused by ScenarioSpec, naming where the conditions belong
+    external = 'START = {"start": "catapult"}\n\ndef run(flight):\n    pass\n'
+    try:
+        ScenarioSpec.from_source(external, "inav")
+    except ValueError as problem:
+        assert "Initial conditions belong in the SIM toolbar or CLI" in str(problem), problem
+    else:
+        raise AssertionError("a script that still declares START was accepted")
+
+    print("ok   start ownership: the acro_climb resource and the options scenario templates carry no initial conditions; "
+          "acro_climb plans air without a start; explicit catapult launch-pitch/speed pass through and resolve; "
+          "CLI defaults to air; a START declaration is refused")
+
+
 async def check_routes(state: AppState) -> None:
     app = create_app(state, ROOT / "web" / "dist")
     client = TestClient(TestServer(app))
@@ -444,19 +503,19 @@ async def check_routes(state: AppState) -> None:
         await check_abort_and_refusal(client)
         await check_shutdown(client)
     finally:
-        sim.shutdown()  # a failed check must not leave the runner alive into the temp cleanup
+        sim.shutdown()  # a failed check must not leave the runner alive after the check
         await client.close()
 
 
 def main() -> None:
-    with tempfile.TemporaryDirectory(prefix="qrb-sim-") as tmp:
-        state = make_state(Path(tmp))
-        check_argv(state)
-        check_launch_plan(state)
-        try:
-            asyncio.run(check_routes(state))
-        finally:
-            sim.shutdown()
+    state = make_state(ROOT / "aircraft" / "example" / "cad" / "sim-validation")
+    check_argv(state)
+    check_launch_plan(state)
+    check_start_ownership(state)
+    try:
+        asyncio.run(check_routes(state))
+    finally:
+        sim.shutdown()
     print("sim suite OK")
 
 

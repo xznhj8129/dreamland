@@ -18,7 +18,7 @@ from pathlib import Path
 
 import numpy as np
 
-from libs.cad import M_TO_MM, build_motor_solid, build_printable_parts, build_rod_solids
+from libs.cad import M_TO_MM, Progress, build_motor_solid, build_printable_parts, build_rod_solids
 from libs.geometry import ResolvedAirframe
 
 FAR_MM = 5000.0  # half-space and section plane size, bigger than any aircraft
@@ -145,11 +145,13 @@ def _scale_bar(ax, x: float, y: float) -> None:
     ax.text(x + SCALE_BAR_MM / 2.0, y - 5.0, f"{SCALE_BAR_MM:g} mm", ha="center", va="top", fontsize=9)
 
 
-def drawing_parts(resolved: ResolvedAirframe) -> list[tuple[str, object, str]]:
-    """(label, cq.Shape, kind) front to back: printed sections and couplers, motors, parts with library dimensions."""
+def drawing_parts(resolved: ResolvedAirframe, *, progress: Progress | None = None) -> list[tuple[str, object, str]]:
+    """(label, cq.Shape, kind) front to back: printed sections and couplers, motors, parts with library dimensions.
+
+    progress (optional): forwarded to build_printable_parts ("building <name>" per printable part)."""
     import cadquery as cq
 
-    parts = [(name, shape, "coupler" if name.startswith("C") else "section") for name, shape, _notes in build_printable_parts(resolved)]
+    parts = [(name, shape, "coupler" if name.startswith("C") else "section") for name, shape, _notes in build_printable_parts(resolved, progress=progress)]
     parts += [(motor.name, build_motor_solid(motor).val(), "motor") for motor in resolved.motors]
     for part in resolved.airframe.parts:
         if part.size_m is not None:  # its box about the origin, turned roll, pitch then yaw about the body axes, then placed
@@ -162,10 +164,18 @@ def drawing_parts(resolved: ResolvedAirframe) -> list[tuple[str, object, str]]:
     return sorted(parts, key=lambda item: item[1].BoundingBox().xmin)
 
 
-def export_drawings(resolved: ResolvedAirframe, directory) -> list[Path]:
-    """Draw the cutaway, the three-view and the x-ray into directory (each .svg and .png); returns the files written."""
-    parts = drawing_parts(resolved)
-    return [*_cutaway(resolved, parts, directory), *_three_view(resolved, parts, directory), *_xray(resolved, parts, directory)]
+def export_drawings(resolved: ResolvedAirframe, directory, *, progress: Progress | None = None) -> list[Path]:
+    """Draw the cutaway, the three-view and the x-ray into directory (each .svg and .png); returns the files written.
+
+    progress (optional): "building <name>" per printable part actually built (only on a cache miss), then
+    "drawing cutaway"/"drawing threeview"/"drawing xray" (done/total = 3)."""
+    parts = drawing_parts(resolved, progress=progress)
+    written = []
+    for index, (name, draw) in enumerate((("cutaway", _cutaway), ("threeview", _three_view), ("xray", _xray)), start=1):
+        if progress is not None:
+            progress(f"drawing {name}", index, 3)
+        written += draw(resolved, parts, directory)
+    return written
 
 
 def _cutaway(resolved: ResolvedAirframe, parts: list, directory) -> list[Path]:

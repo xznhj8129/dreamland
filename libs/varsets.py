@@ -12,6 +12,7 @@ shows them. Values are the definition's; nothing computed is written.
 """
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 from libs.airframe import Airframe, Mount, Surface
@@ -19,6 +20,9 @@ from libs.airframe import Airframe, Mount, Surface
 M_TO_MM = 1000.0
 AIRFRAME_VARSET = "Airframe"
 PROPULSION_VARSET = "Propulsion"
+
+# Same notification hook as libs.cad (optional): (label, done, total).
+Progress = Callable[[str, int, int], None]
 
 
 def length(value_m: float) -> dict:
@@ -61,7 +65,7 @@ def mount_varset_label(index: int) -> str:
 
 def airframe_varset(airframe: Airframe) -> dict:
     fuselage = airframe.fuselage
-    section, joints = fuselage.section, fuselage.joints
+    section, joints = fuselage.section, airframe.sections.joints
     groups = {
         "Fuselage": {"Length": length(fuselage.length_m), "Width": length(section.width_m), "Height": length(section.height_m),
                      "Shape": number(section.shape), "Wall": length(section.wall_radial_m)},
@@ -85,9 +89,12 @@ def airframe_varset(airframe: Airframe) -> dict:
         groups["Sections"] |= {f"Cut{index}": length(cut), f"Cut{index}Joint": text(joint)}
     for index, row in enumerate(sections.per_section, start=1):
         groups["Sections"][f"Section{index}Solid"] = flag(row.solid)
-        for key, value in (("Width", row.section.width_m), ("Height", row.section.height_m), ("Shape", row.section.shape)):
+    for index, guide in enumerate(fuselage.loft_stations, start=1):
+        group = {"X": length(guide.x_m)}
+        for key, value in (("Width", guide.section.width_m), ("Height", guide.section.height_m), ("Shape", guide.section.shape)):
             if value is not None:
-                groups["Sections"][f"Section{index}{key}"] = number(value) if key == "Shape" else length(value)
+                group[key] = number(value) if key == "Shape" else length(value)
+        groups[f"LoftGuide{index}"] = group
     return groups
 
 
@@ -98,6 +105,8 @@ def surface_varset(surface: Surface) -> dict:
                      "ChordRoot": length(surface.chord_root_m), "ChordTip": length(surface.chord_tip_m), "SweepLE": angle(surface.sweep_le_deg),
                      "Dihedral": angle(surface.dihedral_deg), "Incidence": angle(surface.incidence_deg), "IncidenceMode": text(surface.incidence_mode)},
         "Airfoil": {"Name": text(surface.airfoil)},
+        "Sections": {"CutCount": integer(len(surface.sections.cuts_m)),
+                     **{f"Cut{index + 1}": length(cut) for index, cut in enumerate(surface.sections.cuts_m)}},
     }
     if surface.spars is not None:
         spars = surface.spars
@@ -115,6 +124,7 @@ def surface_varset(surface: Surface) -> dict:
     if surface.control is not None:
         control = surface.control
         groups["Control"] = {"Kind": text(control.kind), "DeflectionMin": angle(control.deflection_min_deg), "DeflectionMax": angle(control.deflection_max_deg)}
+        groups["Control"]["AlignHingeVertically"] = flag(control.align_hinge_vertically)
         if control.kind == "split":
             groups["Control"] |= {"ChordStart": number(control.chord_start), "SpanStart": number(control.span_start), "SpanEnd": number(control.span_end)}
         else:
@@ -132,9 +142,9 @@ def propulsion_varset(airframe: Airframe) -> dict:
 
 
 def mount_varset(mount: Mount) -> dict:
-    groups = {"Mount": {"On": text(mount.on), "Direction": text(mount.direction), "Spin": text(mount.spin), "ThrustTilt": angle(mount.thrust_axis_tilt_deg)}}
+    groups = {"Mount": {"On": text(mount.on), "XOffset": distance(mount.x_offset_m), "Direction": text(mount.direction), "Spin": text(mount.spin), "ThrustTilt": angle(mount.thrust_axis_tilt_deg)}}
     if mount.on == "surface":
-        groups["Mount"] |= {"Surface": text(mount.surface), "SpanPosition": length(mount.span_position_m), "XOffset": distance(mount.x_offset_m)}
+        groups["Mount"] |= {"Surface": text(mount.surface), "SpanPosition": length(mount.span_position_m)}
     if mount.pod is not None:
         pod = mount.pod
         groups["Pod"] = {"Diameter": length(pod.diameter_m), "FlatLength": length(pod.flat_length_m), "CurveLength": length(pod.curve_length_m),
@@ -157,8 +167,10 @@ def build_varsets(airframe: Airframe) -> dict[str, dict]:
     return varsets
 
 
-def export_varsets(airframe: Airframe, directory) -> list[Path]:
-    """One <label>.json per varset (label in a Base group, which the macro gives the varset); returns the files written."""
+def export_varsets(airframe: Airframe, directory, *, progress: Progress | None = None) -> list[Path]:
+    """One <label>.json per varset (label in a Base group, which the macro gives the varset); returns the files written.
+
+    progress (optional): one phase, "writing varsets" (1/1), after the files are written (the export is fast)."""
     directory = Path(directory)
     directory.mkdir(parents=True, exist_ok=True)
     written = []
@@ -166,4 +178,6 @@ def export_varsets(airframe: Airframe, directory) -> list[Path]:
         path = directory / f"{label}.json"
         path.write_text(json.dumps({"Base": {"Label": text(label)}} | groups, indent=4) + "\n")
         written.append(path)
+    if progress is not None:
+        progress("writing varsets", 1, 1)
     return written

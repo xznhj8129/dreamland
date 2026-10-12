@@ -10,7 +10,6 @@ GLIDE_MEASURE_S = 3.0  # each step's sink rate and glide ratio are means over it
 GLIDE_STEADY_M_S = 0.5  # a step counts when its airspeed changed less than this over the measuring window (no zoom or dive)
 
 
-START = {"start": "air", "alt": 1000}
 
 
 def run(mission):

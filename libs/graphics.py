@@ -13,7 +13,8 @@ import math
 from typing import Any
 
 from libs.airframe import BOX_SHAPES
-from libs.geometry import PROP_SHAFT_LEN_M, ResolvedAirframe, body_half_extents, body_section_at, deflected_outline, superellipse_radius
+from libs.geometry import PROP_SHAFT_LEN_M, ResolvedAirframe, body_half_extents, body_section_at, cross, deflected_outline, superellipse_radius, unit
+from libs.print_features import joint_holes, motor_mount_openings
 
 PROP_SHAFT_DIAM_M = 0.005
 MOTOR_BASE_DIAM_FACTOR = 0.5
@@ -26,10 +27,15 @@ PART_COLOR = "#ff9966"
 WIRE_COLOR = "#ffff00"
 WIRE_DASH = (2, 3)  # dotted
 CUT_COLOR = "#33ccff"
+LOFT_COLOR = "#ffaa55"
+FEATURE_COLOR = "#ff6688"
 SPAR_WIDTH_PX = 3
 SPAR_STOP_DASH = (6, 3)  # a spar that stops where it meets another; a through spar is solid
 CARRY_THROUGH_DASH = (3, 2)
 ROD_COLOR = "#ff66aa"
+ROD_SECTION_SAMPLES = 20
+ROD_SILHOUETTE_DASH = (2, 3)
+ROD_CENTRE_DOT_RADIUS_PX = 1.5  # fixed-pixel centre mark at each rod end: a thin rod stays locatable at any zoom
 ROD_DASH = (8, 4)
 CUT_OVERHANG_PX = 14
 CONTROL_COLOR = "#cc66ff"
@@ -53,6 +59,23 @@ def section_projected_half(half_width: float, half_height: float, shape: float, 
         radius = superellipse_radius(half_width, half_height, shape, angle)
         extent = max(extent, abs(longitudinal_transverse(radius * math.cos(angle), radius * math.sin(angle), roll_rad)))
     return extent
+
+
+def front_profile_outlines(resolved: ResolvedAirframe, positions: list[float], metrics: dict) -> list[list[float]]:
+    """Actual profiles at supplied body positions, in front-view pixels."""
+    center_x = metrics["origin_x"] + metrics["pan_x"]
+    center_y = metrics["origin_y"] + metrics["pan_y"]
+    scale = metrics["scale"]
+    outlines = []
+    for x in positions:
+        station = body_section_at(resolved.body, x)
+        outline = []
+        for index in range(SECTION_OUTLINE_SAMPLES):
+            angle = 2.0 * math.pi * index / SECTION_OUTLINE_SAMPLES
+            radius = superellipse_radius(station.width_m / 2.0, station.height_m / 2.0, station.shape, angle)
+            outline.extend((center_x + radius * math.cos(angle) * scale, center_y - radius * math.sin(angle) * scale))
+        outlines.append(outline)
+    return outlines
 
 
 def panel_outline(panel) -> list[tuple[float, float, float]]:
@@ -123,6 +146,32 @@ def rounded_rectangle(x_centre: float, y_centre: float, half_width: float, half_
     return points + points[:2]
 
 
+def draw_projected_rod(canvas, start, end, diameter_m: float, project, color: str, tags=()) -> None:
+    """Actual cylinder end circles, dotted silhouette, and a fixed-pixel centre dot at each end, in any orthographic projection."""
+    axis = unit(tuple(b - a for a, b in zip(start, end)))
+    reference = (1.0, 0.0, 0.0) if abs(axis[0]) < 0.9 else (0.0, 1.0, 0.0)
+    u = unit(cross(reference, axis))
+    w = cross(axis, u)
+    projected = []
+    for center in (start, end):
+        screen = [project(tuple(c + diameter_m / 2.0 * (math.cos(angle) * uc + math.sin(angle) * wc)
+                                for c, uc, wc in zip(center, u, w)))
+                  for angle in (2.0 * math.pi * sample / ROD_SECTION_SAMPLES for sample in range(ROD_SECTION_SAMPLES))]
+        projected.extend(screen)
+        canvas.create_polygon([value for point in screen for value in point], outline=color, fill="", width=2, tags=tags)
+    hull = convex_hull(projected)
+    canvas.create_polygon([value for point in hull for value in point], outline=color, fill="", width=1, dash=ROD_SILHOUETTE_DASH, tags=tags)
+    for center in (start, end):  # a true-scale thin rod can vanish between pixels; mark its ends
+        x, y = project(center)
+        canvas.create_oval(x - ROD_CENTRE_DOT_RADIUS_PX, y - ROD_CENTRE_DOT_RADIUS_PX,
+                           x + ROD_CENTRE_DOT_RADIUS_PX, y + ROD_CENTRE_DOT_RADIUS_PX,
+                           fill=color, outline=color, tags=tags)
+
+
+def draw_surface_cut(canvas, points, project, tags=()) -> None:
+    canvas.create_polygon([value for point in points for value in project(point)], outline=CUT_COLOR, fill="", width=2, dash=(6, 3), tags=tags)
+
+
 def volume_projected_half(resolved: ResolvedAirframe, volume, roll_rad: float) -> float:
     """Half extent of a volume across the side view at this roll: round sections stay round (a bore is the internal
     section, a cylinder's support is half-length x |cos| + radius x sin of its axis to the view's transverse axis)."""
@@ -143,12 +192,23 @@ def marker_positions(resolved: ResolvedAirframe, aero) -> dict:
     return positions
 
 
+def draw_print_features(canvas: Any, resolved: ResolvedAirframe, project) -> None:
+    """Projected negative volumes, visible over the skin so their placement and depth can be edited."""
+    for opening in (*joint_holes(resolved), *motor_mount_openings(resolved)):
+        rings = opening.rings()
+        points = convex_hull([project(point) for ring in rings for point in ring])
+        coords = [value for point in points for value in point]
+        canvas.create_polygon(coords, outline=FEATURE_COLOR, fill="", width=1.5, tags=("feature",))
+
+
 def draw_marker_guide(canvas: Any, positions: dict) -> None:
     """Legend; the CG, neutral point and lift centre with their x from the nose (marker_positions)."""
     guide = [(f"{MARKER_LABELS[key]}  x {positions[key] * 1000.0:.1f} mm" if not math.isnan(positions[key]) else f"{MARKER_LABELS[key]}  (aero pending)", color)
              for key, color in MARKER_COLORS.items()]
     guide += [("Volumes (drag along x)", VOLUME_COLOR), ("Parts (move with their volume, if in one)", PART_COLOR),
               ("Wires: battery - ESC - motors", WIRE_COLOR), ("Section cuts (drag along x); * = computed mass", CUT_COLOR),
+              ("Loft guides (drag along x)", LOFT_COLOR),
+              ("Fastener holes, head access and shaft relief (cut outlines)", FEATURE_COLOR),
               ("Rods; spars (drag along the chord; dashed = stops) and carry-through", ROD_COLOR)]
     for index, (text, color) in enumerate(guide):
         canvas.create_text(12, 12 + index * 16, anchor="nw", text=text, fill=color, font=("TkDefaultFont", 9))
@@ -247,6 +307,10 @@ def draw_longitudinal_view(canvas: Any, resolved: ResolvedAirframe, aero, roll_d
         canvas.create_polygon([value for point in screen for value in point], outline=CONTROL_COLOR, fill=CONTROL_COLOR, stipple="gray25", width=1, tags=tags)
         hinge = [value for x, y, z in control.hinge for value in (x_to_screen(x), transverse_to_screen(longitudinal_transverse(y, z, roll_rad)))]
         canvas.create_line(hinge, fill=CONTROL_COLOR, width=2, dash=(4, 2), tags=tags)
+        if control.rod_diameter_m is not None:
+            draw_projected_rod(canvas, *control.hinge, control.rod_diameter_m,
+                               lambda point: (x_to_screen(point[0]), transverse_to_screen(longitudinal_transverse(point[1], point[2], roll_rad))),
+                               ROD_COLOR, (*tags, "hinge-spar"))
         canvas.create_text(sum(x for x, _t in screen) / 4.0, sum(t for _x, t in screen) / 4.0, text=f"C{control.number} {control.servo}",
                            fill=CONTROL_COLOR, font=("TkDefaultFont", 8, "bold"), tags=tags)
 
@@ -315,6 +379,12 @@ def draw_longitudinal_view(canvas: Any, resolved: ResolvedAirframe, aero, roll_d
         half_w, half_h = body_half_extents(body, cut)
         half = section_projected_half(half_w, half_h, body_section_at(body, cut).shape, roll_rad) * scale + CUT_OVERHANG_PX
         canvas.create_line(x_to_screen(cut), center_y - half, x_to_screen(cut), center_y + half, fill=CUT_COLOR, width=3, dash=(6, 3), tags=("drag", f"cut:{index}"))
+    for index, guide in enumerate(resolved.airframe.fuselage.loft_stations):
+        local = body_section_at(body, guide.x_m)
+        half = section_projected_half(local.width_m / 2.0, local.height_m / 2.0, local.shape, roll_rad) * scale + CUT_OVERHANG_PX
+        canvas.create_line(x_to_screen(guide.x_m), transverse_to_screen(0.0) - half,
+                           x_to_screen(guide.x_m), transverse_to_screen(0.0) + half,
+                           fill=LOFT_COLOR, dash=(2, 4), tags=("drag", f"loft:{index}"))
     for index, section in enumerate(resolved.sections):
         x0, x1 = section.x0_m, section.x1_m
         computed = "*" if sections.per_section[index].empty_mass_kg is None else ""
@@ -355,6 +425,8 @@ def draw_longitudinal_view(canvas: Any, resolved: ResolvedAirframe, aero, roll_d
             canvas.create_line([value for x, y, z in ends for value in (x_to_screen(x), transverse_to_screen(longitudinal_transverse(y, z, roll_rad)))],
                                fill="red", width=1, dash=(6, 4))
 
+    draw_print_features(canvas, resolved, lambda point: (x_to_screen(point[0]),
+                        transverse_to_screen(longitudinal_transverse(point[1], point[2], roll_rad))))
     for key, x_value in marker_positions(resolved, aero).items():
         if math.isfinite(x_value):
             x_screen = x_to_screen(x_value)
@@ -454,10 +526,14 @@ def draw_front_view(canvas: Any, resolved: ResolvedAirframe, aero, ui_draw: str,
         canvas.create_polygon([value for _x, y, z in outline for value in (center_x + y * scale, center_y - z * scale)],
                               outline=CONTROL_COLOR, fill=CONTROL_COLOR, stipple="gray25", width=1)
         (_x0, y0, z0), (_x1, y1, z1) = control.hinge
-        canvas.create_line(center_x + y0 * scale, center_y - z0 * scale, center_x + y1 * scale, center_y - z1 * scale, fill=CONTROL_COLOR, width=5)
+        canvas.create_line(center_x + y0 * scale, center_y - z0 * scale, center_x + y1 * scale, center_y - z1 * scale, fill=CONTROL_COLOR, width=2, dash=(4, 2))
+        if control.rod_diameter_m is not None:
+            draw_projected_rod(canvas, *control.hinge, control.rod_diameter_m,
+                               lambda point: (center_x + point[1] * scale, center_y - point[2] * scale), ROD_COLOR, ("hinge-spar",))
         length = math.hypot(y1 - y0, z1 - z0)
         canvas.create_text(center_x + y1 * scale + CONTROL_LABEL_OFFSET_PX * (y1 - y0) / length, center_y - z1 * scale - CONTROL_LABEL_OFFSET_PX * (z1 - z0) / length,
                            text=f"C{control.number}", fill=CONTROL_COLOR, font=("TkDefaultFont", 8, "bold"))
+    draw_print_features(canvas, resolved, lambda point: (center_x + point[1] * scale, center_y - point[2] * scale))
     draw_marker_guide(canvas, marker_positions(resolved, aero))
     metrics["scale"] = scale
     metrics["zoom_scale"] = zoom_scale

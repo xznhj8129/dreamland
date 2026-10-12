@@ -3,7 +3,7 @@
 # config that flew forward (Aug 2025): profile 1 hover (multirotor, tailsitter offset), profile 2 forward flight on
 # the motors (multirotor platform, nose-first mix). Motor outputs in INAV quad X order where it applies.
 set throttle_idle = 8
-set nav_mc_hover_thr = 1391    # predicted motor command 0.440 for 2.77 N per motor
+set nav_mc_hover_thr = 1401    # predicted motor command 0.449 for 2.87 N per motor
 mixer_profile 1
 set platform_type = MULTIROTOR
 set tailsitter_orientation_offset = ON

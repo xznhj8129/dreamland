@@ -1,6 +1,7 @@
 import { useCallback, useState } from 'react'
 import type { ReactElement } from 'react'
 import {
+  cadProgress,
   exportDrawings,
   exportSections,
   exportStep,
@@ -8,12 +9,36 @@ import {
   exportVarsets,
   filesUrl,
 } from '../cadApi'
-import type { CadAnswer, CadResult, StepMode } from '../cadApi'
+import type { CadAnswer, CadProgress, CadResult, StepMode } from '../cadApi'
 
 const MODE_OPTIONS: readonly { mode: StepMode; label: string }[] = [
   { mode: 'assembly', label: 'Assembly — named parts per section (CAD)' },
   { mode: 'fused', label: 'Fused — one watertight solid (CFD)' },
 ]
+
+const SECTION_FORMAT_OPTIONS: readonly { format: 'step' | 'stl'; label: string }[] = [
+  { format: 'step', label: 'STEP' },
+  { format: 'stl', label: 'STL' },
+]
+
+const PROGRESS_INTERVAL_MS = 400
+
+const TASK_LABELS: Record<string, string> = {
+  step: 'STEP',
+  stl: 'STL',
+  sections: 'Sections',
+  drawings: 'Drawings',
+  varsets: 'Varsets',
+}
+
+/** The busy line: the server's per-step label and count while the export runs (e.g. "Sections — writing S03 (3/12)"). */
+function progressText(progress: CadProgress | null): string {
+  if (progress === null || !progress.running || progress.task === null) return 'Exporting…'
+  const task = TASK_LABELS[progress.task] ?? progress.task
+  if (progress.label === null) return `${task}…`
+  const count = progress.total > 0 ? ` (${progress.done}/${progress.total})` : ''
+  return `${task} — ${progress.label}${count}`
+}
 
 /** One export's answer: the status detail, the written files as links, and any notes (problems, fallback). */
 function ExportResult({ result }: { result: CadResult }): ReactElement {
@@ -46,10 +71,13 @@ function ExportResult({ result }: { result: CadResult }): ReactElement {
  * The web CAD view (libs/views/cad_view.py, docs/ui/cad_view.md): whole-airframe STEP/STL, printable sections,
  * drawings and FreeCAD varsets, each into its fixed place under the project's cad/. Exports are direct fetches;
  * a server-side lock serializes them, and the browser disables every button while one is in flight. Each card
- * shows the files its own export just wrote; a failed export's message appears at the bottom of the view.
+ * shows the files its own export just wrote; a failed export's message appears at the bottom of the view. While
+ * an export runs, the bottom line follows the server's progress record (GET /api/cad/progress, 400 ms poll) with
+ * the step label and a small bar.
  */
 export function CadView(): ReactElement {
   const [mode, setMode] = useState<StepMode>('assembly')
+  const [sectionFormat, setSectionFormat] = useState<'step' | 'stl'>('step')
   const [propDiscs, setPropDiscs] = useState(false)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState('')
@@ -58,15 +86,30 @@ export function CadView(): ReactElement {
   const [sectionsResult, setSectionsResult] = useState<CadResult | null>(null)
   const [drawingsResult, setDrawingsResult] = useState<CadResult | null>(null)
   const [varsetsResult, setVarsetsResult] = useState<CadResult | null>(null)
+  const [progress, setProgress] = useState<CadProgress | null>(null)
 
   const run = useCallback(
     async (task: () => Promise<CadAnswer>, apply: (result: CadResult) => void): Promise<void> => {
       setBusy(true)
       setError('')
-      const answer = await task()
-      setBusy(false)
-      if (answer.ok && answer.result !== null) apply(answer.result)
-      else setError(answer.message)
+      setProgress(null)
+      let cancelled = false
+      const poll = async (): Promise<void> => {
+        const snapshot = await cadProgress()
+        if (!cancelled && snapshot !== null) setProgress(snapshot)
+      }
+      const timer = window.setInterval(() => void poll(), PROGRESS_INTERVAL_MS)
+      void poll()
+      try {
+        const answer = await task()
+        if (answer.ok && answer.result !== null) apply(answer.result)
+        else setError(answer.message)
+      } finally {
+        cancelled = true
+        window.clearInterval(timer)
+        setProgress(null)
+        setBusy(false)
+      }
     },
     [],
   )
@@ -120,11 +163,27 @@ export function CadView(): ReactElement {
         <div className="form-card-header">
           <h3>Printable parts</h3>
         </div>
+        <div className="cad-mode" role="radiogroup" aria-label="Printable format">
+          {SECTION_FORMAT_OPTIONS.map((option) => (
+            <button
+              key={option.format}
+              type="button"
+              role="radio"
+              aria-checked={sectionFormat === option.format}
+              className={sectionFormat === option.format ? 'cad-mode-option active' : 'cad-mode-option'}
+              disabled={busy}
+              onClick={() => setSectionFormat(option.format)}
+            >
+              {option.label}
+            </button>
+          ))}
+        </div>
         <p className="form-hint">
-          Sections S01… and couplers C01… as STEP + STL into cad/sections/. Independent of the STEP mode above.
+          Fuselage sections S01…, couplers C01…, fixed wing segments W… and controls CS… as {sectionFormat.toUpperCase()} into
+          cad/sections/. Independent of the STEP mode above.
         </p>
         <div className="button-row">
-          <button type="button" disabled={busy} onClick={() => void run(exportSections, setSectionsResult)}>
+          <button type="button" disabled={busy} onClick={() => void run(() => exportSections(sectionFormat), setSectionsResult)}>
             Export printable sections
           </button>
         </div>
@@ -158,8 +217,20 @@ export function CadView(): ReactElement {
         {varsetsResult !== null && <ExportResult result={varsetsResult} />}
       </div>
 
-      {busy && <div className="status">Exporting…</div>}
-      {error !== '' && <div className="status draw-error">{error}</div>}
+      {busy && (
+        <div className="status cad-progress">
+          <span>{progressText(progress)}</span>
+          {progress !== null && progress.total > 0 && (
+            <span className="cad-progress-track" aria-hidden="true">
+              <span
+                className="cad-progress-fill"
+                style={{ width: `${Math.min(100, Math.round((progress.done / progress.total) * 100))}%` }}
+              />
+            </span>
+          )}
+        </div>
+      )}
+      {error !== '' && <div className="status draw-error cad-error">{error}</div>}
     </section>
   )
 }

@@ -3,7 +3,6 @@
 
 from controllers import inav as controller
 
-START = {"start": "catapult", "launch-pitch": 20, "launch-speed": 25}
 
 
 def climb(flight):

@@ -253,10 +253,9 @@ def geometry_sections(resolved: ResolvedAirframe) -> list[ReportSection]:
             f"{fuselage.section.width_m * 1000:.1f} × {fuselage.section.height_m * 1000:.1f} mm",
         ),
     ]
-    for index, row in enumerate(airframe.sections.per_section):
-        if row.section.width_m is not None or row.section.height_m is not None or row.section.shape is not None:
-            profile = row.section.resolve(fuselage.section)
-            metrics.append(ReportMetric(f"Loft S{index + 1} before end taper",
+    for index, row in enumerate(airframe.fuselage.loft_stations):
+        profile = row.section.resolve(fuselage.section)
+        metrics.append(ReportMetric(f"Loft G{index + 1} at {row.x_m * 1000:.1f} mm before end taper",
                                         f"{profile.width_m * 1000:.1f} × {profile.height_m * 1000:.1f} mm · shape {profile.shape:g}"))
     if airframe.preset is not None:
         metrics.append(ReportMetric("Preset", airframe.preset.name))

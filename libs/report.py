@@ -63,10 +63,9 @@ def build_report_lines(resolved: ResolvedAirframe, aero: AeroResult | None, prob
     lines.append("Geometry")
     preset = "" if airframe.preset is None else f", preset {airframe.preset.name}"
     lines.append(f"  Fuselage         : {airframe.fuselage.length_m:.3f} m, section {airframe.fuselage.section.width_m * 1000:.1f} x {airframe.fuselage.section.height_m * 1000:.1f} mm{preset}")
-    for index, row in enumerate(airframe.sections.per_section):
-        if row.section.width_m is not None or row.section.height_m is not None or row.section.shape is not None:
-            profile = row.section.resolve(airframe.fuselage.section)
-            lines.append(f"  Loft S{index + 1:<9} : {profile.width_m * 1000:.1f} x {profile.height_m * 1000:.1f} mm, shape {profile.shape:g} (before end taper)")
+    for index, row in enumerate(airframe.fuselage.loft_stations):
+        profile = row.section.resolve(airframe.fuselage.section)
+        lines.append(f"  Loft G{index + 1:<9} : {profile.width_m * 1000:.1f} x {profile.height_m * 1000:.1f} mm, shape {profile.shape:g} at {row.x_m * 1000:.1f} mm (before end taper)")
     reinforcement = airframe.fuselage.reinforcement
     if reinforcement is not None:
         pattern = reinforcement.pattern

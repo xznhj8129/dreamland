@@ -50,12 +50,18 @@ export interface ComponentItem { name: string; detail?: string }
 export function ComponentPicker({ kind, items }: { kind: ComponentKind; items: ComponentItem[] }): ReactElement {
   const { select } = useSelection()
   const index = useComponentIndex(kind, items.length)
-  return <div className="component-picker" role="group" aria-label={`Select ${kind}`}>
+  return <ComponentList items={items} index={index} label={`Select ${kind}`} onSelect={position => select(kind, position)} />
+}
+
+export function ComponentList({ items, index, label, onSelect }: {
+  items: ComponentItem[]; index: number; label: string; onSelect: (index: number) => void
+}): ReactElement {
+  return <div className="component-picker" role="group" aria-label={label}>
     {items.length === 0 ? <p className="form-hint">No components yet.</p> : items.map((item, position) =>
       <button type="button" key={position} aria-pressed={position === index}
         className={position === index ? 'component-choice active' : 'component-choice'}
-        onClick={() => select(kind, position)}>
-        <strong>{item.name}</strong>{item.detail && <span>{item.detail}</span>}
+        onClick={() => onSelect(position)}>
+        <strong title={item.name}>{item.name}</strong>{item.detail && <span title={item.detail}>{item.detail}</span>}
       </button>)}
   </div>
 }

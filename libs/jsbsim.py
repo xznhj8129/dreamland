@@ -58,6 +58,7 @@ import aerosandbox as asb
 import jsbsim
 import neuralfoil
 import numpy as np
+import time
 from threadpoolctl import threadpool_limits
 
 from libs.aero import AERO_MODEL_SIZE, ForwardAero, build_asb_airplane, with_side_deflections
@@ -370,6 +371,7 @@ def control_tables(resolved: ResolvedAirframe, model: FlightAero | None = None) 
                 derivatives={name: float(np.mean(stacked[index][:, near, high] - stacked[index][:, near, low]) / (deflections[high] - deflections[low]))
                              for index, name in enumerate(CONTROL_COEFFICIENTS)},
             ))
+            print(f"    C{number} {control.surface} panel {control.panel_index + 1} solved", flush=True)
     return sorted(tables, key=lambda table: table.number)
 
 
@@ -683,7 +685,10 @@ def reuse_or_export(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path,
         with open(cache_path, "rb") as file:
             return pickle.load(file), True
     shutil.rmtree(out_dir, ignore_errors=True)  # nothing left over from an earlier model name
+    print("JSBSim model: rebuilding for the current airframe and code; solving tables, this can take minutes", flush=True)
+    started = time.monotonic()
     export = export_jsbsim(resolved, parts_data, out_dir, model_name, pack_voltage_v)
+    print(f"JSBSim model: exported in {time.monotonic() - started:.0f} s", flush=True)
     with open(cache_path, "wb") as file:
         pickle.dump(export, file)
     fingerprint_path.write_text(fingerprint)  # last: an export cut short leaves no fingerprint, so it is redone
@@ -727,8 +732,14 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
       <damping_coeff unit="N/M/SEC"> {damping:.3f} </damping_coeff>
     </contact>""" for index, (x, y, z) in enumerate(contacts))
     aero_model = FlightAero(resolved)
+    print("  body aero tables...", flush=True)
+    stage = time.monotonic()
     tables, rates = aero_tables(resolved, aero_model)
+    print(f"  body aero tables done ({time.monotonic() - stage:.0f} s)", flush=True)
+    print(f"  control tables ({len(resolved.controls)} controls)...", flush=True)
+    stage = time.monotonic()
     controls = control_tables(resolved, aero_model)
+    print(f"  control tables done ({time.monotonic() - stage:.0f} s)", flush=True)
     servos = servo_mix(resolved, controls)
     forces = {"X": "CX", "Y": "CY", "Z": "CZ"}
     moments = {"ROLL": ("Cl", "metrics/bw-ft"), "PITCH": ("Cm", "metrics/cbarw-ft"), "YAW": ("Cn", "metrics/bw-ft")}

@@ -2,6 +2,7 @@ from controllers import inav as controller
 
 import math
 
+from libs.fdm import pitch_deg
 from libs.simrun import FT, battery_power_w
 from libs.inav_flight import LevelPoint, SpeedHold, motor_fraction
 from libs.jsbsim import AERO_SPEEDS_M_S
@@ -16,7 +17,6 @@ LEVEL_STEADY_S = 3  # ... for this many seconds in a row
 LEVEL_ALT_LOSS_LIMIT_M = 15.0
 
 
-START = {"start": "air"}
 
 
 def run(mission):
@@ -46,7 +46,7 @@ def run(mission):
             controller.forward.sticks(bench, speed.throttle(fdm["velocities/vt-fps"] * FT, 0.02))
             bench.run(0.02)
             samples.append((bench.elapsed, sum(motor_fraction(us) for us in bench.motors[:motor_count]) / motor_count, fdm["velocities/vt-fps"] * FT,
-                            fdm["aero/alpha-deg"], fdm["attitude/theta-deg"], battery_power_w(fdm, export, motor_count)))
+                            fdm["aero/alpha-deg"], pitch_deg(fdm), battery_power_w(fdm, export, motor_count)))
             if bench.elapsed < next_sample:
                 continue
             next_sample += 1.0

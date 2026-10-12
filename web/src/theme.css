@@ -13,6 +13,13 @@
   --ui-warning: #ffd23f;
   --ui-problem: #ff8585;
   --ui-mono: "DejaVu Sans Mono", "Liberation Mono", Consolas, monospace;
+  /* Shared button geometry: one compact size everywhere. */
+  --ui-btn-height: 24px;
+  --ui-btn-padding: 1px 12px;
+  --ui-btn-radius: 6px;
+  --ui-btn-font-size: 13px;
+  --ui-btn-font-weight: 500;
+  --ui-btn-line-height: 1.4;
 }
 
 * {
@@ -72,8 +79,8 @@ input[type="radio"] {
   position: relative;
   flex-wrap: wrap;
   gap: 8px 16px;
-  min-height: 60px;
-  padding: 10px 20px;
+  min-height: 52px;
+  padding: 6px 20px;
   background: var(--ui-panel);
   border-bottom: 1px solid var(--ui-border);
 }
@@ -131,8 +138,6 @@ input[type="radio"] {
   display: flex;
   align-items: center;
   gap: 10px;
-  background: transparent;
-  border-color: transparent;
 }
 
 .menu-button::after {
@@ -151,6 +156,7 @@ input[type="radio"] {
 
 .menu-button.active {
   color: var(--ui-accent);
+  border-color: var(--ui-accent);
   background: var(--ui-hover);
 }
 
@@ -162,7 +168,7 @@ input[type="radio"] {
   min-width: 200px;
   display: flex;
   flex-direction: column;
-  padding: 6px;
+  padding: 4px;
   background: var(--ui-raised);
   border: 1px solid var(--ui-border);
   border-radius: 10px;
@@ -171,14 +177,7 @@ input[type="radio"] {
 }
 
 .menu-dropdown button {
-  border: none;
   text-align: left;
-  padding: 9px 12px;
-  background: transparent;
-}
-
-.menu-dropdown button:hover:not(:disabled) {
-  background: var(--ui-hover);
 }
 
 .panel {
@@ -250,9 +249,9 @@ input[type="radio"] {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px 12px;
-  min-height: 60px;
-  padding: 12px;
+  gap: 4px 12px;
+  min-height: 42px;
+  padding: 5px 12px;
   border-bottom: 1px solid var(--ui-border);
 }
 
@@ -268,12 +267,13 @@ button {
   background: var(--ui-raised);
   color: var(--ui-fg);
   border: 1px solid var(--ui-border);
-  min-height: 34px;
-  padding: 6px 12px;
-  border-radius: 6px;
-  font-weight: 500;
-  line-height: 1.4;
+  min-height: var(--ui-btn-height);
+  padding: var(--ui-btn-padding);
+  border-radius: var(--ui-btn-radius);
   font: inherit;
+  font-size: var(--ui-btn-font-size);
+  font-weight: var(--ui-btn-font-weight);
+  line-height: var(--ui-btn-line-height);
   cursor: pointer;
   transition: background 120ms ease, border-color 120ms ease, color 120ms ease;
 }
@@ -281,6 +281,11 @@ button {
 button:hover:not(:disabled) {
   background: var(--ui-hover);
   border-color: #60676e;
+}
+
+button.active:hover:not(:disabled),
+button[aria-pressed="true"]:hover:not(:disabled) {
+  border-color: var(--ui-accent);
 }
 
 button:focus-visible,
@@ -300,7 +305,6 @@ button:disabled {
   color: #1b2116;
   background: var(--ui-accent);
   border-color: var(--ui-accent);
-  font-weight: 600;
 }
 
 .action:hover:not(:disabled) {
@@ -316,31 +320,15 @@ button:disabled {
 .tab-row {
   display: flex;
   flex-wrap: wrap;
-  gap: 16px;
+  gap: 4px 16px;
   padding: 0 16px;
   border-bottom: 1px solid var(--ui-border);
 }
 
-.tab {
-  min-height: 44px;
-  padding: 10px 0;
-  color: var(--ui-dim);
-  border: none;
-  border-bottom: 2px solid transparent;
-  border-radius: 0;
-  background: transparent;
-}
-
-.tab:hover:not(:disabled) {
-  color: var(--ui-fg);
-  border-color: transparent;
-  background: transparent;
-}
-
 .tab.active {
   color: var(--ui-accent);
-  border-bottom-color: var(--ui-accent);
-  background: transparent;
+  border-color: var(--ui-accent);
+  background: var(--ui-hover);
 }
 
 .report-panel {
@@ -354,7 +342,7 @@ button:disabled {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 16px;
+  padding: 8px 16px;
   line-height: 1.5;
 }
 
@@ -363,13 +351,13 @@ button:disabled {
 }
 
 .report-tabs {
-  gap: 14px;
+  gap: 4px 14px;
   flex-shrink: 0;
 }
 
 .report-section {
-  padding: 0 0 18px;
-  margin: 0 0 18px;
+  padding: 0 0 6px;
+  margin: 0 0 6px;
   border-bottom: 1px solid var(--ui-border);
 }
 
@@ -380,7 +368,7 @@ button:disabled {
 
 .report-section h3,
 .report-section summary {
-  margin: 0 0 12px;
+  margin: 0 0 4px;
   color: var(--ui-accent);
   font-size: 14px;
   font-weight: 600;
@@ -407,7 +395,7 @@ button:disabled {
   display: grid;
   grid-template-columns: minmax(0, 2fr) minmax(0, 3fr);
   gap: 12px;
-  padding: 5px 0;
+  padding: 3px 0;
 }
 
 .report-metric dt {
@@ -424,7 +412,7 @@ button:disabled {
 }
 
 .report-note {
-  margin: 12px 0 0;
+  margin: 4px 0 0;
   font-size: 12px;
   overflow-wrap: anywhere;
 }
@@ -437,7 +425,7 @@ button:disabled {
 .report-table-scroll {
   max-height: 420px;
   overflow: auto;
-  margin-top: 12px;
+  margin-top: 8px;
   scrollbar-gutter: stable;
 }
 
@@ -499,7 +487,7 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: 12px;
-  margin-bottom: 8px;
+  margin-bottom: 5px;
 }
 
 .line-info {
@@ -515,7 +503,7 @@ button:disabled {
 }
 
 .log-entry {
-  margin-bottom: 20px;
+  margin-bottom: 13px;
 }
 
 .log-text {
@@ -534,9 +522,9 @@ button:disabled {
 .subtab-list {
   display: flex;
   flex-direction: column;
-  gap: 4px;
+  gap: 2px;
   align-items: flex-start;
-  margin-top: 8px;
+  margin-top: 5px;
 }
 
 .view-tabs {
@@ -547,20 +535,10 @@ button:disabled {
   border-left: 1px solid var(--ui-border);
 }
 
-.view-button {
-  background: transparent;
-  border-color: transparent;
-  color: var(--ui-dim);
-}
-
-.view-button:hover:not(:disabled) {
-  border-color: transparent;
-}
-
 .view-button.active {
   color: var(--ui-accent);
+  border-color: var(--ui-accent);
   background: var(--ui-hover);
-  border-color: transparent;
 }
 
 .simple-view {
@@ -570,7 +548,7 @@ button:disabled {
   min-height: 0;
 }
 
-.performance-results { overflow: auto; padding: 12px; display: flex; flex-direction: column; gap: 12px; }
+.performance-results { overflow: auto; padding: 8px 12px; display: flex; flex-direction: column; gap: 8px; }
 .performance-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 8px; }
 .performance-metric { padding: 10px; border: 1px solid var(--ui-border); border-radius: 6px; display: flex; flex-direction: column; gap: 6px; }
 .performance-metric span { font-size: 12px; opacity: 0.75; }
@@ -617,9 +595,29 @@ button:disabled {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px 16px;
-  padding: 10px 16px;
+  gap: 6px 16px;
+  padding: 6px 16px;
   border-bottom: 1px solid var(--ui-border);
+}
+
+.model-controls {
+  flex-direction: column;
+  align-items: stretch;
+  gap: 4px;
+  padding: 4px 10px;
+}
+
+.model-legend {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+}
+
+.graphics-controls button[aria-pressed="true"] {
+  color: var(--ui-accent);
+  border-color: var(--ui-accent);
+  background: var(--ui-hover);
 }
 
 .axes-label {
@@ -888,14 +886,7 @@ button:disabled {
 }
 
 .project-list button {
-  border: none;
   text-align: left;
-  padding: 10px 12px;
-  background: transparent;
-}
-
-.project-list button:hover:not(:disabled) {
-  background: var(--ui-hover);
 }
 
 /* --- Editor forms ------------------------------------------------------- */
@@ -911,7 +902,8 @@ button:disabled {
 .right-pane,
 .part-editor-pane,
 .cad-view,
-.sim-left {
+.sim-left,
+.aero-left {
   container-type: inline-size;
 }
 
@@ -919,21 +911,13 @@ button:disabled {
   display: flex;
   flex-wrap: wrap;
   gap: 4px;
-  padding: 10px 12px;
+  padding: 4px 12px;
   background: var(--ui-input);
-}
-
-.subtab {
-  min-height: 30px;
-  padding: 5px 10px;
-  border-color: transparent;
-  color: var(--ui-dim);
-  background: transparent;
 }
 
 .subtab.active {
   color: var(--ui-accent);
-  border-color: transparent;
+  border-color: var(--ui-accent);
   background: var(--ui-hover);
 }
 
@@ -943,8 +927,8 @@ button:disabled {
   flex: 1;
   min-height: 0;
   overflow: auto;
-  padding: 12px;
-  gap: 10px;
+  padding: 6px 12px;
+  gap: 5px;
 }
 
 .editor-forms[hidden] {
@@ -956,8 +940,8 @@ button:disabled {
   flex-direction: column;
   flex: 0 0 auto;
   min-width: 0;
-  gap: 8px;
-  padding: 12px;
+  gap: 4px;
+  padding: 6px 12px;
   border-radius: 8px;
   background: var(--ui-raised);
 }
@@ -966,9 +950,9 @@ button:disabled {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 8px;
+  gap: 4px 8px;
   flex-wrap: wrap;
-  padding-bottom: 4px;
+  padding-bottom: 2px;
 }
 
 .form-card-header h3 {
@@ -982,10 +966,10 @@ button:disabled {
 .form-group {
   display: flex;
   flex-direction: column;
-  gap: 8px;
+  gap: 4px;
   min-width: 0;
   margin: 0;
-  padding: 8px 0 0;
+  padding: 4px 0 0;
   border: none;
   border-top: 1px solid var(--ui-border);
 }
@@ -1001,7 +985,7 @@ button:disabled {
   display: grid;
   grid-template-columns: minmax(0, 44%) minmax(0, 1fr);
   align-items: center;
-  gap: 4px 12px;
+  gap: 3px 12px;
   min-width: 0;
 }
 
@@ -1100,13 +1084,13 @@ select.field-input {
 
 .button-row {
   display: flex;
-  gap: 8px;
+  gap: 6px;
   flex-wrap: wrap;
 }
 
 button.danger {
   color: var(--ui-problem);
-  border-color: transparent;
+  border-color: var(--ui-problem);
   background: rgba(255, 133, 133, 0.08);
 }
 
@@ -1128,7 +1112,7 @@ button.danger:hover:not(:disabled) {
 .section-grid {
   display: grid;
   grid-template-columns: repeat(9, auto);
-  gap: 8px 12px;
+  gap: 5px 12px;
   align-items: center;
   overflow-x: auto;
 }
@@ -1147,10 +1131,6 @@ button.danger:hover:not(:disabled) {
 .section-computed {
   color: var(--ui-dim);
   white-space: nowrap;
-}
-
-.section-del {
-  padding: 2px 6px;
 }
 
 /* Wiring table (editor_view.build_wiring_tab 639-657) */
@@ -1235,12 +1215,12 @@ button.danger:hover:not(:disabled) {
   justify-content: space-between;
   gap: 8px;
   flex-wrap: wrap;
-  padding: 16px;
+  padding: 6px 16px;
   border-bottom: 1px solid var(--ui-border);
 }
 
 .part-search {
-  margin: 12px;
+  margin: 6px 12px;
   width: calc(100% - 24px);
 }
 
@@ -1256,7 +1236,7 @@ button.danger:hover:not(:disabled) {
   display: flex;
   align-items: center;
   gap: 6px;
-  padding: 8px 12px;
+  padding: 3px 12px;
   min-height: 36px;
   border-left: 2px solid transparent;
   cursor: pointer;
@@ -1290,20 +1270,21 @@ button.danger:hover:not(:disabled) {
   outline-offset: -1px;
 }
 
+/* Glyph column shared by the chevron buttons and their placeholder spans. */
 .part-chevron {
-  flex: 0 0 14px;
-  width: 14px;
+  flex: 0 0 var(--ui-btn-height);
+  width: var(--ui-btn-height);
+  min-height: var(--ui-btn-height);
   padding: 0;
-  min-height: 20px;
-  border: none;
-  background: transparent;
-  color: var(--ui-dim);
   text-align: center;
 }
 
-.part-chevron:hover:not(:disabled) {
+button.part-chevron {
+  color: var(--ui-dim);
+}
+
+button.part-chevron:hover:not(:disabled) {
   color: var(--ui-accent);
-  border: none;
 }
 
 .part-name {
@@ -1328,9 +1309,9 @@ button.danger:hover:not(:disabled) {
 }
 
 .part-editor-pane {
-  gap: 16px;
+  gap: 6px;
   overflow: auto;
-  padding: 16px;
+  padding: 6px 16px;
 }
 
 .part-editor-pane > .placeholder {
@@ -1362,10 +1343,10 @@ button.danger:hover:not(:disabled) {
 .cad-view {
   height: 100%;
   overflow: auto;
-  padding: 20px;
+  padding: 8px 20px;
   display: flex;
   flex-direction: column;
-  gap: 16px;
+  gap: 6px 16px;
 }
 
 .cad-view .form-card {
@@ -1401,6 +1382,13 @@ button.danger:hover:not(:disabled) {
   overflow-wrap: anywhere;
 }
 
+/* The failure summary is longer than the status bar's one-line slot: wrap it instead of clipping it. */
+.cad-error {
+  white-space: normal;
+  overflow: visible;
+  overflow-wrap: anywhere;
+}
+
 .cad-files,
 .cad-notes {
   margin: 0;
@@ -1415,6 +1403,27 @@ button.danger:hover:not(:disabled) {
 .cad-files a {
   color: var(--ui-fg);
   overflow-wrap: anywhere;
+}
+
+.cad-progress {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.cad-progress-track {
+  flex: 0 1 160px;
+  height: 4px;
+  border-radius: 2px;
+  background: var(--ui-raised);
+  overflow: hidden;
+}
+
+.cad-progress-fill {
+  display: block;
+  height: 100%;
+  background: var(--ui-accent);
+  transition: width 0.2s linear;
 }
 
 .cad-files a:hover {
@@ -1432,8 +1441,8 @@ button.danger:hover:not(:disabled) {
 .sim-left,
 .sim-centre,
 .sim-right {
-  gap: 16px;
-  padding: 12px;
+  gap: 6px;
+  padding: 6px 12px;
   overflow: auto;
 }
 
@@ -1441,7 +1450,7 @@ button.danger:hover:not(:disabled) {
   display: grid;
   grid-template-columns: minmax(90px, 44%) minmax(0, 1fr);
   align-items: center;
-  gap: 6px 12px;
+  gap: 4px 12px;
   min-width: 0;
 }
 
@@ -1453,9 +1462,9 @@ button.danger:hover:not(:disabled) {
 .sim-conditions {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 10px 16px;
+  gap: 4px 16px;
   margin: 2px 0 0 0;
-  padding: 12px 0 0;
+  padding: 4px 0 0;
   min-width: 0;
   border: none;
   border-top: 1px solid var(--ui-border);
@@ -1484,8 +1493,8 @@ button.danger:hover:not(:disabled) {
   display: flex;
   align-items: center;
   flex-wrap: wrap;
-  gap: 8px;
-  padding-top: 4px;
+  gap: 6px;
+  padding-top: 3px;
 }
 
 .sim-status {
@@ -1501,7 +1510,7 @@ button.danger:hover:not(:disabled) {
   flex: 1;
   min-height: 0;
   margin: 0;
-  padding: 12px;
+  padding: 8px;
   overflow: auto;
   background: var(--ui-input);
   border-radius: 6px;
@@ -1534,13 +1543,161 @@ button.danger:hover:not(:disabled) {
 }
 
 .sim-plot-title {
-  height: 24px;
-  min-height: 24px;
-  padding: 2px 10px;
-  border: none;
-  background: transparent;
-  color: var(--ui-fg);
+  min-height: var(--ui-btn-height);
   text-align: left;
+}
+
+/* Aero Analysis view (web/src/views/AeroAnalysisView.tsx, webapp/airfoils.py; docs/ui/aero_analysis_view.md) */
+.aero-left,
+.aero-right {
+  gap: 6px;
+  padding: 6px 12px;
+}
+
+.aero-left {
+  overflow: hidden;
+}
+
+.aero-left .form-card {
+  flex: 1 1 0;
+  min-height: 0;
+}
+
+.aero-parameters {
+  overflow: auto;
+}
+
+.aero-flow {
+  margin: 0;
+  min-height: 16px;
+  color: var(--ui-accent);
+}
+
+.aero-alpha-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 72px;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+}
+
+.aero-alpha-row input[type="range"] {
+  width: 100%;
+  min-width: 0;
+  accent-color: var(--ui-accent);
+}
+
+.aero-selection {
+  overflow: hidden;
+}
+
+.aero-selection-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  gap: 6px;
+}
+
+.aero-list-column {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  min-height: 0;
+  min-width: 0;
+}
+
+.aero-list-label {
+  color: var(--ui-dim);
+  font-size: 12px;
+}
+
+.aero-list {
+  flex: 1;
+  min-height: 0;
+}
+
+.aero-selection-buttons {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  justify-content: flex-start;
+  padding-top: 18px;
+}
+
+.aero-selection-buttons button {
+  white-space: nowrap;
+}
+
+.aero-summary {
+  overflow: hidden;
+}
+
+.aero-summary-text {
+  flex: 1;
+  min-height: 0;
+  margin: 0;
+  padding: 8px;
+  overflow: auto;
+  background: var(--ui-input);
+  border-radius: 6px;
+  font-family: var(--ui-mono);
+  font-size: 12px;
+  line-height: 1.6;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
+.aero-right {
+  overflow: hidden;
+  padding: 6px;
+}
+
+.aero-plot-grid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  grid-template-rows: minmax(0, 1fr) minmax(0, 1fr);
+  flex: 1;
+  min-height: 0;
+  gap: 6px;
+}
+
+.aero-plot {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  min-height: 0;
+  background: var(--ui-input);
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+}
+
+.aero-plot-title {
+  min-height: var(--ui-btn-height);
+  padding: 2px 8px;
+  font-size: 12px;
+  color: var(--ui-dim);
+}
+
+.aero-plot-host {
+  flex: 1;
+  min-height: 0;
+  overflow: hidden;
+}
+
+.aero-plot .u-legend {
+  color: var(--ui-fg);
+  font-size: 12px;
+}
+
+.aero-plot .u-legend th {
+  color: var(--ui-fg);
+  font-weight: 400;
+}
+
+/* The dashed low-confidence and operating-point marker series draw, but their legend rows must not. */
+.aero-plot .u-legend tr.aero-helper {
+  display: none;
 }
 
 .sim-links {
@@ -1588,44 +1745,61 @@ button.danger:hover:not(:disabled) {
 
 /* Component lists and the selected component's inspector. */
 .component-picker {
-  display: grid;
-  grid-template-columns: repeat(2, minmax(0, 1fr));
-  gap: 6px;
-  margin-bottom: 8px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-bottom: 5px;
 }
 .component-choice {
   display: flex;
-  flex-direction: column;
-  gap: 3px;
-  padding: 7px 10px;
+  flex-direction: row;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 12px;
   min-width: 0;
+  width: 100%;
   text-align: left;
-  overflow-wrap: anywhere;
 }
-.component-choice strong { font-size: 12px; font-weight: 500; }
-.component-choice span { color: var(--ui-dim); font-size: 11px; }
-.component-choice.active { border-color: var(--ui-accent); background: var(--ui-hover); }
+.component-choice strong {
+  min-width: 0;
+  font-weight: 500;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.component-choice span {
+  flex-shrink: 0;
+  max-width: 60%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--ui-dim);
+  font-size: 11px;
+  text-align: right;
+  font-variant-numeric: tabular-nums;
+}
+.component-choice.active { color: var(--ui-accent); border-color: var(--ui-accent); background: var(--ui-hover); }
 .advanced-fields {
-  margin: 8px 0;
+  margin: 3px 0;
   border-top: 1px solid var(--ui-border);
-  padding-top: 8px;
+  padding-top: 3px;
 }
 .advanced-fields > summary {
   cursor: pointer;
   color: var(--ui-fg);
   font-size: 12px;
-  margin-bottom: 8px;
+  margin-bottom: 3px;
 }
 .advanced-fields > summary span { margin-left: 12px; color: var(--ui-dim); font-size: 11px; }
-.optional-control { display: grid; grid-template-columns: auto minmax(0, 1fr); gap: 4px; }
+.optional-control { display: grid; grid-template-columns: auto minmax(0, 1fr); align-items: center; gap: 4px; }
 .optional-control > .field-error { grid-column: 1 / -1; }
-.optional-mode { display: flex; gap: 2px; }
-.optional-mode button { min-height: 26px; padding: 3px 4px; font-size: 11px; }
-.optional-mode button.active { color: var(--ui-accent); border-color: var(--ui-accent); }
+.optional-mode { display: flex; align-items: center; gap: 2px; }
+.optional-mode button.active { color: var(--ui-accent); border-color: var(--ui-accent); background: var(--ui-hover); }
 .field-input[readonly] { color: var(--ui-dim); background: transparent; border-style: dashed; }
 .field-input::placeholder { color: var(--ui-dim); opacity: 1; }
-.choice-search { margin-bottom: 6px; font-size: 11px; }
-.wire-run { margin-top: 18px; }
+.choice-search { margin-bottom: 4px; font-size: 11px; }
+.wire-run { margin-top: 12px; }
 .wire-length { color: var(--ui-dim); font-size: 12px; }
 .wiring-plugs { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 10px; }
 .wiring-plugs .plug-select { width: auto; min-width: 100px; max-width: 100%; }
@@ -1639,20 +1813,22 @@ button.danger:hover:not(:disabled) {
 .save-status { color: var(--ui-dim); font-size: 11px; white-space: nowrap; }
 .save-status.unsaved { color: var(--ui-warning); }
 .last-valid-note { margin: 0; padding: 10px 16px; color: var(--ui-warning); font-size: 12px; }
-.condition-override { grid-column: 2; font-size: 11px; }
 .sim-start-details .sim-conditions { border: 0; padding: 0; }
 .cad-view { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; align-items: start; }
 @media (max-width: 1000px) { .cad-view { grid-template-columns: minmax(0, 1fr); } }
 
 .sim-path { position: relative; }
-.sim-path-tools { position: absolute; z-index: 1; top: 12px; left: 12px; display: flex; align-items: center; gap: 12px; padding: 6px; background: var(--ui-panel); border-radius: 6px; }
-.sim-source-panel { flex: 1; min-height: 0; flex-direction: column; gap: 12px; padding: 12px 0; }
+.sim-path-tools { position: absolute; z-index: 1; top: 12px; left: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 6px; background: var(--ui-panel); border-radius: 6px; }
+.sim-path-tools button[aria-pressed="true"] { color: var(--ui-accent); border-color: var(--ui-accent); background: var(--ui-hover); }
+.sim-path-slider { width: 160px; }
+.sim-path-speed { width: auto; min-height: var(--ui-btn-height); }
+.sim-source-panel { flex: 1; min-height: 0; flex-direction: column; gap: 6px; padding: 4px 0; }
 .sim-source-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; }
 .sim-source-toolbar > span { width: 100%; font-size: 12px; color: var(--ui-dim); }
 .sim-source-toolbar label { display: flex; align-items: center; gap: 8px; }
 .sim-source { flex: 1; min-height: 240px; width: 100%; resize: none; background: var(--ui-input); color: var(--ui-fg); border: 1px solid var(--ui-border); border-radius: 8px; padding: 16px; font: 13px/1.6 monospace; tab-size: 4; white-space: pre; overflow: auto; }
-.scenario-phase { padding: 10px 0; border-bottom: 1px solid var(--ui-border); }
-.scenario-phase h4 { margin: 0 0 6px; font-size: 13px; }
+.scenario-phase { padding: 6px 0; border-bottom: 1px solid var(--ui-border); }
+.scenario-phase h4 { margin: 0 0 4px; font-size: 13px; }
 .scenario-phase p { margin: 0; }
 .scenario-outline dl > div { display: flex; justify-content: space-between; gap: 12px; font-size: 12px; }
 .scenario-outline dd { margin: 0; }

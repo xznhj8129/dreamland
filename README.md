@@ -32,17 +32,17 @@ python sim_flight.py aircraft/m62v1 hover --controller inav     # INAV SITL on J
 python sim_flight.py aircraft/quadlancer62 efficiency --controller inav # speed sweep: Wh/km, range, endurance
 python sim_flight.py aircraft/m62v1 efficiency --controller inav --start ground # take off and transition first
 python sim_flight.py aircraft/m62v1 top-speed --controller inav --inav-config aircraft/m62v1/inav/m62v1_2025-08-20.txt
-python sim_flight.py aircraft/simpleplane controls --controller inav # stick steps checked against motion
+python sim_flight.py aircraft/example controls --controller inav # stick steps checked against motion
 python sim_flight.py aircraft/testglide glide --controller inav # motors off: smallest sink rate and best glide
-python sim_flight.py aircraft/simpleplane glide --controller inav --alt 600 --heading 90 --wind-from 270 --wind-speed 5
+python sim_flight.py aircraft/example glide --controller inav --alt 600 --heading 90 --wind-from 270 --wind-speed 5
 python sim_flight.py aircraft/example acro_climb --controller inav --clock stepped-faster
 python sim_flight.py aircraft/example configurator --controller inav # disarmed, TCP 5761
 python sim_flight.py aircraft/m62v1 experiment --controller inav
 python sim_flight.py aircraft/example stability --controller mcu --clock stepped
-python sim_flight.py aircraft/simpleplane level --controller mcu --duration 120
+python sim_flight.py aircraft/example level --controller mcu --duration 120
 ```
 
-Each aircraft is a project directory, opened as an argument or with File → Load; Save As copies the whole project under a new name. `aircraft/` is gitignored except `aircraft/example` (a copy of simpleplane); the other names above are local projects:
+Each aircraft is a project directory, opened as an argument or with File → Load; Save As copies the whole project under a new name. The bundled example is `aircraft/example`; the other names above are local projects:
 
 ```
 aircraft/<project>/
@@ -53,14 +53,14 @@ aircraft/<project>/
     jsbsim/         JSBSim export
     logs/           SITL and script flight logs and plots
     cad/            STEP / STL exports, blueprint drawings: cutaway, threeview, xray (.svg / .png)
-      sections/     printable sections S01.. and couplers C01.., STEP and STL
+      sections/     printable sections S01.. and couplers C01.., STEP or STL
       varsets/      FreeCAD varsets, one JSON per varset
     scenarios/      one run(flight) convention; overrides of data/scenarios/<controller>/*.py
       inav/         scripts importing controllers.inav
       mcu/          scripts importing controllers.mcu; raw sensor/PWM scripts use the same flight API
 ```
 
-Every scenario defines `run(flight)`. Controller commands come from `from controllers import inav as controller` or `mcu`; simulation state, conditions, raw sensors, scheduling and recording are shared (`libs/scenario.py`, `libs/sensors.py`). `experiment` is an INAV example; `stability` is an MCU PWM example. MCU control logic lives in the script, reading raw sensors and writing PWM; the backend has no autopilot or mixer. Optional `START`, `PARAMETERS`, `TELEMETRY` and `LOG_FIELDS` declare conditions, parameters and recording.
+Every scenario defines `run(flight)`. Controller commands come from `from controllers import inav as controller` or `mcu`; simulation state, conditions, raw sensors, scheduling and recording are shared (`libs/scenario.py`, `libs/sensors.py`). `experiment` is an INAV example; `stability` is an MCU PWM example. MCU control logic lives in the script, reading raw sensors and writing PWM; the backend has no autopilot or mixer. The SIM toolbar or CLI sets initial conditions. Optional `PARAMETERS`, `TELEMETRY` and `LOG_FIELDS` declare parameters and recording.
 
 The GUI's SIM view runs the same simulations with a live plot of the flight log; STEP/STL export is in its CAD view. Tube size presets (tube62, tube75: section, joints, rods) are loaded, saved and created in the Fuselage tab.
 

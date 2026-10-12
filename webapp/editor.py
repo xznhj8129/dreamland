@@ -8,14 +8,16 @@ from the Tk methods named in each docstring; docs/ui/editor_view.md documents th
 from __future__ import annotations
 
 import copy
+import math
 from typing import Any
 
 from libs.airframe import (
     AXES, BATTERY_PART_NAME, CONTROL_KINDS, CONTROL_ROLES, CUT_JOINTS, FIN_POSITIONS, INCIDENCE_MODES, JOINT_TYPES,
     LAYOUT_PANEL_COUNTS, LAYOUTS, MOUNT_TARGETS, ORIENTATION_KEYS, PART_CATEGORIES, REINFORCEMENT_TYPES,
-    SECTION_PROFILE_KEYS, SERVO_OUTPUTS, SINGLE_PROP_SPINS, SURFACE_PROP_SPINS, SURFACE_ROOTS, THRUST_DIRECTIONS, VOLUME_SHAPES,
+    SERVO_OUTPUTS, SINGLE_PROP_SPINS, SURFACE_PROP_SPINS, SURFACE_ROOTS, THRUST_DIRECTIONS, VOLUME_SHAPES,
     AirframeError, cell_format, motor_count, motor_repo,
 )
+from libs.geometry import loft_section_at
 from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS
 from libs.presets import (
     ROD_EXTENT_KEYS, ROD_PATTERN_KEYS, apply_preset, preset_carry_through, preset_names, preset_spars, read_presets,
@@ -30,7 +32,7 @@ MM_KEYS = {
     "length_m", "width_m", "height_m", "wall_radial_m", "insertion_depth_m", "diameter_m", "radial_position_m",
     "from_x_m", "to_x_m", "x_root_le_m", "span_m", "chord_root_m", "chord_tip_m", "span_position_m",
     "x_offset_m", "y_offset_m", "z_offset_m", "x_m", "y_m", "z_m", "lead_length_m", "flat_length_m", "curve_length_m", "nose_radius", "size_m", "printer_bed_m", "cuts_m",
-    "corner_radius_m", "stem_width_m", "flare_radius_m", "root_length_m", "wall_fillet_m", "coupler_wall_m", "fit_clearance_m", "socket_wall_m", "hole_edge_dist_m", "hole_diameter_m", "spacing_m", "forward_offset_m", "leading_cut_m", "trailing_cut_m", "gap_m", "spar_diameter_m",
+    "corner_radius_m", "stem_width_m", "flare_radius_m", "root_length_m", "wall_fillet_m", "coupler_wall_m", "fit_clearance_m", "socket_wall_m", "hole_edge_dist_m", "hole_diameter_m", "spacing_m", "forward_offset_m", "leading_cut_m", "trailing_cut_m", "gap_m", "rod_diameter_m", "rod_x_offset_m", "rod_y_offset_m",
 }
 # editor_view.py 43
 GRAM_KEYS = {"mass_kg", "coupler_mass_kg", "empty_mass_kg", "complete_mass_kg"}
@@ -75,12 +77,15 @@ VOLUME_SHAPE_FIELDS = {
 NEW_SURFACE = {
     "name": "wing", "x_root_le_m": 0.2, "layout": "H", "fin_position": "top", "dihedral_deg": 0.0, "vertical_offset": 0.0,
     "root": "body", "span_m": 0.12, "chord_root_m": 0.1, "chord_tip_m": 0.07, "sweep_le_deg": 10.0, "incidence_deg": 0.0, "incidence_mode": "symmetric", "airfoil": "naca2412",
+    "sections": {"cuts_m": []},
 }
+NEW_SURFACE_ROOT_LENGTH_M = 0.015  # initial root stub when adding the first print cut
 # editor_view.py 69
 CONTROL_KIND_FIELDS = {"split": {"chord_start": 0.75, "span_start": 0.0, "span_end": 1.0}, "all_moving": {"pivot": 0.25, "span_start": 0.0}}
 # editor_view.py 70
 NEW_CONTROL = {"kind": "split", "roles": [], "deflection_min_deg": -25.0, "deflection_max_deg": 25.0, "rate_deg_s": 300.0,
-               "gap_m": 0.0005, "spar_diameter_m": 0.003}  # + kind fields, servos
+               "gap_m": 0.0005, "rod_diameter_m": 0.003, "rod_x_offset_m": 0.0, "rod_y_offset_m": 0.0,
+               "align_hinge_vertically": False}  # + kind fields, servos
 # editor_view.py 71
 NEW_POD = {"diameter_m": 0.035, "flat_length_m": 0.02, "curve_length_m": 0.05, "profile": "elliptical"}
 NEW_MOUNT_HOLES = {"pattern": "single", "d1_m": 0.003, "d2_m": 0.003, "hole_diameter_m": 0.003,
@@ -90,7 +95,7 @@ NEW_SPARS = {"material": "carbon_rod", "diameter_m": 0.0064, "count": 2, "spacin
 NEW_CARRY_THROUGH = {"stem_width_m": 0.01, "length_m": 0.02, "flare_radius_m": 0.02, "root_length_m": 0.04, "wall_fillet_m": 0.004}
 NEW_ROOT_BASE = {"length_m": 0.096, "width_m": 0.018, "height_m": 0.0, "forward_offset_m": 0.0, "leading_cut_m": 0.01, "trailing_cut_m": 0.06}
 # editor_view.add_mount 1115-1118
-NEW_MOUNT = {"on": "nose", "direction": "tractor", "spin": SINGLE_PROP_SPINS[0], "thrust_axis_tilt_deg": 0.0}
+NEW_MOUNT = {"on": "nose", "x_offset_m": 0.0, "direction": "tractor", "spin": SINGLE_PROP_SPINS[0], "thrust_axis_tilt_deg": 0.0}
 # editor_view.add_volume 1242-1249: name and x_m are set from the definition, then the `box` shape fields.
 NEW_VOLUME = {"name": "volume", "shape": "box", "x_m": 0.0, **VOLUME_SHAPE_FIELDS["box"]}
 # editor_view.add_part 1227-1234: name, the first library part with a mass and its place are set from the definition.
@@ -112,8 +117,7 @@ WIRING_COLUMNS = ("run", "length mm", "AWG", "wires", "plugs, along the run")
 NO_VOLUME = "(none)"
 PLACEMENT_KEYS = ("volume", "x_offset_m", "y_offset_m", "z_offset_m", "x_m", "y_m", "z_m")
 # editor_view.py 99-100
-MOVE_TARGETS = ("cut", "spars", "surface", "volume", "part", "battery", "rod")  # the drag handle targets
-MIN_SECTION_LENGTH_M = 0.005
+MOVE_TARGETS = ("cut", "loft", "spars", "surface", "volume", "part", "battery", "rod")  # the drag handle targets
 MOVE_QUANTUM_M = 1e-5  # 0.01 mm: dragged dimensions snap to this grid and are rounded to this accuracy
 
 
@@ -249,13 +253,6 @@ def apply_set(state: AppState, body: dict[str, Any]) -> None:
         sync_motor_runs(state.definition)
         state.set_definition(state.definition)
         return
-    if (len(path) == 5 and path[:2] == ["sections", "per_section"] and type(path[2]) is int
-            and path[3] == "section" and path[4] in SECTION_PROFILE_KEYS):
-        rows = state.definition["sections"]["per_section"]
-        if 0 <= path[2] < len(rows) and "section" not in rows[path[2]]:
-            if remove:
-                return
-            rows[path[2]]["section"] = {}
     node: Any = state.definition
     for step in path[:-1]:
         if type(step) is str and isinstance(node, dict) and step in node:
@@ -292,20 +289,65 @@ def delete_cut(definition: dict, index: int) -> None:
     if not 0 <= index < len(sections["cuts_m"]):
         raise ValueError(f"cut index {index} is out of range")
     left, right = sections["per_section"][index:index + 2]
-    default = definition["fuselage"]["section"]
-    if any(left.get("section", {}).get(key, default[key]) != right.get("section", {}).get(key, default[key]) for key in SECTION_PROFILE_KEYS):
-        raise ValueError("Cannot merge sections with different cross-sections; give them the same width, height and shape first")
+    for key in ("empty_mass_kg", "complete_mass_kg"):
+        if (key in left) != (key in right):
+            raise ValueError(f"Cannot merge a measured and automatic {key}; clear or measure both before merging")
     sections["cuts_m"].pop(index)
     sections["cut_joints"].pop(index)
     merged = {"solid": left["solid"]}
-    if "section" in left:
-        merged["section"] = copy.deepcopy(left["section"])
     if left.get("fixed_length", False) and right.get("fixed_length", False):
         merged["fixed_length"] = True
     for key in ("empty_mass_kg", "complete_mass_kg"):
         if key in left and key in right:
             merged[key] = left[key] + right[key]
     sections["per_section"][index:index + 2] = [merged]
+
+
+NEW_CUT_JOINT = "none"
+SECTION_INSERT_SIDES = ("before", "after")
+
+
+def _body_position(definition: dict, value: object) -> float:
+    length = definition["fuselage"]["length_m"]
+    if type(value) not in (float, int) or not math.isfinite(value) or not 0 <= value <= length:
+        raise ValueError(f"position must be a finite number within 0..{length} m, got {value!r}")
+    return float(value)
+
+
+def add_loft_guide(state: AppState, value: object) -> None:
+    x = _body_position(state.definition, value)
+    guides = state.definition["fuselage"]["loft_stations"]
+    if any(guide["x_m"] == x for guide in guides):
+        raise ValueError(f"A loft guide already exists at {x * 1000:g} mm")
+    if not state.definition_valid:
+        raise ValueError("Fix the definition before adding a loft guide")
+    profile = loft_section_at(state.resolved.body, x)
+    guides.append({"x_m": x, "width_m": profile.width_m, "height_m": profile.height_m, "shape": profile.shape})
+    guides.sort(key=lambda guide: guide["x_m"])
+
+
+def move_loft_guide(definition: dict, index: int, value: object) -> None:
+    x = _body_position(definition, value)
+    guides = definition["fuselage"]["loft_stations"]
+    guide = _indexed(guides, index, "loft guide")
+    if any(other is not guide and other["x_m"] == x for other in guides):
+        raise ValueError(f"A loft guide already exists at {x * 1000:g} mm")
+    guide["x_m"] = x
+    guides.sort(key=lambda item: item["x_m"])
+
+
+def add_cut(definition: dict, index: int, side: str = "after") -> None:
+    """Split the selected span; insert the new row before or after its construction settings."""
+    if side not in SECTION_INSERT_SIDES:
+        raise ValueError(f"section.add_cut side must be one of {SECTION_INSERT_SIDES}, got {side!r}")
+    sections = definition["sections"]
+    row = _indexed(sections["per_section"], index, "section")
+    if any(key in row for key in ("empty_mass_kg", "complete_mass_kg")):
+        raise ValueError("Clear this section's weighed masses before splitting it; enter the two new measured masses afterwards")
+    bounds = [0.0, *sections["cuts_m"], definition["fuselage"]["length_m"]]
+    sections["cuts_m"].insert(index, (bounds[index] + bounds[index + 1]) / 2.0)
+    sections["cut_joints"].insert(index, NEW_CUT_JOINT)
+    sections["per_section"].insert(index if side == "before" else index + 1, copy.deepcopy(row))
 
 
 def reset_profile(definition: dict, end_name: Any, profile: Any) -> None:
@@ -370,6 +412,24 @@ def add_surface(definition: dict) -> None:
     definition["surfaces"].append(surface)
 
 
+def edit_surface_sections(surface: dict, body: dict) -> None:
+    """The Surfaces Sections block: add a cut inside the selected span or remove one (merge). The boundaries
+    themselves are plain sets (a cuts_m entry or span_m); no length op duplicates them."""
+    cuts = surface["sections"]["cuts_m"]
+    bounds = [0.0, *cuts, surface["span_m"]]
+    index = body.get("section_index")
+    _indexed(bounds[:-1], index, "surface section")
+    if body["op"] == "surface.section.add":
+        side = body.get("side")
+        if side not in ("before", "after"):
+            raise ValueError("surface section side must be before or after")
+        cut = min(NEW_SURFACE_ROOT_LENGTH_M, surface["span_m"] / 2.0) if not cuts else (bounds[index] + bounds[index + 1]) / 2.0
+        cuts.insert(index, cut)
+    else:
+        _indexed(cuts, index, "surface end cut")
+        cuts.pop(index)
+
+
 def free_servos(definition: dict, count: int) -> list[str]:
     """editor_view.free_servos (899-902): the lowest outputs no control surface uses yet, then S1 (outputs may be shared)."""
     used = {servo for surface in definition["surfaces"] if "control" in surface for servo in surface["control"]["servos"]}
@@ -426,8 +486,9 @@ def toggle_block(data: dict, key: str, template: dict, enabled: bool) -> None:
 
 def normalize_mount(definition: dict, mount: dict) -> None:
     """editor_view.normalize_mount (1100-1113): a surface mount carries surface, span_position_m and x_offset_m and
-    spins out|in; a nose or tail mount has none of those, its direction (tractor/pusher) and spins cw|ccw."""
+    spins out|in; nose/tail mounts retain their x offset, direction (tractor/pusher) and spins cw|ccw."""
     surfaces = definition["surfaces"]
+    mount.setdefault("x_offset_m", 0.0)
     if mount["on"] == "surface":
         mount.setdefault("surface", surfaces[0]["name"] if surfaces else "")
         mount.setdefault("span_position_m", 0.0)
@@ -435,7 +496,7 @@ def normalize_mount(definition: dict, mount: dict) -> None:
         if mount["spin"] not in SURFACE_PROP_SPINS:
             mount["spin"] = SURFACE_PROP_SPINS[0]
     else:
-        for key in ("surface", "span_position_m", "x_offset_m"):
+        for key in ("surface", "span_position_m"):
             mount.pop(key, None)
         mount["direction"] = "tractor" if mount["on"] == "nose" else "pusher"
         if mount["spin"] not in SINGLE_PROP_SPINS:
@@ -613,6 +674,23 @@ def apply_op(state: AppState, body: dict[str, Any]) -> None:
         if type(index) is not int:
             raise ValueError("section.delete_cut needs an integer index")
         delete_cut(definition, index)
+    elif op == "section.add_cut":
+        index = body.get("index")
+        if type(index) is not int:
+            raise ValueError("section.add_cut needs an integer index")
+        add_cut(definition, index, body.get("side", "after"))
+    elif op == "loft.add":
+        add_loft_guide(state, body.get("x_m"))
+    elif op in ("loft.delete", "loft.position"):
+        index = body.get("index")
+        if type(index) is not int:
+            raise ValueError(f"{op} needs an integer index")
+        guides = definition["fuselage"]["loft_stations"]
+        _indexed(guides, index, "loft guide")
+        if op == "loft.delete":
+            guides.pop(index)
+        else:
+            move_loft_guide(definition, index, body.get("x_m"))
     elif op == "section.length":
         resize_section(definition, body.get("index"), body.get("value"))
     # The nose/tail profile pick (build_fuselage_tab 696-698, reset_profile_params 849-850): profile and its params
@@ -640,6 +718,9 @@ def apply_op(state: AppState, body: dict[str, Any]) -> None:
     # Surfaces (build_surfaces_tab 852-942).
     elif op == "surface.add":
         add_surface(definition)
+    elif op in ("surface.section.add", "surface.section.delete"):
+        surface = _indexed(definition["surfaces"], body.get("index"), "surface")
+        edit_surface_sections(surface, body)
     elif op == "surface.delete":
         _indexed(definition["surfaces"], body.get("index"), "surface")
         definition["surfaces"].pop(body["index"])
@@ -799,12 +880,21 @@ def apply_move(state: AppState, body: dict[str, Any], notify: bool = True) -> No
         _indexed(cuts, index, "cut")
         if dx == 0.0:
             return
-        # on_view_drag_motion 366-371: max(0, ...) then the section-length clamp; the first cut's lower bound is 0.0.
+        # Cut positions stay strictly inside neighbouring boundaries; no fixed physical minimum length.
         # 0.01 mm quantization: the bound wins when quantizing would cross it.
         value = max(0.0, cuts[index] + dx)
         low = cuts[index - 1] if index > 0 else 0.0
         high = cuts[index + 1] if index + 1 < len(cuts) else definition["fuselage"]["length_m"]
-        cuts[index] = min(max(_quantize(value), low + MIN_SECTION_LENGTH_M), high - MIN_SECTION_LENGTH_M)
+        gap = min(MOVE_QUANTUM_M, (high - low) / 3.0)
+        cuts[index] = min(max(_quantize(value), low + gap), high - gap)
+    elif target == "loft":
+        guides = definition["fuselage"]["loft_stations"]
+        guide = _indexed(guides, index, "loft guide")
+        if dx == 0.0:
+            return
+        low = math.nextafter(guides[index - 1]["x_m"], math.inf) if index > 0 else 0.0
+        high = math.nextafter(guides[index + 1]["x_m"], -math.inf) if index + 1 < len(guides) else definition["fuselage"]["length_m"]
+        guide["x_m"] = min(max(_quantize(guide["x_m"] + dx), low), high)
     elif target == "surface":
         surface = _indexed(definition["surfaces"], index, "surface")
         if "x_root_le_m" not in surface:

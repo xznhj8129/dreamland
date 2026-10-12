@@ -2,7 +2,9 @@
 
 The view is built from the same resolved model as every other consumer (libs.geometry.resolve_airframe): one
 lightweight triangle mesh per body, wing panel, control surface, volume, placed part, motor, prop, rod and spar,
-plus the CG/NP/Lift markers and the overall bounds. World frame is the airframe's (x from the nose, y right, z up);
+plus the resolved CG, the CG/NP/Lift markers and the overall bounds. A control surface's mesh carries its hinge
+point, hinge axis, servo output and deflection limits so the client can animate it. World frame is the airframe's
+(x from the nose, y right, z up);
 the client sets its camera up to +z. Plain Python, no numpy and no CAD kernel: the body lofts the resolved body
 stations with superellipse_radius, the panels use the exact airfoil sections libs.cad builds its solids from
 (webapp.drawing_enrich.airfoil_profile/section_points) as closed shells (the profile loop wraps and the root/tip
@@ -18,10 +20,11 @@ from typing import Any
 
 from libs.airframe import BATTERY_PART_NAME, BOX_SHAPES
 from libs.geometry import (
-    PROP_SHAFT_LEN_M, BodyStation, ResolvedAirframe, body_section_at, chord_direction, cross, dot, superellipse_radius,
-    thickness_direction, unit,
+    PROP_SHAFT_LEN_M, BodyStation, ResolvedAirframe, body_section_at, chord_direction, control_cut_frames, cross, dot,
+    superellipse_radius, thickness_direction, unit,
 )
-from libs.graphics import PROP_SHAFT_DIAM_M, marker_positions, part_corners
+from libs.graphics import FEATURE_COLOR, LOFT_COLOR, PROP_SHAFT_DIAM_M, marker_positions, part_corners
+from libs.print_features import joint_holes, motor_mount_openings
 from webapp.drawing_enrich import airfoil_profile, section_points
 
 BODY_SAMPLES = 32
@@ -41,6 +44,10 @@ ROD_COLOR = "#ff66aa"  # rods and spars, as libs/graphics.py ROD_COLOR
 VOLUME_OPACITY = 0.25
 PART_OPACITY = 0.85
 PROP_OPACITY = 0.25
+SECTION_COLOR = "#33ccff"
+SECTION_OPACITY = 0.12
+SECTION_PLANE_MARGIN = 1.35
+FEATURE_OPACITY = 0.1
 MARKER_COLORS = {"cg": "#0000ff", "np": "#ff0000", "lift": "#00ff00"}
 MARKER_NAMES = {"cg": "CG", "np": "NP", "lift": "Lift"}
 
@@ -53,11 +60,13 @@ _OCTAHEDRON_FACES = ((0, 2, 4), (2, 1, 4), (1, 3, 4), (3, 0, 4), (2, 0, 5), (1, 
 
 
 def build_model3d(resolved: ResolvedAirframe, aero: Any | None) -> dict[str, Any]:
-    """The JSON-safe 3D payload: {"meshes": [...], "markers": [...], "bounds": {...}}.
+    """The JSON-safe 3D payload: {"meshes": [...], "markers": [...], "cg": [...], "bounds": {...}}.
 
     aero is the current AeroResult (or None); NP and Lift markers appear only when it is present. Every mesh is a
-    flat positions/indices pair in metres and the airframe frame; bounds cover every vertex and marker and fall
-    back to the fuselage extents when nothing could be built.
+    flat positions/indices pair in metres and the airframe frame; a control mesh's "control" metadata carries its
+    servo and deflection limits (libs.geometry.ControlPlacement) and its hinge point and axis. bounds cover every
+    vertex and marker and fall back to the fuselage extents when nothing could be built. cg is the resolved CG in
+    the airframe frame (libs.geometry.ResolvedAirframe.cg_m).
     """
     meshes: list[dict[str, Any]] = []
     _try_mesh(meshes, lambda: _mesh("body", "body", *_body_mesh(resolved.body.stations), BODY_COLOR))
@@ -95,8 +104,63 @@ def build_model3d(resolved: ResolvedAirframe, aero: Any | None) -> dict[str, Any
         _try_mesh(meshes, lambda spar=spar: _mesh(
             f"spar {spar.surface}[{spar.panel_index}]", "spar", *_cylinder(spar.start, spar.end, spar.diameter_m / 2.0), ROD_COLOR,
         ))
+    for control in resolved.controls:
+        if control.rod_diameter_m is not None:
+            meshes.append(_mesh(f"pivot rod C{control.number}", "spar", *_cylinder(*control.hinge, control.rod_diameter_m / 2.0), ROD_COLOR))
     markers = _markers(resolved, aero)
-    return {"meshes": meshes, "markers": markers, "bounds": _bounds(meshes, markers, resolved.body)}
+    bounds = _bounds(meshes, markers, resolved.body)
+    for hole in joint_holes(resolved):
+        meshes.append(_mesh(hole.name, "feature", *_opening_mesh(hole), FEATURE_COLOR, FEATURE_OPACITY))
+    for opening in motor_mount_openings(resolved):
+        meshes.append(_mesh(opening.name, "feature", *_opening_mesh(opening), FEATURE_COLOR, FEATURE_OPACITY))
+    for index, cut in enumerate(resolved.airframe.sections.cuts_m):
+        meshes.append(_mesh(f"cut {index + 1}", "section", *_section_plane(resolved, cut), SECTION_COLOR, SECTION_OPACITY))
+    for surface_set in resolved.surfaces:
+        for panel in surface_set.panels:
+            for index, cut in enumerate(surface_set.definition.sections.cuts_m, start=1):
+                meshes.append(_mesh(f"{surface_set.name} P{panel.index + 1} cut {index}", "section",
+                                    *_surface_section_plane(panel, cut / surface_set.definition.span_m), SECTION_COLOR, SECTION_OPACITY))
+    for index, guide in enumerate(resolved.airframe.fuselage.loft_stations):
+        meshes.append(_mesh(f"guide {index + 1}", "loft", *_section_plane(resolved, guide.x_m), LOFT_COLOR, SECTION_OPACITY))
+    cg = [float(value) for value in resolved.cg_m]
+    return {"meshes": meshes, "markers": markers, "cg": cg, "bounds": bounds}
+
+
+def _opening_mesh(opening) -> tuple[list, list]:
+    front, back = opening.rings()
+    count = len(front)
+    positions = [*front, *back]
+    indices = []
+    for index in range(count):
+        following = (index + 1) % count
+        indices.extend((index, following, count + index, following, count + following, count + index))
+    for index in range(1, count - 1):
+        indices.extend((0, index + 1, index, count, count + index, count + index + 1))
+    return positions, indices
+
+
+def _section_plane(resolved: ResolvedAirframe, x_m: float) -> tuple[list, list]:
+    """The body's superellipse cross-section at a section cut or loft guide, as a fan of BODY_SAMPLES triangles."""
+    station = body_section_at(resolved.body, x_m)
+    half_width, half_height = station.width_m / 2.0, station.height_m / 2.0
+    positions = [(x_m, 0.0, 0.0)]
+    for index in range(BODY_SAMPLES):
+        angle = 2.0 * math.pi * index / BODY_SAMPLES
+        radius = superellipse_radius(half_width, half_height, station.shape, angle) if half_width > 0.0 and half_height > 0.0 else 0.0
+        positions.append((x_m, radius * math.cos(angle), radius * math.sin(angle)))
+    indices = [index for step in range(BODY_SAMPLES) for index in (0, 1 + step, 1 + (step + 1) % BODY_SAMPLES)]
+    return positions, indices
+
+
+def _surface_section_plane(panel, fraction: float) -> tuple[list, list]:
+    coordinates = airfoil_profile(panel.airfoil)
+    low = min(y for _x, y in coordinates)
+    high = max(y for _x, y in coordinates)
+    margin = (high - low) * (SECTION_PLANE_MARGIN - 1.0) / 2.0
+    loop = ((-0.05, low - margin), (1.05, low - margin), (1.05, high + margin), (-0.05, high + margin))
+    leading_edge = tuple(a + fraction * (b - a) for a, b in zip(panel.attach_le, panel.tip_le))
+    chord = panel.chord_root_m + fraction * (panel.chord_tip_m - panel.chord_root_m)
+    return section_points(leading_edge, chord, chord_direction(panel), thickness_direction(panel), loop), [0, 1, 2, 0, 2, 3]
 
 
 def _mesh(name: str, kind: str, positions, indices, color: str, opacity: float = 1.0) -> dict[str, Any]:
@@ -264,13 +328,50 @@ def _control_name(placement) -> str:
     return f"control {placement.number} ({placement.surface}[{placement.panel_index}])"
 
 
+def _fan_triangles(loop: list[int], indices: list[int]) -> None:
+    """Append a convex vertex loop (indices into the shared positions) as a triangle fan; loops under three emit nothing."""
+    for step in range(1, len(loop) - 1):
+        indices.extend((loop[0], loop[step], loop[step + 1]))
+
+
+def _clip_triangle(positions: list, triangle: tuple[int, int, int], plane_point, plane_normal,
+                   intersections: dict[tuple[int, int], int]) -> tuple[list[int], list[int]]:
+    """Split one triangle of `positions` by a plane into the vertex loops on its moving (signed distance >= 0) and
+    fixed (<= 0) sides. A crossing edge's intersection vertex is appended once and memoized by its vertex pair, so
+    triangles sharing the edge reuse the same vertex (and a vertex on the plane joins both loops): the two skins
+    stay closed together with the straight plane line between them, and the caller fan-triangulates the loops."""
+    loop = [(index, positions[index]) for index in triangle]
+    distances = [dot(tuple(value - origin for value, origin in zip(vertex, plane_point)), plane_normal) for _index, vertex in loop]
+    moving: list[int] = []
+    fixed: list[int] = []
+    for step in range(3):
+        index, vertex = loop[step]
+        following_index, following = loop[(step + 1) % 3]
+        distance, following_distance = distances[step], distances[(step + 1) % 3]
+        if distance >= 0.0:
+            moving.append(index)
+        if distance <= 0.0:
+            fixed.append(index)
+        if distance * following_distance < 0.0:
+            edge = (index, following_index) if index < following_index else (following_index, index)
+            if edge not in intersections:
+                ratio = distance / (distance - following_distance)
+                positions.append(tuple(value + ratio * (other - value) for value, other in zip(vertex, following)))
+                intersections[edge] = len(positions) - 1
+            moving.append(intersections[edge])
+            fixed.append(intersections[edge])
+    return moving, fixed
+
+
 def _panel_meshes(panel, color: str, definition, placement) -> list[dict[str, Any]]:
     """The panel skin as one closed shell, split into a panel mesh and, when the panel carries one, its control mesh.
 
     The profile loop wraps and the root/tip ends are closed by triangle fans from the section centroids, so the
     shell has no opening. A split panel inserts sections at the control's span bounds and gives each skin triangle
-    to the control when its midpoint is aft of chord_start (the airfoil coordinates' x); the two meshes then tile
-    the same surface with no gap or overlap and the root/tip caps stay with the panel. An all-moving panel's whole
+    to the control when its midpoint is aft of chord_start (the airfoil coordinates' x); an align_hinge_vertically
+    control clips every in-band triangle at the straight hinge plane (control_cut_frames hinge_point and hinge_dir),
+    so the boundary is the straight plane line instead of a triangle-diagonal zigzag. The two meshes then tile the
+    same surface with no gap or overlap and the root/tip caps stay with the panel. An all-moving panel's whole
     shell, caps included, is the control and no panel-skin mesh is emitted."""
     coordinates = _closed_profile(airfoil_profile(panel.airfoil))
     direction = chord_direction(panel)
@@ -287,6 +388,11 @@ def _panel_meshes(panel, color: str, definition, placement) -> list[dict[str, An
     control_indices: list[int] = []
     low = definition.span_start if getattr(definition, "span_start", None) is not None else 0.0
     high = definition.span_end if getattr(definition, "span_end", None) is not None else 1.0
+    hinge_plane = None
+    intersections: dict[tuple[int, int], int] = {}
+    if kind == "split" and definition.align_hinge_vertically:
+        frames = control_cut_frames(panel, definition)
+        hinge_plane = (frames["hinge_point"], frames["hinge_dir"])
     for section in range(len(rings) - 1):
         root_base, tip_base = section * count, (section + 1) * count
         # A split control only owns the span band inside [span_start, span_end]; elsewhere the skin is panel.
@@ -294,10 +400,16 @@ def _panel_meshes(panel, color: str, definition, placement) -> list[dict[str, An
         for step in range(count):
             a0, a1 = root_base + step, root_base + (step + 1) % count
             b0, b1 = tip_base + step, tip_base + (step + 1) % count
-            if kind == "split" and in_band:  # the quad's two triangles by their midpoint chord fractions
-                x0, x1 = coordinates[step][0], coordinates[(step + 1) % count][0]
-                (control_indices if (2.0 * x0 + x1) / 3.0 >= definition.chord_start else panel_indices).extend((a0, a1, b0))
-                (control_indices if (2.0 * x1 + x0) / 3.0 >= definition.chord_start else panel_indices).extend((a1, b1, b0))
+            if kind == "split" and in_band:
+                if hinge_plane is not None:  # the aligned straight hinge: clip every triangle at the shared plane
+                    for triangle in ((a0, a1, b0), (a1, b1, b0)):
+                        moving, fixed = _clip_triangle(positions, triangle, *hinge_plane, intersections)
+                        _fan_triangles(moving, control_indices)
+                        _fan_triangles(fixed, panel_indices)
+                else:  # the quad's two triangles by their midpoint chord fractions
+                    x0, x1 = coordinates[step][0], coordinates[(step + 1) % count][0]
+                    (control_indices if (2.0 * x0 + x1) / 3.0 >= definition.chord_start else panel_indices).extend((a0, a1, b0))
+                    (control_indices if (2.0 * x1 + x0) / 3.0 >= definition.chord_start else panel_indices).extend((a1, b1, b0))
             elif kind == "all_moving":
                 control_indices.extend((a0, a1, b0, a1, b1, b0))
             else:
@@ -311,7 +423,16 @@ def _panel_meshes(panel, color: str, definition, placement) -> list[dict[str, An
     if panel_indices:
         meshes.append(_mesh(f"{panel.surface}[{panel.index}]", "panel", positions, panel_indices, color))
     if control_indices:
-        meshes.append(_mesh(_control_name(placement), "control", positions, control_indices, CONTROL_COLOR))
+        mesh = _mesh(_control_name(placement), "control", positions, control_indices, CONTROL_COLOR)
+        mesh["control"] = {
+            "number": int(placement.number),
+            "servo": int(placement.servo[1:]) - 1,  # "S4" -> the servo<N> log column index
+            "min_deg": float(definition.deflection_min_deg),
+            "max_deg": float(definition.deflection_max_deg),
+            "hinge": [float(value) for value in placement.hinge[0]],
+            "axis": [float(value) for value in placement.axis],
+        }
+        meshes.append(mesh)
     return meshes
 
 

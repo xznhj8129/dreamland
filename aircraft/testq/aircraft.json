@@ -42,20 +42,30 @@
                 "k_prime": 1.0
             }
         },
-        "joints": {
-            "type": "radial_screws",
-            "count": 8,
-            "screw": "M3",
-            "insertion_depth_m": 0.01,
-            "coupler_wall_m": 0.0045,
-            "fit_clearance_m": 0.0003,
-            "socket_wall_m": 0.00125,
-            "hole_edge_dist_m": 0.006,
-            "hole_diameter_m": 0.003,
-            "hole_angle_offset_deg": 22.5,
-            "coupler_mass_kg": 0.02136
-        },
-        "channels": []
+        "channels": [],
+        "loft_stations": [
+            {
+                "x_m": 0.04124
+            },
+            {
+                "x_m": 0.15933999999999998
+            },
+            {
+                "x_m": 0.28358
+            },
+            {
+                "x_m": 0.336415
+            },
+            {
+                "x_m": 0.360345
+            },
+            {
+                "x_m": 0.410625
+            },
+            {
+                "x_m": 0.481215
+            }
+        ]
     },
     "surfaces": [
         {
@@ -72,7 +82,10 @@
             "sweep_le_deg": 25.0,
             "incidence_deg": 0.0,
             "incidence_mode": "symmetric",
-            "airfoil": "naca0012"
+            "airfoil": "naca0012",
+            "sections": {
+                "cuts_m": []
+            }
         },
         {
             "name": "tailfin",
@@ -89,7 +102,10 @@
             "incidence_deg": 0.0,
             "incidence_mode": "symmetric",
             "airfoil": "naca0008",
-            "mass_kg": 0.004
+            "mass_kg": 0.004,
+            "sections": {
+                "cuts_m": []
+            }
         }
     ],
     "propulsion": {
@@ -200,34 +216,27 @@
         "per_section": [
             {
                 "solid": false,
-                "section": {},
                 "empty_mass_kg": 0.047
             },
             {
-                "solid": false,
-                "section": {}
+                "solid": false
+            },
+            {
+                "solid": false
             },
             {
                 "solid": false,
-                "section": {}
-            },
-            {
-                "solid": false,
-                "section": {},
                 "empty_mass_kg": 0.122
             },
             {
                 "solid": false,
-                "section": {},
                 "empty_mass_kg": 0.055
             },
             {
-                "solid": false,
-                "section": {}
+                "solid": false
             },
             {
-                "solid": false,
-                "section": {}
+                "solid": false
             }
         ],
         "cut_joints": [
@@ -237,6 +246,19 @@
             "none",
             "coupler",
             "rear_male"
-        ]
+        ],
+        "joints": {
+            "type": "radial_screws",
+            "count": 8,
+            "screw": "M3",
+            "insertion_depth_m": 0.01,
+            "coupler_wall_m": 0.0045,
+            "fit_clearance_m": 0.0003,
+            "socket_wall_m": 0.00125,
+            "hole_edge_dist_m": 0.006,
+            "hole_diameter_m": 0.003,
+            "hole_angle_offset_deg": 22.5,
+            "coupler_mass_kg": 0.02136
+        }
     }
 }

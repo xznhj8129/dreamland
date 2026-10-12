@@ -15,6 +15,8 @@ import numpy as np
 from inavbench import Catapult, LaunchRail
 from inavbench.vehicles import HOME, Vehicle
 
+from libs.fdm import pitch_deg, roll_deg
+
 
 @dataclass(frozen=True)
 class StartOption:
@@ -137,7 +139,7 @@ def start_reasons(airframe) -> dict[str, str | None]:
 
 def add_start_arguments(parser) -> None:
     """--start and the START_OPTIONS, for any runner."""
-    parser.add_argument("--start", choices=list(STARTS), default=None,
+    parser.add_argument("--start", choices=list(STARTS), default="air",
                         help="air (default, held in the air), ground (standing on its tail, VTOL), catapult or rail (including tailsitters)")
     for option, spec in START_OPTIONS.items():
         if spec.air_only:
@@ -212,7 +214,7 @@ def hit_ground(fdm, highest_agl_m: float) -> bool:
 
 def ground_hit_text(elapsed_s: float, fdm) -> str:
     return (f"at {elapsed_s:.1f} s: airspeed {fdm['velocities/vt-fps'] * FT:.1f} m/s, descending {fdm['velocities/v-down-fps'] * FT:.1f} m/s, "
-            f"pitch {fdm['attitude/theta-deg']:+.1f}, roll {fdm['attitude/phi-deg']:+.1f} deg")
+            f"pitch {pitch_deg(fdm):+.1f}, roll {roll_deg(fdm):+.1f} deg")
 
 
 def motor_electrics(fdm, export, index: int) -> tuple[float, float]:

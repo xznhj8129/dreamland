@@ -10,10 +10,12 @@ import asyncio
 import copy
 import json
 import queue
+import sys
 import threading
 import time
 import traceback
 from dataclasses import dataclass
+from pathlib import Path
 from typing import Any, Callable
 
 from libs.aero import AeroResult, NoLiftingSurfacesError, OperatingPointError, analyze_aero
@@ -27,12 +29,34 @@ from libs.reportline import ReportLine
 
 AeroQueueItem = tuple[int, AeroResult | None, str | None, str | None]
 
+# Unexpected errors keep their full text in the browser Log (the Log tab renders it with the failing context
+# and time); a copy goes to the server log file (repo-level, ignored by git) as a durable record. The one-line
+# headline stays on the entry as summary, for views that show a message instead of the Log tab.
+# AppState.log_path is per-instance and overridable so tests can point it at a temp file.
+TRACEBACK_HEADER = "Traceback (most recent call last)"
+LOG_PATH = Path(__file__).resolve().parent.parent / "logs" / "webapp.log"
+
+
+def _traceback_summary(text: str) -> str:
+    """The one-line headline for text containing a traceback.
+
+    The headline is the last non-empty traceback line (the exception type and message, e.g.
+    "Standard_OutOfRange: NCollection_Sequence::ChangeValue"), prefixed by the first line before the
+    traceback when there is one (e.g. a "Definition error" line).
+    """
+    lines = text.splitlines()
+    marker = next((index for index, line in enumerate(lines) if TRACEBACK_HEADER in line), len(lines))
+    prefix = next((line.strip() for line in lines[:marker] if line.strip()), "")
+    detail = next((line.strip() for line in reversed(lines[marker + 1:]) if line.strip()), "unknown error")
+    return f"{prefix} — {detail}" if prefix else detail
+
 
 @dataclass(frozen=True)
 class LogEntry:
     time: str
     title: str
     text: str
+    summary: str
 
 
 class AppState:
@@ -56,6 +80,7 @@ class AppState:
         self.status = ""
         self.report: list[ReportLine] = []
         self.log: list[LogEntry] = []
+        self.log_path: Path = LOG_PATH  # tests point this at a temp file (see webapp/test_cad_progress.py)
         self._last_log_entry: tuple[str, str] | None = None
         self._aero_queue: queue.Queue[AeroQueueItem] = queue.Queue()
         self._loop: asyncio.AbstractEventLoop | None = None
@@ -115,13 +140,38 @@ class AppState:
             changed = True
         return changed
 
-    def log_error(self, title: str, text: str) -> None:
-        """Errors go to the Log; an unchanged repeat is already there (guibuilder.BuilderApp.log_error)."""
+    def log_error(self, title: str, text: str, summary: str | None = None) -> None:
+        """Errors go to the Log; an unchanged repeat is already there (guibuilder.BuilderApp.log_error).
+
+        The Log entry keeps the full text, so the Log tab can show the whole traceback with its context. A copy
+        goes to logs/webapp.log as a silent durable record. summary is the one-line headline the views show as
+        a message (the full text for non-traceback errors; a caller with better context can pass it in).
+        """
         self.status = f"{title} (see Log)"
         if (title, text) == self._last_log_entry:
             return
         self._last_log_entry = (title, text)
-        self.log.append(LogEntry(time=time.strftime("%H:%M:%S"), title=title, text=text))
+        headline = summary
+        if headline is None and TRACEBACK_HEADER in text:
+            headline = _traceback_summary(text)
+        if headline is None:
+            headline = text
+        if TRACEBACK_HEADER in text:
+            self._write_traceback(title, headline, text)
+        self.log.append(LogEntry(time=time.strftime("%H:%M:%S"), title=title, text=text, summary=headline))
+
+    def _write_traceback(self, title: str, headline: str, text: str) -> None:
+        """Append one traceback to the server log; logging must never raise back into the caller."""
+        record = f"[{time.strftime('%Y-%m-%d %H:%M:%S')}] {title}: {headline}\n{text.rstrip()}\n\n"
+        try:
+            self.log_path.parent.mkdir(parents=True, exist_ok=True)
+            with open(self.log_path, "a", encoding="utf-8") as file:
+                file.write(record)
+        except Exception:  # a broken log file must not replace the error being reported
+            try:
+                print(record, file=sys.stderr, end="")
+            except Exception:  # ... and a broken stderr neither
+                pass
 
     def switch_project(self, project: Project, definition: dict[str, Any]) -> None:
         """Point the state at another project's definition and recompute it (guibuilder.BuilderApp.switch_project).

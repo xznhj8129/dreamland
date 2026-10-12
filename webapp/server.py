@@ -13,6 +13,7 @@ from aiohttp import WSCloseCode, WSMsgType, web
 from libs.airframe import SCHEMA, AirframeError, blank_definition, parse_airframe
 from libs.geometry import resolve_airframe
 from libs.project import BUILD_FILE, PROJECTS_DIR, ProjectError, copy_project, create_project, open_project
+from webapp import airfoils as airfoils_backend
 from webapp import cad as cad_export
 from webapp import sim as sim_backend
 from webapp.drawing import ViewState, draw, ensure_view
@@ -29,10 +30,11 @@ EDITOR_BLOCKS = ("name", "tailsitter", "vtol", "powered", "operating_point", "pr
 
 @web.middleware
 async def error_middleware(request: web.Request, handler):
-    """The final catch-all: any unexpected command failure is logged and still answers with a snapshot.
+    """The final catch-all: any unexpected command failure is logged, pushed and still answers with a snapshot.
 
     The browser's 500 body then carries the state and the Log entry, instead of an HTML error page
-    (guibuilder's report_callback_exception equivalent).
+    (guibuilder's report_callback_exception equivalent). Nothing recomputes here, so the push is explicit:
+    the Log entry must reach the open websockets too, not just the request that failed.
     """
     try:
         return await handler(request)
@@ -40,7 +42,8 @@ async def error_middleware(request: web.Request, handler):
         raise  # deliberate refusals keep their own status
     except Exception:
         state: AppState = request.app["state"]
-        state.log_error("Error", traceback.format_exc())
+        state.log_error("Error", f"{request.method} {request.path}\n{traceback.format_exc()}")
+        state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
         return web.json_response(snapshot(state), status=500)
 
 
@@ -70,12 +73,17 @@ def create_app(state: AppState, dist_dir: Path) -> web.Application:
     app.router.add_post("/api/cad/sections", handle_cad_sections)
     app.router.add_post("/api/cad/drawings", handle_cad_drawings)
     app.router.add_post("/api/cad/varsets", handle_cad_varsets)
+    app.router.add_get("/api/cad/progress", handle_cad_progress)
     app.router.add_get("/api/sim/resource", handle_sim_resource)
     app.router.add_post("/api/sim/resource", handle_sim_resource)
+    app.router.add_post("/api/sim/resource/delete", handle_sim_resource_delete)
     app.router.add_get("/api/sim/options", handle_sim_options)
     app.router.add_post("/api/sim/run", handle_sim_run)
     app.router.add_post("/api/sim/abort", handle_sim_abort)
     app.router.add_get("/api/sim/state", handle_sim_state)
+    app.router.add_get("/api/airfoils", handle_airfoils)
+    app.router.add_post("/api/airfoils/import", handle_airfoils_import)
+    app.router.add_post("/api/airfoils/analyze", handle_airfoils_analyze)
     app.router.add_get("/files/{tail:.*}", handle_project_file)  # the active project's own outputs, read-only
     app.router.add_get("/ws/events", handle_events)
     app.router.add_get("/{tail:.*}", handle_dist)  # after the API routes: SPA fallback
@@ -132,6 +140,7 @@ async def handle_save(request: web.Request) -> web.Response:
         state.save()
     except OSError as error:
         state.log_error("Save Project", f"could not write {state.project.build_path}: {error}")
+        state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
         return _failed(state)
     return web.json_response(snapshot(state))
 
@@ -179,26 +188,31 @@ async def handle_projects_open(request: web.Request) -> web.Response:
     name = _name(await _json_object(request))
     if not _valid_project_name(name):
         state.log_error("Load Project", f"'{name}' is not a plain directory name.")
+        state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
         return _failed(state)
     try:
         project = open_project(PROJECTS_DIR / name)
     except ProjectError as error:
         state.log_error("Load Project", str(error))
+        state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
         return _failed(state)
     try:
         with open(project.build_path, "r") as file:
             data = json.load(file)
     except (OSError, json.JSONDecodeError) as error:
         state.log_error("Load Project", f"could not read {project.build_path}: {error}")
+        state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
         return _failed(state)
     if not isinstance(data, dict) or data.get("schema") != SCHEMA:
         state.log_error("Load Project", f"{project.build_path} is not an {SCHEMA} file (old module-stack configs are not supported).")
+        state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
         return _failed(state)
     # The editors index these blocks directly; an incomplete definition with all of them can be opened and
     # repaired, but a file missing one cannot be shown, so the open is refused and the current project stays.
     missing = [key for key in EDITOR_BLOCKS if key not in data]
     if missing:
         state.log_error("Load Project", f"{project.build_path} has no {missing}; it is not an editable {SCHEMA} definition.")
+        state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
         return _failed(state)
     state.switch_project(project, data)
     return web.json_response(snapshot(state))
@@ -210,17 +224,20 @@ async def handle_projects_new(request: web.Request) -> web.Response:
     name = _name(await _json_object(request))
     if not _valid_project_name(name):
         state.log_error("New Project", f"'{name}' is not a plain directory name.")
+        state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
         return _failed(state)
     definition = blank_definition(name)
     try:  # fail before anything is written if the blank no longer matches the schema or the part library
         resolve_airframe(parse_airframe(definition, state.parts_data, path=f"{name}/{BUILD_FILE}"), state.parts_data)
     except AirframeError as error:
         state.log_error("New Project", f"blank definition: {error}")
+        state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
         return _failed(state)
     try:
         project = create_project(name, definition)
     except ProjectError as error:
         state.log_error("New Project", str(error))
+        state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
         return _failed(state)
     state.log.clear()
     state.switch_project(project, definition)
@@ -233,14 +250,17 @@ async def handle_save_as(request: web.Request) -> web.Response:
     name = _name(await _json_object(request))
     if not _valid_project_name(name):
         state.log_error("Save Project As", f"'{name}' is not a plain directory name.")
+        state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
         return _failed(state)
     try:
         project = copy_project(state.project, PROJECTS_DIR / name)
     except ProjectError as error:
         state.log_error("Save Project As", str(error))
+        state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
         return _failed(state)
     except OSError as error:  # a copy that fails part-way must be a logged, recoverable state
         state.log_error("Save Project As", f"could not copy {state.project.root} to {PROJECTS_DIR / name}: {error}")
+        state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
         return _failed(state)
     state.project = project  # same definition and resolved airframe, only the project directory changed
     state.definition_revision += 1  # accepted definition change: the editors rebuild against the copy
@@ -248,6 +268,7 @@ async def handle_save_as(request: web.Request) -> web.Response:
         state.save()
     except OSError as error:
         state.log_error("Save Project As", f"could not write {state.project.build_path}: {error}")
+        state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
         return _failed(state)
     state.notify()  # the title in the pushed state changed
     return web.json_response(snapshot(state))
@@ -272,6 +293,7 @@ async def handle_editor_set(request: web.Request) -> web.Response:
         return web.json_response(snapshot(state), status=409)
     except ValueError as error:
         state.log_error("Edit", str(error))
+        state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
         return _failed(state)
     return web.json_response(snapshot(state))
 
@@ -314,6 +336,7 @@ async def handle_editor_move(request: web.Request) -> web.Response:
         return web.json_response(snapshot(state), status=409)
     except ValueError as error:
         state.log_error("Move", str(error))
+        state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
         return _failed(state)
     if size is None:
         return web.json_response(snapshot(state))
@@ -336,6 +359,7 @@ async def handle_library_save(request: web.Request) -> web.Response:
         save_part(state, body)
     except ValueError as error:
         state.log_error("Part Library", str(error))
+        state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
         return _failed(state)
     return web.json_response(snapshot(state))
 
@@ -348,6 +372,7 @@ async def handle_library_delete(request: web.Request) -> web.Response:
         delete_part(state, body)
     except ValueError as error:
         state.log_error("Part Library", str(error))
+        state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
         return _failed(state)
     return web.json_response(snapshot(state))
 
@@ -471,15 +496,31 @@ def _refuse_no_airframe(state: AppState) -> web.Response:
     return _failed(state)
 
 
+def _cad_export_failed(state: AppState, error: cad_export.ExportFailed) -> web.Response:
+    """One failed export: the Log gets the failing context line first, then the full traceback.
+
+    Nothing recomputed, so the push is explicit: the Log entry must reach the open websockets too. Answering the
+    500 snapshot here keeps the error middleware from logging a second, context-free entry.
+    """
+    state.log_error("CAD export", f"{error}\n{traceback.format_exc()}", summary=str(error))
+    state.notify()  # the Log entry must reach the open websockets even though nothing recomputed
+    return web.json_response(snapshot(state), status=500)
+
+
 async def _run_cad_export(state: AppState, export: Callable[..., dict[str, Any]], *args: Any) -> web.Response:
     """Run one webapp.cad export in a worker thread (OCCT blocks seconds) and answer with its result JSON.
 
-    Unexpected export failures stay the error middleware's (logged traceback + snapshot). The resolved airframe
-    and project are read here, on the loop, so the thread only touches the values handed to it.
+    A failed export is answered with the 500 snapshot; its traceback (with the task/label context) is in the Log.
+    The resolved airframe and project are read here, on the loop, so the thread only touches the values handed
+    to it.
     """
     if state.resolved is None:
         return _refuse_no_airframe(state)
-    return web.json_response(await asyncio.to_thread(export, state.resolved, state.project, *args))
+    try:
+        result = await asyncio.to_thread(export, state.resolved, state.project, *args)
+    except cad_export.ExportFailed as error:
+        return _cad_export_failed(state, error)
+    return web.json_response(result)
 
 
 async def handle_cad_step(request: web.Request) -> web.Response:
@@ -506,11 +547,18 @@ async def handle_cad_stl(request: web.Request) -> web.Response:
 
 
 async def handle_cad_sections(request: web.Request) -> web.Response:
-    """POST /api/cad/sections: printable sections and couplers into cad/sections/; problems go to the Log."""
+    """POST /api/cad/sections {format}: printable sections and couplers as STEP or STL into cad/sections/; problems go to the Log."""
     state = _state(request)
+    body = await _json_object(request)
+    export_format = body.get("format", "step")
+    if export_format not in ("step", "stl"):
+        raise web.HTTPBadRequest(text="format must be 'step' or 'stl'")
     if state.resolved is None:
         return _refuse_no_airframe(state)
-    result = await asyncio.to_thread(cad_export.export_sections, state.resolved, state.project)
+    try:
+        result = await asyncio.to_thread(cad_export.export_sections, state.resolved, state.project, export_format)
+    except cad_export.ExportFailed as error:
+        return _cad_export_failed(state, error)
     if result["notes"]:
         state.log_error("Section export", "\n".join(result["notes"]))
         state.notify()  # the problems must reach the open Log like the Tk status/Log does
@@ -527,6 +575,11 @@ async def handle_cad_varsets(request: web.Request) -> web.Response:
     return await _run_cad_export(_state(request), cad_export.export_varsets)
 
 
+async def handle_cad_progress(request: web.Request) -> web.Response:
+    """GET /api/cad/progress: the one export in flight (task, label, done/total) for the CAD view's progress line."""
+    return web.json_response(cad_export.current())
+
+
 async def handle_sim_resource(request: web.Request) -> web.Response:
     try:
         if request.method == "GET":
@@ -537,6 +590,16 @@ async def handle_sim_resource(request: web.Request) -> web.Response:
     except (ValueError, OSError, SyntaxError) as error:
         return web.json_response({"message": str(error)}, status=400)
     return web.json_response(payload)
+
+
+async def handle_sim_resource_delete(request: web.Request) -> web.Response:
+    """POST /api/sim/resource/delete: remove one of the project's SIM files (a scenario or a diff)."""
+    body = await _json_object(request)
+    try:
+        sim_backend.delete_resource(_state(request), body.get("kind", ""), body.get("name", ""), body.get("controller", ""))
+    except (ValueError, OSError) as error:
+        return web.json_response({"message": str(error)}, status=400)
+    return web.json_response({"ok": True})
 
 
 async def handle_sim_options(request: web.Request) -> web.Response:
@@ -578,6 +641,40 @@ async def handle_sim_state(request: web.Request) -> web.Response:
     log_offset = _query_int(request, "log_offset", 0)
     run_id = _query_int(request, "run_id", None)
     return web.json_response(sim_backend.state_payload(stdout_offset, log_offset, run_id))
+
+
+async def handle_airfoils(request: web.Request) -> web.Response:
+    """GET /api/airfoils?surfaces=a,b,c: the library, the seeded selection and the form defaults.
+
+    Compute runs in a worker thread like the other analysis routes; a refused payload is 400 with its message.
+    """
+    raw = request.query.get("surfaces", "")
+    surfaces = [name.strip() for name in raw.split(",") if name.strip()] or None
+    try:
+        payload = await asyncio.to_thread(airfoils_backend.library_payload, surfaces)
+    except (ValueError, OSError) as error:
+        return web.json_response({"message": str(error)}, status=400)
+    return web.json_response(payload)
+
+
+async def handle_airfoils_import(request: web.Request) -> web.Response:
+    """POST /api/airfoils/import {name, dat_text}: validate one Selig/Lednicer DAT and keep it for this session."""
+    body = await _json_object(request)
+    try:
+        payload = await asyncio.to_thread(airfoils_backend.import_dat, body.get("name", ""), body.get("dat_text", ""))
+    except (ValueError, OSError) as error:
+        return web.json_response({"message": str(error)}, status=400)
+    return web.json_response(payload)
+
+
+async def handle_airfoils_analyze(request: web.Request) -> web.Response:
+    """POST /api/airfoils/analyze: the NeuralFoil sweep, operating point and summary for the selected airfoils."""
+    body = await _json_object(request)
+    try:
+        payload = await asyncio.to_thread(airfoils_backend.analyze, body)
+    except (ValueError, OSError) as error:
+        return web.json_response({"message": str(error)}, status=400)
+    return web.json_response(payload)
 
 
 async def handle_project_file(request: web.Request) -> web.StreamResponse:

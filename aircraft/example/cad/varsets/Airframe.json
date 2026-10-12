@@ -115,16 +115,12 @@
     "Tail": {
         "Profile": {
             "Type": "App::PropertyString",
-            "Value": "'parabolic'"
+            "Value": "'elliptical'"
         },
         "Length": {
             "Type": "App::PropertyLength",
-            "Value": 70.0,
+            "Value": 60.0,
             "Unit": "mm"
-        },
-        "k_prime": {
-            "Type": "App::PropertyFloat",
-            "Value": 1.0
         }
     },
     "Sections": {
@@ -134,12 +130,12 @@
         },
         "Cut1": {
             "Type": "App::PropertyLength",
-            "Value": 65.69999999999999,
+            "Value": 58.01,
             "Unit": "mm"
         },
         "Cut1Joint": {
             "Type": "App::PropertyString",
-            "Value": "'coupler'"
+            "Value": "'front_male'"
         },
         "Cut2": {
             "Type": "App::PropertyLength",
@@ -152,12 +148,12 @@
         },
         "Cut3": {
             "Type": "App::PropertyLength",
-            "Value": 310.3,
+            "Value": 307.29,
             "Unit": "mm"
         },
         "Cut3Joint": {
             "Type": "App::PropertyString",
-            "Value": "'front_male'"
+            "Value": "'rear_male'"
         },
         "Cut4": {
             "Type": "App::PropertyLength",
@@ -200,6 +196,111 @@
         "Section6Solid": {
             "Type": "App::PropertyBool",
             "Value": false
+        }
+    },
+    "LoftGuide1": {
+        "X": {
+            "Type": "App::PropertyLength",
+            "Value": 28.490000000000002,
+            "Unit": "mm"
+        }
+    },
+    "LoftGuide2": {
+        "X": {
+            "Type": "App::PropertyLength",
+            "Value": 80.54,
+            "Unit": "mm"
+        },
+        "Width": {
+            "Type": "App::PropertyLength",
+            "Value": 70.0,
+            "Unit": "mm"
+        },
+        "Height": {
+            "Type": "App::PropertyLength",
+            "Value": 65.0,
+            "Unit": "mm"
+        },
+        "Shape": {
+            "Type": "App::PropertyFloat",
+            "Value": 4.0
+        }
+    },
+    "LoftGuide3": {
+        "X": {
+            "Type": "App::PropertyLength",
+            "Value": 184.42,
+            "Unit": "mm"
+        },
+        "Width": {
+            "Type": "App::PropertyLength",
+            "Value": 70.0,
+            "Unit": "mm"
+        },
+        "Height": {
+            "Type": "App::PropertyLength",
+            "Value": 75.0,
+            "Unit": "mm"
+        },
+        "Shape": {
+            "Type": "App::PropertyFloat",
+            "Value": 4.0
+        }
+    },
+    "LoftGuide4": {
+        "X": {
+            "Type": "App::PropertyLength",
+            "Value": 308.21999999999997,
+            "Unit": "mm"
+        },
+        "Width": {
+            "Type": "App::PropertyLength",
+            "Value": 70.0,
+            "Unit": "mm"
+        },
+        "Height": {
+            "Type": "App::PropertyLength",
+            "Value": 75.0,
+            "Unit": "mm"
+        },
+        "Shape": {
+            "Type": "App::PropertyFloat",
+            "Value": 3.0
+        }
+    },
+    "LoftGuide5": {
+        "X": {
+            "Type": "App::PropertyLength",
+            "Value": 423.92,
+            "Unit": "mm"
+        },
+        "Width": {
+            "Type": "App::PropertyLength",
+            "Value": 75.0,
+            "Unit": "mm"
+        },
+        "Height": {
+            "Type": "App::PropertyLength",
+            "Value": 70.0,
+            "Unit": "mm"
+        },
+        "Shape": {
+            "Type": "App::PropertyFloat",
+            "Value": 3.0
+        }
+    },
+    "LoftGuide6": {
+        "X": {
+            "Type": "App::PropertyLength",
+            "Value": 540.15,
+            "Unit": "mm"
+        }
+    },
+    "LoftGuide7": {
+        "X": {
+            "Type": "App::PropertyLength",
+            "Value": 642.85,
+            "Unit": "mm"
         }
     }
 }

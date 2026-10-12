@@ -93,8 +93,8 @@ async function refresh(): Promise<void> {
 
 /**
  * Send a command that answers with a snapshot. A refused command (4xx) and a logged server failure (5xx) both
- * carry the state, so the log entry reaches the Log tab; the returned message is the last log text for the
- * modal or status to show.
+ * carry the state, so the log entry reaches the Log tab; the returned message is the last log entry's one-line
+ * summary (the full text when it has none) for the modal or status to show.
  */
 async function request(method: string, url: string, body?: unknown): Promise<CommandResult> {
   let response: Response
@@ -117,7 +117,7 @@ async function request(method: string, url: string, body?: unknown): Promise<Com
   if (next !== null) publish(next)
   if (response.ok) return { ok: true, message: '', status: response.status }
   const last = next?.log[next.log.length - 1]
-  return { ok: false, message: last === undefined ? text || `Request failed (${response.status})` : last.text, status: response.status }
+  return { ok: false, message: last === undefined ? text || `Request failed (${response.status})` : last.summary || last.text, status: response.status }
 }
 
 /**
@@ -243,7 +243,7 @@ export async function moveDraw(
   if (!response.ok) {
     const next = asSnapshot(payload)
     const last = next?.log[next.log.length - 1]
-    return { ok: false, status: response.status, message: last === undefined ? `Move failed (${response.status})` : last.text }
+    return { ok: false, status: response.status, message: last === undefined ? `Move failed (${response.status})` : last.summary || last.text }
   }
   if (sessionId !== currentSessionId()) {
     return { ok: false, status: 409, message: 'Project switched.' }

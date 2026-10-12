@@ -15,7 +15,7 @@ from libs.airframe import BATTERY_PART_NAME
 from libs.geometry import body_section_at, superellipse_radius
 from libs.graphics import (
     POINT_MASS_MARK_PX, ROD_COLOR, SECTION_OUTLINE_SAMPLES, convex_hull, draw_canvas_view, longitudinal_transverse,
-    part_corners, rounded_rectangle, volume_half_extents,
+    front_profile_outlines, part_corners, rounded_rectangle, volume_half_extents,
 )
 from webapp.drawing_enrich import enrich_front_scene, enrich_longitudinal_scene, roll_detents
 from webapp.state import AppState
@@ -30,8 +30,8 @@ SCROLL_UNIT_PX = 40.0  # editor_view.py on_view_xscroll/on_view_yscroll
 SCROLL_PAGE_FRACTION = 0.9
 
 # Drag handle targets, the definition collections the move op edits (webapp.editor.apply_move).
-TAGGED_TARGETS = ("cut", "spars", "surface", "volume")  # libs/graphics.py canvas tags
-ALWAYS_X_TARGETS = ("cut", "spars", "surface", "rod")  # only the body axis moves them, in either view
+TAGGED_TARGETS = ("cut", "loft", "spars", "surface", "volume")  # libs/graphics.py canvas tags
+ALWAYS_X_TARGETS = ("cut", "loft", "spars", "surface", "rod")  # only the body axis moves them, in either view
 HANDLE_OVAL_SAMPLES = 24
 
 
@@ -442,6 +442,8 @@ def draw(state: AppState, width: float, height: float, control_deflections: dict
         return {
             "scene": [],
             "handles": [],
+            "section_outlines": [],
+            "loft_outlines": [],
             "session_id": state.session_id,
             "metrics": {},
             "view": _view_payload(view),
@@ -466,6 +468,8 @@ def draw(state: AppState, width: float, height: float, control_deflections: dict
     return {
         "scene": canvas.items,
         "handles": _handles(state, view, metrics, canvas),
+        "loft_outlines": front_profile_outlines(resolved, [s.x_m for s in resolved.airframe.fuselage.loft_stations], metrics) if view.mode == "Front" else [],
+        "section_outlines": front_profile_outlines(resolved, [(s.x0_m + s.x1_m) / 2.0 for s in resolved.sections], metrics) if view.mode == "Front" else [],
         "session_id": state.session_id,
         "metrics": metrics,
         "view": _view_payload(view),

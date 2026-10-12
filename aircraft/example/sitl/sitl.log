@@ -4,7 +4,7 @@ INAV 10.0.0 SITL (4a18df1b)
 [EEPROM] Saved '/media/anon/WD2TB/DataVault/TechProjects/Software/GitRepos/quadrocketbuilder/aircraft/example/sitl/eeprom.bin'
 [SOCKET] Bind TCP [::]:5760 to UART1
 [SOCKET] Bind TCP [::]:5761 to UART2
-[SOCKET] [::ffff:127.0.0.1]:45148 connected to UART1
+[SOCKET] [::ffff:127.0.0.1]:55306 connected to UART1
 [EEPROM] Loaded '/media/anon/WD2TB/DataVault/TechProjects/Software/GitRepos/quadrocketbuilder/aircraft/example/sitl/eeprom.bin' (32768 of 32768 bytes)
 [EEPROM] Saved '/media/anon/WD2TB/DataVault/TechProjects/Software/GitRepos/quadrocketbuilder/aircraft/example/sitl/eeprom.bin'
 [GIMBAL]: serial Detect...
@@ -18,9 +18,9 @@ INAV 10.0.0 SITL (4a18df1b)
 [EEPROM] Loaded '/media/anon/WD2TB/DataVault/TechProjects/Software/GitRepos/quadrocketbuilder/aircraft/example/sitl/eeprom.bin' (32768 of 32768 bytes)
 [SOCKET] Bind TCP [::]:5760 to UART1
 [SOCKET] Bind TCP [::]:5761 to UART2
-[SOCKET] [::ffff:127.0.0.1]:45154 connected to UART1
+[SOCKET] [::ffff:127.0.0.1]:55332 connected to UART1
 [SOCKET] Bind TCP [::]:5762 to UART3
 [GIMBAL]: serial Detect...
 [GIMBAL]: gimbalPort: (nil)
-[SYSTEM] Stepped clock from 3754607 us
-[SOCKET] [::ffff:127.0.0.1]:45154 disconnected from UART1
+[SYSTEM] Stepped clock from 3760404 us
+[SOCKET] [::ffff:127.0.0.1]:55332 disconnected from UART1

@@ -62,6 +62,8 @@ def _apply(definition: dict, before: tuple[float, ...], lengths: list[float]) ->
     # Profile lengths represent stations on the body; hardware and planform sizes do not.
     fuselage["nose"]["length_m"] = station(fuselage["nose"]["length_m"])
     fuselage["tail"]["length_m"] = station.after[-1] - station(old_length - fuselage["tail"]["length_m"])
+    for guide in fuselage["loft_stations"]:
+        guide["x_m"] = station(guide["x_m"])
     extents = [*fuselage.get("channels", [])]
     if fuselage.get("reinforcement") is not None:
         extents.append(fuselage["reinforcement"])
@@ -116,4 +118,4 @@ def resize_section(definition: dict, index: object, value: object) -> None:
     fixed = sum(lengths[i] for i in range(len(lengths)) if i != index and rows[i].get("fixed_length", False))
     _distribute(lengths, free, before[-1] - length - fixed)
     lengths[index] = length
-    _apply(definition, before, lengths)
+    definition["sections"]["cuts_m"] = list(accumulate(lengths))[:-1]

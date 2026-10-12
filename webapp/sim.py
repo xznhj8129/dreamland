@@ -66,7 +66,7 @@ def read_resource(state: AppState, kind: str, name: str, controller: str) -> dic
         path = state.project.generated_inav_dir / "design.txt"
         if not path.is_file():
             raise ValueError("Run once to generate the design diff, or choose a project diff")
-        return {"source": path.read_text(), "readonly": True, "initial": {}, "scenario": None,
+        return {"source": path.read_text(), "readonly": True, "scenario": None,
                 "note": "Last generated design diff. A run regenerates it; save a copy to edit and fly it as written."}
     path = resource_path(state, kind, name, controller)
     readonly = False
@@ -75,16 +75,15 @@ def read_resource(state: AppState, kind: str, name: str, controller: str) -> dic
         path = scenario_path(state.project.scenarios_dir, controller, name.removesuffix(".py"))
         readonly = path.parent != state.project.scenarios_dir / controller
     source = path.read_text()
-    initial, spec, error = {}, None, None
+    spec, error = None, None
     if kind == "scenario":
-        from libs.scenario import ScenarioSpec, starting_conditions
+        from libs.scenario import ScenarioSpec
         try:
-            initial = starting_conditions(source)
             spec = ScenarioSpec.from_source(source, controller).payload()
         except (ValueError, SyntaxError) as problem:
             error = str(problem)
     note = "Shared scenario. Save a project copy to edit." if readonly else path.relative_to(state.project.root).as_posix()
-    return {"source": source, "readonly": readonly, "initial": initial, "scenario": spec, "error": error, "note": note}
+    return {"source": source, "readonly": readonly, "scenario": spec, "error": error, "note": note}
 
 
 def save_resource(state: AppState, kind: str, name: str, source: str, controller: str, create: bool = False) -> dict:
@@ -95,14 +94,24 @@ def save_resource(state: AppState, kind: str, name: str, source: str, controller
     if not isinstance(source, str):
         raise ValueError("source must be text")
     if kind == "scenario":
-        from libs.scenario import ScenarioSpec, starting_conditions
+        from libs.scenario import ScenarioSpec
         compile(source, name, "exec")
-        starting_conditions(source)
         ScenarioSpec.from_source(source, controller)
     path.parent.mkdir(parents=True, exist_ok=True)
     with path.open("x" if create else "w") as file:
         file.write(source)
     return read_resource(state, kind, name, controller)
+
+
+def delete_resource(state: AppState, kind: str, name: str, controller: str) -> None:
+    """Remove one of the project's own SIM files; the generated design diff is not served under these names."""
+    with _RUN._lock:
+        if _RUN.process is not None:
+            raise ValueError("Abort the active simulation before deleting SIM files")
+    path = resource_path(state, kind, name, controller)
+    if not path.is_file():
+        raise ValueError(f"{name} does not exist")
+    path.unlink()
 
 
 def options(state: AppState) -> dict[str, Any]:
@@ -137,7 +146,7 @@ def options(state: AppState) -> dict[str, Any]:
 
 
 def _plan(state: AppState, body: dict[str, Any]) -> tuple[list[str], str, str, Path]:
-    from libs.scenario import CONTROLLERS, DEFAULT_LIMIT_S, ScenarioSpec, scenario_names, scenario_path, starting_conditions
+    from libs.scenario import CONTROLLERS, DEFAULT_LIMIT_S, ScenarioSpec, scenario_names, scenario_path
     from libs.flightlog import flight_log_path
     from libs.simrun import START_OPTIONS, start_reasons
     if state.resolved is None:
@@ -151,11 +160,10 @@ def _plan(state: AppState, body: dict[str, Any]) -> tuple[list[str], str, str, P
     path = scenario_path(project.scenarios_dir, controller, scenario)
     try:
         source = path.read_text()
-        initial = starting_conditions(source)
         ScenarioSpec.from_source(source, controller)
     except (ValueError, SyntaxError, OSError) as problem:
         raise _Refused(str(problem)) from problem
-    start = body.get("start", initial.get("start", "air"))
+    start = body.get("start", "air")
     starts = [name for name, reason in start_reasons(airframe).items() if reason is None]
     if start not in starts:
         raise _Refused(f"start must be one of {starts}")

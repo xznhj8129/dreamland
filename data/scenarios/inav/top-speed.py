@@ -5,7 +5,6 @@ from libs.jsbsim import AERO_SPEEDS_M_S
 
 
 
-START = {"start": "air"}
 
 
 def run(mission):

@@ -2,7 +2,6 @@
 
 from controllers import inav as controller
 
-START = {"start": "air"}
 
 
 def run(flight):

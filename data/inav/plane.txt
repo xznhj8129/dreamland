@@ -1,11 +1,66 @@
 # Generated SITL diff of a fixed-wing or glider: after the design's mixer, before the bench and battery lines.
 set mag_hardware = FAKE
-# switches: AUX1 arm, AUX2 angle, AUX3 nav althold
+# switches: AUX1 arm, AUX2 angle, AUX3 nav althold, AUX4 nav poshold (mid) / nav rth (high)
 aux 0 0 0 1700 2100
 aux 1 1 1 1300 2100
 aux 2 3 2 1300 2100
-# NAV ALTHOLD holds height with pitch and adds throttle stick above cruise: cruise and min at idle, so the stick sets the power
-# (cruise 1001: INAV divides by cruise - 1000 in ANGLE mode, and 1000 crashes the SITL)
+aux 3 11 3 1300 1600
+aux 4 10 3 1700 2100
+# NAV ALTHOLD holds height with pitch and adds throttle stick above cruise. Cruise must not be idle: RTH
+# resets the altitude controller, zeroing the pitch-to-throttle trim; with cruise at idle the motor cut at
+# RTH entry and the airframe stalled into a spiral. 1400 also keeps stall margin through the landing pattern.
 set nav_fw_allow_manual_thr_increase = ON
-set nav_fw_cruise_thr = 1001
-set nav_fw_min_thr = 1000
+set nav_fw_cruise_thr = 1400
+set nav_fw_min_thr = 1100
+# NAV RTH returns home and lands (fixed-wing autoland), not just loiters
+set nav_rth_allow_landing = ALWAYS
+
+# --- Owner's example tune, adjusted: the airframe's roll response is very fast and poorly damped, so
+# the NAV bank demands are capped and the roll axis is slowed down (owner values noted per line) ---
+set fw_p_pitch = 15
+set fw_i_pitch = 5
+set fw_d_pitch = 5
+set fw_ff_pitch = 91
+set fw_p_roll = 75                # owner 15: tiny roll inertia needs a strong rate loop
+set fw_i_roll = 3
+set fw_d_roll = 30                # owner 7: damping
+set fw_ff_roll = 30               # owner default 50
+set fw_p_yaw = 50
+set fw_i_yaw = 0
+set fw_d_yaw = 20
+set fw_ff_yaw = 255
+set max_angle_inclination_rll = 150     # owner 600: cap commanded bank hard; the RTH reversal stalls the wing
+set max_angle_inclination_pit = 350     # owner 600: cap commanded pitch
+set dterm_lpf_hz = 10
+set fw_turn_assist_pitch_gain = 0.400
+set nav_fw_pos_z_p = 15
+set nav_fw_pos_z_d = 12                 # owner default 10: more rate damping; the loop phugoided +-6 m in poshold
+set nav_fw_pos_z_ff = 10                # owner default 30: the FF term pitched hard down on every altitude error
+set nav_fw_alt_control_response = 15    # owner default 40: gentler climb/descent demand as the target is approached
+set nav_fw_pos_xy_p = 15                # owner 55
+set d_boost_min = 1.000
+set d_boost_max = 1.000
+set rc_expo = 30
+set rc_yaw_expo = 30
+set roll_rate = 4                       # owner 18: min allowed; slow max roll rate for the low-inertia wing
+set pitch_rate = 10
+set yaw_rate = 3
+set nav_fw_dive_angle = 5              # limit the nav dive command (min allowed)
+set fw_p_level = 15                     # owner default 20: softer bank loop, tighter to hold the small cap
+set nav_fw_loiter_radius = 30000        # owner default 7500: gentle loiter bank at ~25 m/s
+set nav_fw_bank_angle = 8               # owner default 35: 8 deg planning bank: widest, lowest-load reversal
+set nav_fw_control_smoothness = 9       # ease abrupt bank steps (S-curve up to 900 ms)
+set nav_fw_pitch2thr = 20               # owner default 10: modulate around the non-idle cruise without over-throttling dives
+# RTH altitude: a real climb target (with AT_LEAST the target equals the current altitude and the RTH
+# climb phase ends instantly, reversing course at loiter speed where the airframe stalls).
+set nav_rth_alt_mode = FIXED
+set nav_rth_altitude = 25000
+
+# --- Landing: this build's FW autoland states need a safe-home/mission approach config, so RTH uses the
+# traditional fallback: descend at nav_land_maxalt_vspd -> nav_land_minalt_vspd, then below
+# nav_land_slowdown_minalt cut the motor, level the bank and hold nav_fw_land_dive_angle (negative = flare).
+set nav_land_maxalt_vspd = 200          # default 200: 2 m/s descent keeps stall margin in the landing pattern
+set nav_land_minalt_vspd = 50           # default 50: 0.5 m/s just above the ground
+set nav_land_slowdown_maxalt = 3000     # default 2000: start the descent ramp at 30 m
+set nav_land_slowdown_minalt = 1000     # default 500: cut the motor and start the flare at 10 m
+set nav_fw_land_dive_angle = -5         # default 2: flare 5 deg nose-up instead of diving 2 deg nose-down

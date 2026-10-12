@@ -1,0 +1,16 @@
+{
+    "generic": true,
+    "mass": 0.005,
+    "dimensions": {
+        "l": 26,
+        "w": 26,
+        "h": 6
+    },
+    "mount": "fpv_20x20",
+    "wiring_origin_mm": [
+        0.0,
+        0.0,
+        0.0
+    ],
+    "notes": "typical size and mass for layout; replace with a real product"
+}

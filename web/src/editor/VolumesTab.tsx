@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { ReactElement } from 'react'
 import { editorOp } from '../store'
 import { Card, ChoiceField, EntryField, VectorField } from './fields'
+import { formatValue } from './format'
 import { isObject } from './patch'
 import { useFormApi } from './session'
 import { ComponentPicker, useComponentIndex, useSelection } from './selection'
@@ -37,7 +38,7 @@ export function VolumesTab(): ReactElement {
         </div>
         {notice !== '' && <div className="field-error">{notice}</div>}
       </Card>
-      <ComponentPicker kind="volume" items={volumes.map((item, index) => ({ name: String(item.name ?? `volume ${index + 1}`) }))} />
+      <ComponentPicker kind="volume" items={volumes.map((item, index) => ({ name: String(item.name ?? `volume ${index + 1}`), detail: typeof item.x_m === 'number' ? `x ${formatValue('x_m', item.x_m, api.context)} mm` : undefined }))} />
       {volumes.map((volume, index) => (
         <div key={index} hidden={index !== selected}><VolumeCard
           index={index}

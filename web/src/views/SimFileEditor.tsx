@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
-import { simResource } from '../simApi'
+import { deleteSimResource, simResource } from '../simApi'
 import type { ScenarioOutline, SimResource } from '../simApi'
 
 interface Props {
@@ -10,7 +10,6 @@ interface Props {
   project: string | null
   template: string
   templateOutline?: ScenarioOutline | null
-  templateInitial?: Record<string, number | string>
   running: boolean
   visible: boolean
   revision?: number
@@ -18,9 +17,11 @@ interface Props {
   onLoad: (resource: SimResource) => void
   onDiscard: () => void
   onSaved: (name: string, resource: SimResource) => void
+  /** Called after the file is gone, so the caller can drop the selection and refresh the option lists. */
+  onDeleted?: (name: string) => void
 }
 
-export function SimFileEditor({controller, kind, name, project, template, templateOutline, templateInitial, running, visible, revision, onDirty, onLoad, onSaved, onDiscard}: Props): ReactElement {
+export function SimFileEditor({controller, kind, name, project, template, templateOutline, running, visible, revision, onDirty, onLoad, onSaved, onDiscard, onDeleted}: Props): ReactElement {
   const [source, setSource] = useState('')
   const [saved, setSaved] = useState('')
   const [filename, setFilename] = useState('')
@@ -41,7 +42,7 @@ export function SimFileEditor({controller, kind, name, project, template, templa
       setSource(template)
       setFilename(kind === 'scenario' ? 'scenario.py' : 'custom.txt')
       setNote('New project file')
-      onLoad({source: template, readonly: false, initial: templateInitial ?? {}, scenario: templateOutline, note: 'New project file'})
+      onLoad({source: template, readonly: false, scenario: templateOutline, note: 'New project file'})
       return
     }
     if (name === null) { setNote('Choose or create a scenario.'); return }
@@ -68,6 +69,17 @@ export function SimFileEditor({controller, kind, name, project, template, templa
     finally { setBusy(false) }
   }
 
+  const remove = async (): Promise<void> => {
+    if (name === null || name === '__new__') return
+    if (!window.confirm(`Delete ${name}?`)) return
+    setBusy(true); setError('')
+    try {
+      await deleteSimResource(controller, kind, name)
+      onDeleted?.(name)
+    } catch (reason) { setError(reason instanceof Error ? reason.message : String(reason)) }
+    finally { setBusy(false) }
+  }
+
   return <div className="sim-source-panel" style={{display: visible ? 'flex' : 'none'}}>
     <div className="sim-source-toolbar">
       <span>{dirty ? 'Unsaved' : 'Saved'} · {note}</span>
@@ -75,8 +87,10 @@ export function SimFileEditor({controller, kind, name, project, template, templa
       <button type="button" disabled={running || busy || readonly || name === null || !dirty} onClick={() => void save(false)}>Save {kind}</button>
       <button type="button" disabled={running || busy || !dirty} onClick={() => { setSource(saved); onDiscard() }}>Discard edits</button>
       <button type="button" disabled={running || busy || name === null || name === '__new__'} onClick={() => void save(true)}>Save copy</button>
+      {kind === 'diff' && name !== null && name !== '__new__' && !readonly &&
+        <button type="button" disabled={running || busy} onClick={() => void remove()}>Delete diff</button>}
     </div>
-    {kind === 'scenario' && <p className="form-hint">Every script defines run(flight) and imports its controller. START sets initial conditions; PARAMETERS and TELEMETRY are optional. All times are simulated seconds.</p>}
+    {kind === 'scenario' && <p className="form-hint">Every script defines run(flight) and imports its controller. Set initial conditions in the toolbar. PARAMETERS and TELEMETRY are optional. All times are simulated seconds. Use print() for freeform status lines; measure() records a point in the Measurements file and prints a brief line.</p>}
     {error !== '' && <p className="field-error" role="alert">{error}</p>}
     <textarea aria-label={kind === 'scenario' ? 'Python scenario' : 'INAV diff'} className="sim-source" spellCheck={false} value={source} disabled={busy || name === null} readOnly={readonly || running}
       onChange={event => setSource(event.target.value)} onKeyDown={event => {

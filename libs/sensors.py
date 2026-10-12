@@ -4,6 +4,8 @@ import math
 import random
 from dataclasses import dataclass
 
+from libs.fdm import heading_rad, pitch_rad, pitch_rate_rad_s, roll_rad, roll_rate_rad_s, yaw_rate_rad_s
+
 # The simulated parts (datasheet scales)
 STANDARD_GRAVITY_M_S2 = 9.80665
 ACCEL_LSB_PER_G = 4096.0  # ICM-20602 class SPI IMU, accelerometer at +-8 g
@@ -57,11 +59,11 @@ class Imu:
         fdm = plant.fdm
         # Physical body axes, independent of the firmware's active mixer/sensor frame.
         if plant.rail and plant.rail.held:
-            phi, theta = fdm["attitude/phi-rad"], fdm["attitude/theta-rad"]
+            phi, theta = roll_rad(fdm), pitch_rad(fdm)
             accel_g = [math.sin(theta), math.sin(phi) * math.cos(theta), math.cos(phi) * math.cos(theta)]
         else:
             accel_g = [fdm["accelerations/Nx"], -fdm["accelerations/Ny"], fdm["accelerations/Nz"]]
-        rate = [fdm["velocities/p-rad_sec"], -fdm["velocities/q-rad_sec"], -fdm["velocities/r-rad_sec"]]
+        rate = [roll_rate_rad_s(fdm), -pitch_rate_rad_s(fdm), -yaw_rate_rad_s(fdm)]
         previous, self._previous = self._previous, (time_us, tuple(rate))
         lever = _cross(rate, _cross(rate, self._offset_m))  # centripetal, then angular acceleration from the last sample
         if previous is not None and time_us > previous[0]:
@@ -97,7 +99,7 @@ class Mag:
 
     def _sample(self, plant, noise: dict) -> None:
         fdm = plant.fdm
-        phi, theta, psi = fdm["attitude/phi-rad"], fdm["attitude/theta-rad"], fdm["attitude/psi-rad"]
+        phi, theta, psi = roll_rad(fdm), pitch_rad(fdm), heading_rad(fdm)
         north = (math.cos(theta) * math.cos(psi),
                  math.cos(phi) * math.sin(psi) - math.sin(phi) * math.sin(theta) * math.cos(psi),
                  -math.cos(phi) * math.sin(theta) * math.cos(psi) - math.sin(phi) * math.sin(psi))
@@ -172,7 +174,7 @@ class Rangefinder:
 
     def _sample(self, plant, noise: dict) -> None:
         fdm = plant.fdm
-        tilt = math.cos(fdm["attitude/phi-rad"]) * math.cos(fdm["attitude/theta-rad"])
+        tilt = math.cos(roll_rad(fdm)) * math.cos(pitch_rad(fdm))
         if tilt < 0.5:
             self._mm = -1
             return

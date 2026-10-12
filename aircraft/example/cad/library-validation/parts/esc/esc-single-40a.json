@@ -1,0 +1,19 @@
+{
+    "generic": true,
+    "mass": 0.034,
+    "dimensions": {
+        "l": 50,
+        "w": 25,
+        "h": 10
+    },
+    "mount": null,
+    "wiring_origin_mm": [
+        0.0,
+        0.0,
+        0.0
+    ],
+    "curr": 40,
+    "min_s": 2,
+    "max_s": 4,
+    "notes": "typical size and mass for layout; replace with a real product"
+}

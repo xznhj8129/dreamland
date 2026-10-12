@@ -1,10 +1,10 @@
-"""Arm, climb, hold the test attitude, check readiness, record, finish."""
+"""Arm, climb to the target altitude, then hand over to INAV: NAV POSHOLD for 30 s, then NAV RTH, which returns home and lands."""
 
 
 from controllers import inav as controller
 
-# Initial conditions: applied before the sequence runs.
-START = {"start": "air", "alt": 150, "speed": 25, "pitch": 0}
+from libs.simrun import GroundHit
+
 
 # Parameters and telemetry: available throughout the sequence.
 PARAMETERS = {
@@ -17,8 +17,8 @@ PARAMETERS = {
     "settle_s": 10,
     "settle_angle_tolerance_deg": 3,
     "settle_climb_limit_m_s": 0.5,
-    "test_s": 10,
-    "finish_s": 2
+    "poshold_s": 30,
+    "rth_timeout_s": 180
 }
 TELEMETRY = {
     "rate_hz": 20,
@@ -46,20 +46,27 @@ def run(flight):
     controller.mode("ACRO")
     controller.takeoff(throttle=flight.parameters["climb_throttle"])
 
-    flight.phase("launch", "2. Climb to the target altitude, hold the test attitude, then check readiness.")
+    flight.phase("launch", "2. Climb to the target altitude, settle, then check readiness.")
     flight.wait(flight.parameters["climb_timeout_s"], until=reached_altitude, control=hold_climb_attitude)
     flight.measure("climb complete")
     flight.wait(flight.parameters["settle_s"], control=hold_test_attitude)
-    check_ready_for_test(flight)
+    check_ready_for_nav(flight)
 
-    flight.phase("test", "3. Record the response while continuing to hold the test attitude.")
-    flight.measure("test begins")
-    flight.wait(flight.parameters["test_s"], control=hold_test_attitude)
-    flight.measure("test ends")
+    flight.phase("poshold", "3. Hand over to INAV NAV POSHOLD and hold position.")
+    controller.mode("NAV POSHOLD")
+    flight.measure("nav poshold begins")
+    flight.wait(flight.parameters["poshold_s"], control=hold_nav)
 
-    flight.phase("finish", "4. Hold the test attitude briefly, then return to end the simulation.")
-    flight.wait(flight.parameters["finish_s"], control=hold_test_attitude)
-    flight.measure("finished")
+    flight.phase("rth", "4. Hand over to INAV NAV RTH: return home and land.")
+    controller.mode("NAV RTH")
+    flight.measure("nav rth begins")
+    try:
+        flight.wait(flight.parameters["rth_timeout_s"], control=hold_nav)
+    except GroundHit as hit:
+        print(f"\nLanded: {hit}")
+        flight.measure("landed")
+        return
+    flight.measure("rth timeout, still airborne")
 
 
 # Control helpers
@@ -77,17 +84,22 @@ def hold_test_attitude(flight):
                     throttle=flight.parameters["level_throttle"])
 
 
+def hold_nav(flight):
+    # Hands off: the active INAV nav mode owns attitude and throttle.
+    controller.sticks(roll=0.0, pitch=0.0, yaw=0.0, throttle=0.0)
+
+
 # Check helpers
-# until=... is checked during a wait; check_ready_for_test runs once afterward.
+# until=... is checked during a wait; check_ready_for_nav runs once afterward.
 
 
 def reached_altitude(flight):
     return flight.truth["agl_m"] >= flight.parameters["target_alt_m"]
 
 
-def check_ready_for_test(flight):
+def check_ready_for_nav(flight):
     state = flight.truth
     if (abs(state["roll"]) > flight.parameters["settle_angle_tolerance_deg"]
             or abs(state["pitch"] - flight.parameters["level_pitch_deg"]) > flight.parameters["settle_angle_tolerance_deg"]
             or abs(state["vd"]) > flight.parameters["settle_climb_limit_m_s"]):
-        raise RuntimeError(f"Not ready for the test: roll {state['roll']:.1f} deg, pitch {state['pitch']:.1f} deg, climb {-state['vd']:.1f} m/s")
+        raise RuntimeError(f"Not ready for the nav hand-over: roll {state['roll']:.1f} deg, pitch {state['pitch']:.1f} deg, climb {-state['vd']:.1f} m/s")

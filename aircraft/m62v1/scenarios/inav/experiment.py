@@ -3,8 +3,6 @@
 
 from controllers import inav as controller
 
-# Initial conditions: applied before the sequence runs.
-START = {"start": "air", "alt": 150, "speed": 25, "pitch": 0}
 
 # Parameters and telemetry: available throughout the sequence.
 PARAMETERS = {

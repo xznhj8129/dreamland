@@ -5,6 +5,7 @@ import math
 from dataclasses import dataclass
 from pathlib import Path
 
+from libs.fdm import pitch_rate_deg_s, roll_rate_deg_s, yaw_rate_deg_s
 from libs.simrun import FT, electrical_columns
 
 MAX_TELEMETRY_HZ = 50.0
@@ -43,8 +44,8 @@ def flight_snapshot(engine, export):
     row = {"t": engine.flight.elapsed if engine.flight is not None else engine.elapsed, "armed": int("ARM" in engine.active_modes())} | engine.truth()
     row |= {"airspeed_m_s": fdm["velocities/vt-fps"] * FT, "aoa_deg": fdm["aero/alpha-deg"],
             "sideslip_deg": fdm["aero/beta-deg"],
-            "p_deg_s": math.degrees(fdm["velocities/p-rad_sec"]), "q_deg_s": math.degrees(fdm["velocities/q-rad_sec"]),
-            "r_deg_s": math.degrees(fdm["velocities/r-rad_sec"])}
+            "p_deg_s": roll_rate_deg_s(fdm), "q_deg_s": pitch_rate_deg_s(fdm),
+            "r_deg_s": yaw_rate_deg_s(fdm)}
     motor_count = len(export.motor_properties)
     row |= {f"motor{index + 1}": value for index, value in enumerate(engine.motors[:motor_count])}
     row |= {f"servo{index}": value for index, value in enumerate(engine.servos[:len(export.servo_properties)])}

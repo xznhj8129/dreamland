@@ -12,6 +12,8 @@ Theme
     - Panels = #1c1e21; cards = #25282c
     - UI outlines = #3b4045
     - UI font = system sans-serif; reports = monospace
+    - Buttons = shared 24 px minimum height, 13 px text, 1 px / 12 px padding, 1 px border and 6 px corners; icon buttons = 24 px square; selected, primary and danger states retain semantic colors
+    - Vertical spacing = compact headers, forms, report blocks, part rows, CAD cards and SIM panels; button and input sizes retained
     - Menus, bars, boxes and controls = restyled; drawing renderer = unchanged
     - Airframe drawing = green
     - Semantic markers remain color-coded:
@@ -45,6 +47,7 @@ DreamlandWindow [fill]
 Startup
     - window title = "Dreamland - <project> (<aircraft name>)"
     - opens the project given on the command line (`webbuilder.py <project>`)
+    - without a project argument, opens `aircraft/example`
     - binds to 127.0.0.1 by default; `--host 0.0.0.0` enables phone/LAN access
     - default visible view = Editor
     - F5 triggers heavy recompute while the Editor view is active
@@ -68,7 +71,7 @@ TopBar [docked:top, arrange:row]
     * ViewButtons [arrange:row]
         - Editor, Aero Analysis, VLM, SIM, CAD, Part Editor
             on:click -> raise the view; the visible view's button is highlighted
-            Aero Analysis and VLM disabled and labelled Planned
+            VLM disabled and labelled Planned
 
     * ProjectStatus
         Saved | Unsaved changes; Save button enabled when changed
@@ -120,8 +123,8 @@ CAD            -> cad_view.md
 Part Editor    -> part_editor_view.md
 ```
 
-Aero Analysis and VLM are planned, disabled views in the web front end; their engines
-(VLM sweep, NeuralFoil airfoil comparison) run headless.
+VLM is a planned, disabled view in the web front end; its engine (the VLM sweep) runs
+headless.
 
 ## Error handling
 

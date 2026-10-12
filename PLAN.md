@@ -45,15 +45,9 @@ fuselage
   length_m
   section           width_m, height_m, shape (superellipse exponent; 2 = circle), wall_radial_m
   nose, tail        profile (pointed_shapes name), length_m, params (exactly the profile's keys)
-  joints            type radial_screws, count (screws per section end), screw, insertion_depth_m (coupler or spigot into
-                    each female end's socket), coupler_wall_m, fit_clearance_m (radial play of coupler, spigot, rods and
-                    spars), socket_wall_m (skin left over the coupler at a female end: socket = outer surface less it; at
-                    most the section wall), hole_edge_dist_m (from the cut), hole_diameter_m, hole_angle_offset_deg (first
-                    hole from +y, the rest evenly round), coupler_mass_kg (optional, one per cut). Sections butt at the cut.
-                    An integral male (front_male / rear_male) runs insertion_depth_m back into its section, chamfered
-                    inside from the fuselage ID at that far end to the coupler ID hole_edge_dist_m short of the fastener
-                    hole centre (at the cut). A female end whose body tapers below its socket within the insertion depth
-                    is a layout problem (the socket breaks through).
+  loft_stations[]   independent shape guides: x_m (ascending, unique, within 0..length_m), optional width_m, height_m,
+                    shape; omitted profile keys inherit fuselage.section. Empty = constant default cross-section.
+                    Cubic easing joins guides; nose/tail profiles taper the loft. Wall thickness stays global.
   reinforcement     optional longitudinal rods: type cf_rod, material (data/parts/material.json), diameter_m, radial_position_m (rod centre
                     from the axis), polar_n (all rods), polar_offset_angle (deg from the horizontal, one position per quadrant,
                     mirrored left/right and top/bottom), polar_split (0 = one rod per position, 2 = a pair at
@@ -68,6 +62,9 @@ surfaces[]          name, x_root_le_m (must be on the body; chords may overhang 
                     panels pitched alike, lift like AoA; cant: every panel turned the same way about the body axis,
                     roll / spin; + = anticlockwise seen from behind), airfoil (AeroSandbox name),
                     mass_kg (whole set; optional, absent = computed)
+                    sections: cuts_m (ascending span distances from the true panel root, strictly inside span_m);
+                      empty = attached fixed panel; first segment stays on the fuselage, later fixed segments export separately;
+                      cuts apply to every panel of the set; control surfaces remain unsplit, spar holes remain aligned
                     spars (optional): material, diameter_m, count (per panel), spacing_m, x_offset_m (first spar aft of
                       the root LE along the root chord), y_offset_m (off the chord line through the thickness, + towards
                       the panel normal: up on a wing); straight rods along each panel's span in the chord plane, from
@@ -90,10 +87,13 @@ surfaces[]          name, x_root_le_m (must be on the body; chords may overhang 
                         span_start, span_end (panel span fractions from the root, end > start)
                       kind all_moving: pivot (chord fraction from LE), span_start (optional, 0.0: where the moving
                         surface starts; > 0 leaves a fixed base inboard of it to blend/fillet into the body)
+                      align_hinge_vertically (optional, false): straight hinge across span, anchored at its inboard position
                       gap_m (optional, 0.0 = none): material removed between the fixed and the moving surface: the
                         moving surface's hinge edge and its span ends (where fixed material borders them) are inset
-                        by it, and the hinge rod, when there is one, sits centred in it
-                      spar_diameter_m (optional, none = no rod): the hinge rod the surface turns on, outer diameter
+                        by it, and the pivot rod, when there is one, sits centred in it
+                      rod_diameter_m (optional, none = no rod): the pivot rod the surface turns on, outer diameter
+                      rod_x_offset_m, rod_y_offset_m (optional, 0.0): the pivot rod line (and so the rotation axis)
+                        shifted along the chord direction (+ aft) and towards the panel normal (+ up on a wing)
                       roles [pitch yaw roll flaps] (reference only), deflection_min_deg, deflection_max_deg
                       (positive = TE away from the panel normal, down on a wing), rate_deg_s (placeholder),
                       servos (S1..S12, one per panel in panel order, may be shared: a panel opposite to the others on its servo is exported reversed, a Y-cable reverser)
@@ -116,7 +116,8 @@ propulsion          required when powered, absent when not
                     names along the run, in order); each motor's run and the shared battery run set its resistance in
                     the motor model (one model per motor)
   mounts[]          on (nose | tail | surface); for surface: surface, span_position_m (from panel root),
-                    x_offset_m (from root LE); direction (tractor | pusher);
+                    x_offset_m (all mounts; from surface root LE or nose/tail face, positive aft; moves motor and pod);
+                    direction (tractor | pusher);
                     spin, seen from where the thrust points: surface out | in (2+ motors alternating cw/ccw round the
                     axis; out = INAV props out, X: front-right and rear-left cw, multirotor front = aircraft belly),
                     nose/tail cw | ccw;
@@ -125,7 +126,7 @@ propulsion          required when powered, absent when not
                     holes optional: pattern single (D1 hole) or radial_slots (4 M3-width slots from D1 to D2);
                       d1_m, d2_m (slot-centre circle diameters), hole_diameter_m (slot width),
                       center_diameter_m + center_depth_m (relief), head_diameter_m + head_depth_m
-                      (head seat inward from mounting face; all material behind it cleared for bolt entry)
+                      (head seat inward from mounting face; bolt entry cleared to the carrying section's inner cut)
 volumes[]           internal space: name, x_m (centre), y_m and z_m (default 0), shape:
                       box: size_m [x, y, z]
                       rounded_box: size_m [x, y, z], axis x|y|z, corner_radius_m (the edges along axis rounded; fit and
@@ -143,6 +144,16 @@ parts[]             library components: name, part (<category>:<name>; category 
                     yaw_deg, pitch_deg, roll_deg optional (default 0): its turn, about z, y, x, roll first, body axes;
                     the first fc part carries the script controller's IMU (its position and axes)
 sections
+  joints            type radial_screws, count (screws per section end), screw, insertion_depth_m (coupler or spigot into
+                    each female end's socket), coupler_wall_m, fit_clearance_m (radial play of coupler, spigot, rods and
+                    spars), socket_wall_m (skin left over the coupler at a female end: socket = outer surface less it; at
+                    most the section wall), hole_edge_dist_m (from the cut), hole_diameter_m, hole_angle_offset_deg (first
+                    hole from +y, the rest evenly round), coupler_mass_kg (optional, one per cut). Sections butt at the cut.
+                    Screw axes follow the cut profile's wall normals; mating holes stay coaxial and break through the lofted skin.
+                    An integral male (front_male / rear_male) runs insertion_depth_m back into its section, chamfered
+                    inside from the fuselage ID at that far end to the coupler ID hole_edge_dist_m short of the fastener
+                    hole centre (at the cut). A female end whose body tapers below its socket within the insertion depth
+                    is a layout problem (the socket breaks through).
   cuts_m[]          cut stations (ascending, inside the fuselage); section i spans cut i-1 .. cut i; may be empty
                     (one uncut section: the whole fuselage, no couplers)
   per_section[]     one per section: solid (true: printed solid less the volumes inside it, x print.bulk_density_kg_m3;
@@ -150,15 +161,14 @@ sections
                     false: hollow shell wall), empty_mass_kg (optional: weighed printed mass), complete_mass_kg (optional:
                     weighed printed mass + everything attached in the section, which it replaces: points by position,
                     props with their motor, motors with their mount, surface sets where they meet the body: their exposed root LE)
-                    section (optional object): width_m, height_m, shape overrides; omitted keys inherit fuselage.section.
-                    Midpoints are loft stations; cubic easing joins their sizes and shapes; nose/tail profiles taper the loft.
-                    Wall thickness stays global. Existing files without overrides keep their geometry.
-  cut_joints[]      one per cut: coupler (separate coupler into both sections; fuselage.joints.coupler_mass_kg at the
+  cut_joints[]      one per cut: coupler (separate coupler into both sections; sections.joints.coupler_mass_kg at the
                     cut), front_male or rear_male (the section ahead of / behind the cut carries the male end, no coupler),
                     or none (the sections butt with no coupler or spigot; cut them in CAD as needed)
 ```
 
 Body-rooted panels keep the true root edge on the body (follows nose/tail cones) and use an equivalent aero root at the mean body radius under the root chord. Axis-rooted panels start on the axis; Barrowman uses their exposed part.
+
+Migration: `python migrate_loft_stations.py aircraft/<project>` moves each existing section midpoint and its overrides to `fuselage.loft_stations`, including inherited profiles, and moves `fuselage.joints` to `sections.joints`; cuts and geometry stay unchanged.
 
 Converted examples: `aircraft/m62v2/` and `aircraft/quadlancer62/` reproduce the old totals (1.1408 / 1.3732 kg, plus props 1.1608 / 1.4292 kg). The old modules are sections (cuts at the module boundaries, module mass as the section's weighed empty mass), couplers 21.36 g per joint, the battery is the only volume. m62v2 tail fins are axis-rooted, 55 mm span (delta: straight trailing edge, joined at the centre).
 

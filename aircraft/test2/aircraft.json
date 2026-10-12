@@ -38,6 +38,24 @@
                 "k_prime": 1.0
             }
         },
+        "channels": [],
+        "loft_stations": [
+            {
+                "x_m": 0.2
+            }
+        ]
+    },
+    "surfaces": [],
+    "volumes": [],
+    "parts": [],
+    "sections": {
+        "cuts_m": [],
+        "per_section": [
+            {
+                "solid": false
+            }
+        ],
+        "cut_joints": [],
         "joints": {
             "type": "radial_screws",
             "count": 8,
@@ -49,20 +67,6 @@
             "hole_edge_dist_m": 0.006,
             "hole_diameter_m": 0.003,
             "hole_angle_offset_deg": 22.5
-        },
-        "channels": []
-    },
-    "surfaces": [],
-    "volumes": [],
-    "parts": [],
-    "sections": {
-        "cuts_m": [],
-        "per_section": [
-            {
-                "solid": false,
-                "section": {}
-            }
-        ],
-        "cut_joints": []
+        }
     }
 }

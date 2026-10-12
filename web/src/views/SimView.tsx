@@ -1,13 +1,12 @@
 import { useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
-import * as THREE from 'three'
-import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import { saveProject, useSnapshot } from '../store'
 import { abortSim, simOptions, simState, startSim } from '../simApi'
 import type { ScenarioOutline as Outline, SimOptions, SimStart } from '../simApi'
 import { SimFileEditor } from './SimFileEditor'
+import { FlightScene } from './FlightScene'
 import { PerformanceResults } from './PerformanceResults'
 import { ScenarioOutline } from './ScenarioOutline'
 import { SplitPane } from '../components/SplitPane'
@@ -24,33 +23,13 @@ type XZoom = readonly [number, number] | null
 // FlightLogPlot: the retired Tk view's Plots tab (libs/views/sim_view.py: draw_series 389-430, on_scroll 433-441,
 // on_press/drag/release 443-470, SERIES_COLORS 35, ZOOM_STEP/DRAG_MIN_FRACTION 36-37).
 const PLOT_FALLBACK_HEIGHT = 400
-const PLOT_TITLE_HEIGHT = 24
+const PLOT_TITLE_HEIGHT = 24 // matches .sim-plot-title's min-height in theme.css
 const PLOT_FALLBACK_WIDTH = 600
 const AXIS_COLOR = '#67ff67'
 const GRID_COLOR = 'rgba(10, 95, 10, 0.55)'
 const SERIES_COLORS = ['#19ff19', '#33ccff', '#ffcc33', '#ff6666', '#cc66ff', '#ffffff']
 const ZOOM_STEP = 0.8
 const DRAG_MIN_FRACTION = 0.01
-
-// FlightPath3D: PATH_COLUMNS/PATH_VIEW/colors/limits in the Tk view (sim_view.py:43-49, draw_path 471-517).
-const PATH_COLUMNS = ['east_m', 'north_m', 'agl_m'] as const
-const PATH_MIN_HALF_M = 50
-const PATH_MIN_HEIGHT_M = 50
-const PATH_BACKGROUND = '#141517'
-const PATH_LINE_COLOR = '#19ff19'
-const PATH_BOX_COLOR = '#14601a'
-const PATH_START_COLOR = '#19ff19'
-const PATH_END_COLOR = '#ff4d4d'
-const PATH_FIT_MARGIN = 1.15
-const PATH_DIRECTION = (() => {
-  const elevation = THREE.MathUtils.degToRad(25) // PATH_VIEW elevation
-  const azimuth = THREE.MathUtils.degToRad(-60) // PATH_VIEW azimuth
-  return new THREE.Vector3(
-    Math.cos(elevation) * Math.cos(azimuth),
-    Math.cos(elevation) * Math.sin(azimuth),
-    Math.sin(elevation),
-  ).normalize()
-})()
 
 /** True when a start condition does not apply to this start: such a field is disabled and left out of the run body,
  *  as the runner refuses one passed by hand. */
@@ -333,262 +312,11 @@ function FlightLogPlot({ header, rows, xColumn, yColumns, xZoom, onXZoom }: Flig
   )
 }
 
-interface PathPoint {
-  east: number
-  north: number
-  height: number
-}
-
-interface PathFrame {
-  cx: number
-  cy: number
-  half: number
-  top: number
-}
-
-interface FlightPathHandle {
-  update: (samples: (PathPoint | null)[] | null) => void
-  fit: () => void
-  autoFit: (enabled: boolean) => void
-}
-
-/** The log's east/north/agl samples; a row missing any of the three is a gap, null when the columns are absent. */
-function pathSamples(header: string[], rows: LogRows): (PathPoint | null)[] | null {
-  const eastIndex = header.indexOf(PATH_COLUMNS[0])
-  const northIndex = header.indexOf(PATH_COLUMNS[1])
-  const heightIndex = header.indexOf(PATH_COLUMNS[2])
-  if (eastIndex < 0 || northIndex < 0 || heightIndex < 0) return null
-  return rows.map((row) => {
-    const east = row[eastIndex]
-    const north = row[northIndex]
-    const height = row[heightIndex]
-    if (!isFiniteNumber(east) || !isFiniteNumber(north) || !isFiniteNumber(height)) return null
-    return { east, north, height }
-  })
-}
-
-/** The 12 edges of the ground box as LineSegments vertices. */
-function boxEdges(frame: PathFrame): Float32Array {
-  const x0 = frame.cx - frame.half
-  const x1 = frame.cx + frame.half
-  const y0 = frame.cy - frame.half
-  const y1 = frame.cy + frame.half
-  const corners = [
-    [x0, y0, 0], [x1, y0, 0], [x1, y1, 0], [x0, y1, 0],
-    [x0, y0, frame.top], [x1, y0, frame.top], [x1, y1, frame.top], [x0, y1, frame.top],
-  ]
-  const edges = [0, 1, 1, 2, 2, 3, 3, 0, 4, 5, 5, 6, 6, 7, 7, 4, 0, 4, 1, 5, 2, 6, 3, 7]
-  const positions = new Float32Array(edges.length * 3)
-  edges.forEach((corner, index) => positions.set(corners[corner], index * 3))
-  return positions
-}
-
-/**
- * The 3D View tab: the accumulated log's flight path (east, north, height above ground), start green, end red,
- * inside a ground box that starts at 50 m either side of the start and 50 m high and grows to fit the path. The
- * scene is built once; row updates only move geometry, the orbit angle survives them, and the renderer is disposed
- * with the view. It is mounted lazily on first show and stays mounted (hidden) so the angle survives tab switches.
- */
-function FlightPath3D({ header, rows, visible }: { header: string[] | null; rows: LogRows; visible: boolean }): ReactElement {
-  const hostRef = useRef<HTMLDivElement | null>(null)
-  const handleRef = useRef<FlightPathHandle | null>(null)
-  const [notice, setNotice] = useState('')
-  const [autoFit, setAutoFit] = useState(true)
-
-  useEffect(() => {
-    const host = hostRef.current
-    if (host === null) return undefined
-    let renderer: THREE.WebGLRenderer
-    try {
-      renderer = new THREE.WebGLRenderer({ antialias: true })
-    } catch {
-      setNotice('WebGL is unavailable in this browser.')
-      return undefined
-    }
-    renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
-    // The ground clips whatever dives below it, as the Tk view's zlim bottom of 0 did (sim_view.py:500).
-    renderer.clippingPlanes = [new THREE.Plane(new THREE.Vector3(0, 0, 1), 0)]
-    host.appendChild(renderer.domElement)
-
-    const scene = new THREE.Scene()
-    scene.background = new THREE.Color(PATH_BACKGROUND)
-    const camera = new THREE.PerspectiveCamera(45, 1, 0.1, 1e6)
-    camera.up.set(0, 0, 1)
-    const controls = new OrbitControls(camera, renderer.domElement)
-    controls.enableDamping = true
-    controls.dampingFactor = 0.12
-
-    const boxGeometry = new THREE.BufferGeometry()
-    const boxMaterial = new THREE.LineBasicMaterial({ color: PATH_BOX_COLOR })
-    const box = new THREE.LineSegments(boxGeometry, boxMaterial)
-    box.frustumCulled = false
-    const pathGeometry = new THREE.BufferGeometry()
-    const pathMaterial = new THREE.LineBasicMaterial({ color: PATH_LINE_COLOR })
-    const path = new THREE.LineSegments(pathGeometry, pathMaterial)
-    path.frustumCulled = false
-    const markerGeometry = new THREE.SphereGeometry(1, 16, 12)
-    const startMaterial = new THREE.MeshBasicMaterial({ color: PATH_START_COLOR })
-    const endMaterial = new THREE.MeshBasicMaterial({ color: PATH_END_COLOR })
-    const startMarker = new THREE.Mesh(markerGeometry, startMaterial)
-    const endMarker = new THREE.Mesh(markerGeometry, endMaterial)
-    startMarker.visible = false
-    endMarker.visible = false
-    scene.add(box, path, startMarker, endMarker)
-
-    let dirty = true
-    let frame: PathFrame | null = null
-    let fitting = true
-
-    /** Keep the current orbit direction, re-centre on the box and back off to fit it. */
-    const fit = (target: PathFrame): void => {
-      const centre = new THREE.Vector3(target.cx, target.cy, target.top / 2)
-      const radius = Math.sqrt(2 * target.half * target.half + (target.top / 2) * (target.top / 2))
-      const rect = host.getBoundingClientRect()
-      const aspect = rect.width > 0 && rect.height > 0 ? rect.width / rect.height : camera.aspect
-      const verticalFov = THREE.MathUtils.degToRad(camera.fov)
-      const horizontalFov = 2 * Math.atan(Math.tan(verticalFov / 2) * Math.max(aspect, 1e-4))
-      const distance = (radius / Math.sin(Math.min(verticalFov, horizontalFov) / 2)) * PATH_FIT_MARGIN
-      const direction = camera.position.clone().sub(controls.target)
-      if (direction.lengthSq() < 1e-12) direction.copy(PATH_DIRECTION)
-      direction.normalize()
-      const markerScale = Math.max(target.half * 0.02, 1)
-      startMarker.scale.setScalar(markerScale)
-      endMarker.scale.setScalar(markerScale)
-      camera.position.copy(centre).addScaledVector(direction, distance)
-      controls.target.copy(centre)
-      camera.near = Math.max(distance / 1000, 0.01)
-      camera.far = Math.max(distance + radius * 6, 1000)
-      camera.updateProjectionMatrix()
-      controls.update()
-      dirty = true
-    }
-
-    const update = (samples: (PathPoint | null)[] | null): void => {
-      const positions: number[] = []
-      let previous: PathPoint | null = null
-      let first: PathPoint | null = null
-      let last: PathPoint | null = null
-      let half = PATH_MIN_HALF_M
-      let top = PATH_MIN_HEIGHT_M
-      let cx = 0
-      let cy = 0
-      for (const sample of samples ?? []) {
-        if (sample === null) {
-          previous = null
-          continue
-        }
-        if (first === null) {
-          first = sample
-          cx = sample.east
-          cy = sample.north
-        }
-        last = sample
-        if (previous !== null) {
-          positions.push(previous.east, previous.north, previous.height, sample.east, sample.north, sample.height)
-        }
-        half = Math.max(half, Math.abs(sample.east - cx), Math.abs(sample.north - cy))
-        top = Math.max(top, sample.height)
-        previous = sample
-      }
-      pathGeometry.setAttribute('position', new THREE.BufferAttribute(new Float32Array(positions), 3))
-      pathGeometry.setDrawRange(0, positions.length / 3)
-      if (first !== null && last !== null) {
-        startMarker.visible = true
-        endMarker.visible = true
-        startMarker.position.set(first.east, first.north, first.height)
-        endMarker.position.set(last.east, last.north, last.height)
-      } else {
-        startMarker.visible = false
-        endMarker.visible = false
-      }
-      const next: PathFrame = { cx, cy, half, top }
-      if (frame === null || frame.cx !== next.cx || frame.cy !== next.cy || frame.half !== next.half || frame.top !== next.top) {
-        frame = next
-        boxGeometry.setAttribute('position', new THREE.BufferAttribute(boxEdges(next), 3))
-        camera.far = Math.max(camera.far, camera.position.length() + half * 8 + top * 8)
-        camera.updateProjectionMatrix()
-        if (fitting) fit(next)
-      }
-      dirty = true
-    }
-
-    const resize = (): void => {
-      const rect = host.getBoundingClientRect()
-      if (rect.width < 1 || rect.height < 1) return
-      renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2))
-      renderer.setSize(Math.floor(rect.width), Math.floor(rect.height))
-      camera.aspect = rect.width / rect.height
-      camera.updateProjectionMatrix()
-      dirty = true
-    }
-    const observer = new ResizeObserver(() => resize())
-    observer.observe(host)
-    resize()
-
-    const onStart = (): void => {
-      fitting = false // wheel, pan or orbit gives the user ownership of the camera
-      setAutoFit(false)
-    }
-    controls.addEventListener('start', onStart)
-
-    update(null) // the minimum box, also before any data
-
-    renderer.setAnimationLoop(() => {
-      const moved = controls.update()
-      if (moved || dirty) {
-        dirty = false
-        renderer.render(scene, camera)
-      }
-    })
-
-    handleRef.current = {
-      update,
-      fit: () => { if (frame !== null) fit(frame) },
-      autoFit: enabled => { fitting = enabled; if (enabled && frame !== null) fit(frame) },
-    }
-
-    return () => {
-      handleRef.current = null
-      observer.disconnect()
-      renderer.setAnimationLoop(null)
-      controls.removeEventListener('start', onStart)
-      controls.dispose()
-      boxGeometry.dispose()
-      boxMaterial.dispose()
-      pathGeometry.dispose()
-      pathMaterial.dispose()
-      markerGeometry.dispose()
-      startMaterial.dispose()
-      endMaterial.dispose()
-      renderer.dispose()
-      renderer.domElement.remove()
-    }
-  }, [])
-
-  // Live rows move the geometry in place; a run reset restarts the path in the same scene.
-  useEffect(() => {
-    handleRef.current?.update(header === null ? null : pathSamples(header, rows))
-  }, [header, rows])
-
-  return (
-    <div className="sim-path" style={{ display: visible ? 'flex' : 'none' }} ref={hostRef}>
-      <div className="sim-path-tools">
-        <button type="button" onClick={() => handleRef.current?.fit()}>Fit path</button>
-        <label className="check-row"><input type="checkbox" checked={autoFit} onChange={event => {
-          setAutoFit(event.target.checked)
-          handleRef.current?.autoFit(event.target.checked)
-        }} />Auto fit</label>
-      </div>
-      {notice !== '' && <div className="model-notice">{notice}</div>}
-    </div>
-  )
-}
-
 /**
  * The web SIM view (webapp/sim.py routes; user-visible behavior in docs/ui/sim_view.md, ported from the retired Tk
  * SimMainView). The server owns the one run; this view polls /api/sim/state for the status, the summary lines and
  * the flight-log tail, and POSTs the run/abort requests directly (simApi bypasses the store's mutation queue).
- * The Plots tab draws the log tail with uPlot, the 3D View tab draws the flight path with three.js.
+ * The Plots tab draws the log tail with uPlot, the 3D View tab flies the airframe along it with three.js.
  */
 export function SimView(): ReactElement {
   const snapshot = useSnapshot()
@@ -610,6 +338,7 @@ export function SimView(): ReactElement {
   const [telemetryFile, setTelemetryFile] = useState<string | null>(null)
   const [logHeader, setLogHeader] = useState<string[] | null>(null)
   const [logRows, setLogRows] = useState<LogRows>([])
+  const [runId, setRunId] = useState<number | null>(null)
   const [xColumn, setXColumn] = useState(DEFAULT_X)
   const [yColumns, setYColumns] = useState<readonly string[]>(DEFAULT_Y)
   const [xZoom, setXZoom] = useState<XZoom>(null)
@@ -620,10 +349,10 @@ export function SimView(): ReactElement {
   const [msp, setMsp] = useState(true)
   const [mavlink, setMavlink] = useState(true)
   const [diffRevision, setDiffRevision] = useState(0)
+  const [optionsRevision, setOptionsRevision] = useState(0)
   const [scenarioReady, setScenarioReady] = useState(false)
   const [scenarioDirty, setScenarioDirty] = useState(false)
   const [diffDirty, setDiffDirty] = useState(false)
-  const [scenarioInitial, setScenarioInitial] = useState<Record<string, number | string>>({})
   const [outline, setOutline] = useState<Outline | null>(null)
   const scenarioFile = scenario === '__new__' ? '__new__' : scenario ? scenario + '.py' : null
 
@@ -646,6 +375,7 @@ export function SimView(): ReactElement {
       stdoutOffsetRef.current = payload.stdout.offset
       logOffsetRef.current = payload.log.offset
       runIdRef.current = payload.run_id
+      setRunId(payload.run_id)
       setStateSeen(true)
       setLogFile(payload.log.file)
       setTelemetryFile(payload.telemetry_file ?? null)
@@ -703,9 +433,9 @@ export function SimView(): ReactElement {
     return () => {
       alive = false
     }
-  }, [project])
+  }, [project, optionsRevision])
 
-  // The available starts come from the aircraft; START supplies the selected scenario's default.
+  // The available starts come from the aircraft; scenario changes preserve the toolbar selection.
   useEffect(() => {
     if (options === null) return
     const starts = options.starts
@@ -728,7 +458,7 @@ export function SimView(): ReactElement {
   const scenarioChoices = options?.scenarios[controller] ?? []
   const noAirframe = options !== null && options.starts.length === 0
   const aborting = status === 'Aborting...'
-  const emptyOverride = options?.start_options.some(option => !conditionOff(option, start) && conditions[option.key] !== undefined && conditions[option.key].trim() === '') ?? false
+  const emptyCondition = options?.start_options.some(option => !conditionOff(option, start) && conditions[option.key]?.trim() === '') ?? false
   const displayStatus = !running && status === 'Idle' && noAirframe ? 'No valid airframe' : status
 
   const setCondition = (key: string, value: string): void => {
@@ -748,7 +478,7 @@ export function SimView(): ReactElement {
       if (controller === INAV) { body.inav_config = inavConfig; body.msp = msp; body.mavlink = mavlink }
       const picked: Record<string, string> = {}
       for (const option of options.start_options) {
-        const value = (conditions[option.key] ?? '').trim()
+        const value = (conditions[option.key] ?? String(conditionDefault(options, start, option.key))).trim()
         if (value === '' || conditionOff(option, start)) continue
         picked[option.key] = value
       }
@@ -787,7 +517,6 @@ export function SimView(): ReactElement {
                 setDuration(String(options?.default_duration_s ?? 600))
                 setScenarioReady(false)
                 setScenario(options?.scenarios[next]?.[0] ?? '')
-                setConditions({})
               }}
             >
               {(options?.controllers ?? []).map(name => <option key={name} value={name}>{name === INAV ? 'INAV SITL' : name === 'mcu' ? 'MCU · sensors / PWM' : name.toUpperCase()}</option>)}
@@ -800,7 +529,7 @@ export function SimView(): ReactElement {
               className="field-input"
               value={scenario}
               disabled={options === null || running || scenarioDirty}
-              onChange={(event) => { setScenario(event.target.value); setScenarioReady(false); setScenarioInitial({}); setConditions({}) }}
+              onChange={(event) => { setScenario(event.target.value); setScenarioReady(false) }}
             >
               {scenario === '__new__' && <option value="__new__">New scenario (save first)</option>}
               {scenarioChoices.map(name => <option key={name} value={name}>{name} · Python</option>)}
@@ -832,7 +561,7 @@ export function SimView(): ReactElement {
               disabled={options === null || controller !== INAV || running || diffDirty}
               onChange={(event) => setInavConfig(event.target.value)}
             >
-              <option value={GENERATED}>generated from the design</option>
+              <option value={GENERATED}>default</option>
               {(options?.inav_configs ?? []).map((config) => (
                 <option key={config.file} value={config.file}>
                   {config.label}
@@ -864,7 +593,7 @@ export function SimView(): ReactElement {
           <p className="form-hint">The Python script owns commands and stop conditions. The selected controller determines its script directory.</p>
           {(scenarioDirty || diffDirty) && <p className="form-hint">Save the edited SIM files before running.</p>}
           <details className="advanced-fields sim-start-details">
-          <summary>Start conditions <span>Defaults shown</span></summary>
+          <summary>Start conditions</summary>
           <fieldset className="sim-conditions">
             <legend>Initial state & environment</legend>
             {(options?.start_options ?? []).filter(option => !conditionOff(option, start)).map((option) => (
@@ -873,19 +602,13 @@ export function SimView(): ReactElement {
                 <input
                   id={`sim-condition-${option.key}`}
                   className="field-input"
-                  value={conditions[option.key] ?? (options === null ? '' : String(scenarioInitial[option.key] ?? conditionDefault(options, start, option.key)))}
-                  readOnly={conditions[option.key] === undefined}
-                  placeholder={conditions[option.key] === undefined ? 'Unavailable' : 'Enter a value'}
+                  value={conditions[option.key] ?? (options === null ? '' : String(conditionDefault(options, start, option.key)))}
+                  placeholder="Enter a value"
                   aria-label={option.label}
                   spellCheck={false}
                   onChange={(event) => setCondition(option.key, event.target.value)}
                 />
-                <label className="check-row condition-override"><input type="checkbox" aria-label={`Override ${option.label}`} checked={conditions[option.key] !== undefined}
-                  onChange={event => {
-                    if (event.target.checked && options !== null) setCondition(option.key, String(scenarioInitial[option.key] ?? conditionDefault(options, start, option.key)))
-                    else setConditions(current => { const next = { ...current }; delete next[option.key]; return next })
-                  }} />Override</label>
-                {conditions[option.key] === '' && <span className="field-error">Enter a value or turn off Override.</span>}
+                {conditions[option.key] === '' && <span className="field-error">Enter a value.</span>}
               </div>
             ))}
           </fieldset>
@@ -894,7 +617,7 @@ export function SimView(): ReactElement {
             <button
               type="button"
               className="action"
-              disabled={options === null || !stateSeen || running || starting || noAirframe || emptyOverride || scenarioDirty || diffDirty || scenario === '__new__' || !scenarioReady}
+              disabled={options === null || !stateSeen || running || starting || noAirframe || emptyCondition || scenarioDirty || diffDirty || scenario === '__new__' || !scenarioReady}
               onClick={() => void run()}
             >
               Run
@@ -933,16 +656,16 @@ export function SimView(): ReactElement {
           <button type="button" className={tab === 'diff' ? 'tab active' : 'tab'} onClick={() => setTab('diff')}>INAV diff</button>
           <button type="button" className={tab === 'performance' ? 'tab active' : 'tab'} onClick={() => setTab('performance')}>Performance</button>
         </div>
-        <SimFileEditor controller={controller} kind="scenario" name={scenarioFile} project={project} template={options?.scenario_templates[controller]?.source ?? ''} templateOutline={options?.scenario_templates[controller]?.scenario} templateInitial={options?.scenario_templates[controller]?.initial} running={running} visible={tab === 'scenario'} onDirty={setScenarioDirty} onDiscard={() => { if (scenario === '__new__') setScenario(options?.scenarios[controller]?.[0] ?? ''); setScenarioDirty(false) }}
-          onLoad={resource => { setOutline(resource.scenario ?? null); setScenarioReady(!resource.error); setScenarioInitial(resource.initial); if (typeof resource.initial.start === 'string') setStart(resource.initial.start) }}
+        <SimFileEditor controller={controller} kind="scenario" name={scenarioFile} project={project} template={options?.scenario_templates[controller]?.source ?? ''} templateOutline={options?.scenario_templates[controller]?.scenario} running={running} visible={tab === 'scenario'} onDirty={setScenarioDirty} onDiscard={() => { if (scenario === '__new__') setScenario(options?.scenarios[controller]?.[0] ?? ''); setScenarioDirty(false) }}
+          onLoad={resource => { setOutline(resource.scenario ?? null); setScenarioReady(!resource.error) }}
           onSaved={(name, resource) => {
-            setScenario(name.slice(0, -3)); setScenarioDirty(false); setScenarioReady(true); setScenarioInitial(resource.initial)
+            setScenario(name.slice(0, -3)); setScenarioDirty(false); setScenarioReady(true)
             setOutline(resource.scenario ?? null)
-            if (typeof resource.initial.start === 'string') setStart(resource.initial.start)
             void simOptions().then(setOptions)
           }} />
         <SimFileEditor controller={controller} kind="diff" name={inavConfig} project={project} template="" revision={diffRevision} running={running} visible={tab === 'diff'} onDirty={setDiffDirty} onDiscard={() => setDiffDirty(false)} onLoad={() => {}}
-          onSaved={name => { setInavConfig(name); setDiffDirty(false); void simOptions().then(setOptions) }} />
+          onSaved={name => { setInavConfig(name); setDiffDirty(false); void simOptions().then(setOptions) }}
+          onDeleted={() => { setInavConfig(GENERATED); setDiffDirty(false); setDiffRevision(value => value + 1); setOptionsRevision(value => value + 1) }} />
         {tab === 'plots' ? (
           <FlightLogPlot
             header={logHeader}
@@ -953,7 +676,7 @@ export function SimView(): ReactElement {
             onXZoom={(range) => setXZoom(range)}
           />
         ) : null}
-        {pathSeen && <FlightPath3D header={logHeader} rows={logRows} visible={tab === '3d' && logHeader !== null} />}
+        {pathSeen && <FlightScene snapshot={snapshot} header={logHeader} rows={logRows} runId={runId} visible={tab === '3d' && logHeader !== null} />}
         {tab === '3d' && logHeader === null && <p className="placeholder">Run a simulation to see its flight path.</p>}
         {tab === 'performance' && <PerformanceResults lines={summary} model={options?.aero_model ?? ''} />}
       </section>
@@ -965,7 +688,7 @@ export function SimView(): ReactElement {
               {controller === INAV && <p className="form-hint">RC roll, pitch and yaw: −1…1. Throttle: 0…1. Positive pitch stick pushes the nose down.</p>}
               {controller === 'mcu' && <p className="form-hint">Write controller.esc[index] and controller.servo[index] in PWM microseconds (1000…2000). Read flight.sensors for the simulated I2C/SPI hardware. Control loops belong in the script.</p>}
               <p className="form-hint">Controller commands come from the imported module. flight.truth and flight.state report simulator state; flight.sensors exposes the raw hardware readings.</p>
-              <p className="form-hint">START sets initial conditions. PARAMETERS and TELEMETRY are optional for every scenario. flight.wait runs on simulated time; flight.measure records a measurement.</p>
+              <p className="form-hint">The toolbar sets initial conditions. PARAMETERS and TELEMETRY are optional for every scenario. flight.wait runs on simulated time; flight.measure records a measurement.</p>
               <p className="form-hint">An unmet wait condition fails visibly at its timeout. Returning from run ends the flight. phase(name, description) labels a step.</p>
             </> : <p className="form-hint">Project SITL diffs are flown as saved. Generated diffs are refreshed on each run; save a copy to customize them. Real FC dumps retain the existing SITL conversion of mixer and AUX settings.</p>}
           </div>

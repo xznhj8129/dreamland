@@ -8,7 +8,7 @@
     "Planform": {
         "XRootLE": {
             "Type": "App::PropertyLength",
-            "Value": 318.40000000000003,
+            "Value": 311.91,
             "Unit": "mm"
         },
         "Layout": {
@@ -25,7 +25,7 @@
         },
         "VerticalOffset": {
             "Type": "App::PropertyFloat",
-            "Value": 0.0
+            "Value": 0.6
         },
         "Span": {
             "Type": "App::PropertyLength",
@@ -68,6 +68,22 @@
             "Value": "'naca2412'"
         }
     },
+    "Sections": {
+        "CutCount": {
+            "Type": "App::PropertyInteger",
+            "Value": 2
+        },
+        "Cut1": {
+            "Type": "App::PropertyLength",
+            "Value": 15.0,
+            "Unit": "mm"
+        },
+        "Cut2": {
+            "Type": "App::PropertyLength",
+            "Value": 164.99999999999997,
+            "Unit": "mm"
+        }
+    },
     "Spars": {
         "Material": {
             "Type": "App::PropertyString",
@@ -101,17 +117,17 @@
     "CarryThrough": {
         "StemWidth": {
             "Type": "App::PropertyLength",
-            "Value": 10.0,
+            "Value": 15.0,
             "Unit": "mm"
         },
         "Length": {
             "Type": "App::PropertyLength",
-            "Value": 20.0,
+            "Value": 30.0,
             "Unit": "mm"
         },
         "FlareRadius": {
             "Type": "App::PropertyLength",
-            "Value": 20.0,
+            "Value": 10.0,
             "Unit": "mm"
         },
         "RootLength": {
@@ -171,6 +187,10 @@
             "Type": "App::PropertyAngle",
             "Value": 45.0,
             "Unit": "deg"
+        },
+        "AlignHingeVertically": {
+            "Type": "App::PropertyBool",
+            "Value": true
         },
         "ChordStart": {
             "Type": "App::PropertyFloat",

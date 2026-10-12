@@ -68,6 +68,17 @@
             "Value": "'naca0008'"
         }
     },
+    "Sections": {
+        "CutCount": {
+            "Type": "App::PropertyInteger",
+            "Value": 1
+        },
+        "Cut1": {
+            "Type": "App::PropertyLength",
+            "Value": 10.0,
+            "Unit": "mm"
+        }
+    },
     "Control": {
         "Kind": {
             "Type": "App::PropertyString",
@@ -83,13 +94,17 @@
             "Value": 45.0,
             "Unit": "deg"
         },
+        "AlignHingeVertically": {
+            "Type": "App::PropertyBool",
+            "Value": false
+        },
         "ChordStart": {
             "Type": "App::PropertyFloat",
-            "Value": 0.5
+            "Value": 0.55
         },
         "SpanStart": {
             "Type": "App::PropertyFloat",
-            "Value": 0.05
+            "Value": 0.0
         },
         "SpanEnd": {
             "Type": "App::PropertyFloat",

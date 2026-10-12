@@ -126,7 +126,7 @@ class Joints:
     insertion_depth_m into a socket in each female end, with fit_clearance_m radial play (also round rods and spars
     through it). A socket leaves socket_wall_m of the section's skin over the coupler (bored to the outer surface less
     socket_wall_m), whatever the section's wall elsewhere. count radial screw holes per section end, hole_edge_dist_m
-    from the cut, evenly round the axis from hole_angle_offset_deg (from +y)."""
+    from the cut, evenly round the axis from hole_angle_offset_deg (from +y), along the cut profile's wall normals."""
     type: str
     count: int  # screws per section end
     screw: str
@@ -193,12 +193,18 @@ class Channel:
 
 
 @dataclass(frozen=True)
+class LoftStation:
+    x_m: float
+    section: SectionProfile
+
+
+@dataclass(frozen=True)
 class Fuselage:
     length_m: float
     section: BodySection
     nose: EndProfile
     tail: EndProfile
-    joints: Joints
+    loft_stations: tuple[LoftStation, ...]
     reinforcement: Reinforcement | None
     channels: tuple[Channel, ...]
 
@@ -210,13 +216,16 @@ class ControlSurface:
     span_start: float | None  # split: moving-surface inboard span fraction; all_moving: where the moving surface starts (0 = the root)
     span_end: float | None  # split: moving-surface outboard span fraction; all_moving: always None
     pivot: float | None  # all_moving: pivot line, fraction of the local chord from the leading edge
+    align_hinge_vertically: bool  # True: the hinge runs straight across the panel span from the inboard anchor, not along the chord lines
     roles: tuple[str, ...]
     deflection_min_deg: float  # positive = trailing edge away from the panel normal (down on a wing)
     deflection_max_deg: float
     rate_deg_s: float  # placeholder, not used yet
     servos: tuple[str, ...]  # one SERVO_OUTPUTS entry per panel, in panel order; outputs may be shared
     gap_m: float  # material removed between the fixed and the moving surface (the moving surface's edges are inset by it); 0 = none
-    spar_diameter_m: float | None  # the hinge rod the surface turns on, outer diameter; None = no rod
+    rod_diameter_m: float | None  # the pivot rod the surface turns on, outer diameter; None = no rod
+    rod_x_offset_m: float  # pivot rod offset along the chord direction (LE to TE); + aft
+    rod_y_offset_m: float  # pivot rod offset towards the panel normal (up on a wing)
 
 
 @dataclass(frozen=True)
@@ -260,6 +269,11 @@ class RootBase:
 
 
 @dataclass(frozen=True)
+class SurfaceSections:
+    cuts_m: tuple[float, ...]  # span distances from the true panel root; first segment stays on the fuselage
+
+
+@dataclass(frozen=True)
 class Surface:
     name: str
     x_root_le_m: float
@@ -279,6 +293,7 @@ class Surface:
     control: ControlSurface | None  # every panel of the set carries one; None = fixed surface
     spars: Spars | None  # None = no spars
     root_base: RootBase | None  # None = none (not built yet either way)
+    sections: SurfaceSections
 
 
 @dataclass(frozen=True)
@@ -322,7 +337,7 @@ class Mount:
     on: str
     surface: str | None
     span_position_m: float | None  # along each panel from its root
-    x_offset_m: float | None  # from the surface root leading edge
+    x_offset_m: float  # from the surface root leading edge or the nose/tail mounting face; positive aft
     direction: str
     spin: str  # SURFACE_PROP_SPINS on a surface, SINGLE_PROP_SPINS on the nose or tail
     thrust_axis_tilt_deg: float  # thrust line tilted up (+z) from the body axis, e.g. to pass through the CG
@@ -425,7 +440,6 @@ class FuselageSection:
     empty_mass_kg: float | None  # weighed printed mass; None = computed
     complete_mass_kg: float | None  # weighed printed mass + everything positioned in the section; None = itemised
     fixed_length: bool = False  # preserve this section's length during automatic editor resizing
-    section: SectionProfile = SectionProfile()
 
 
 @dataclass(frozen=True)
@@ -433,6 +447,7 @@ class Sections:
     cuts_m: tuple[float, ...]  # cut stations along the fuselage, ascending; section i spans cut i-1 .. cut i
     per_section: tuple[FuselageSection, ...]  # len(cuts_m) + 1
     cut_joints: tuple[str, ...]  # CUT_JOINTS, one per cut
+    joints: Joints
 
 
 @dataclass(frozen=True)
@@ -593,7 +608,7 @@ def _check_joints_fit(joints: Joints, section: BodySection, path: str) -> None:
         raise AirframeError(f"{path}.coupler_wall_m: {joints.coupler_wall_m} with {joints.fit_clearance_m} clearance fills the whole socket")
 
 
-def _rod_pattern(fields: _Fields, section: BodySection, parts_data: dict) -> RodPattern:
+def _rod_pattern(fields: _Fields, parts_data: dict) -> RodPattern:
     """Reads the pattern keys of a reinforcement block; the rods must be inside the outer surface."""
     pattern = RodPattern(
         type=fields.choice("type", REINFORCEMENT_TYPES),
@@ -613,14 +628,12 @@ def _rod_pattern(fields: _Fields, section: BodySection, parts_data: dict) -> Rod
     angles = pattern.quadrant_angles_deg()
     if not (0.0 < angles[0] and angles[-1] < 90.0) or (len(angles) > 1 and pattern.polar_split_angle == 0.0):
         raise AirframeError(f"{fields.path}: rods at {list(angles)} deg from the horizontal; each must be distinct and strictly inside its quadrant (0-90)")
-    if pattern.radial_position_m + pattern.diameter_m / 2.0 >= min(section.width_m, section.height_m) / 2.0:
-        raise AirframeError(f"{fields.at('radial_position_m')}: rods of {pattern.diameter_m} m at {pattern.radial_position_m} m reach the outer surface")
     return pattern
 
 
 def _reinforcement(data: dict, path: str, section: BodySection, length_m: float, parts_data: dict) -> Reinforcement:
     fields = _Fields(data, path)
-    pattern = _rod_pattern(fields, section, parts_data)
+    pattern = _rod_pattern(fields, parts_data)
     reinforcement = Reinforcement(pattern=pattern, from_x_m=fields.number("from_x_m", minimum=0.0), to_x_m=fields.positive("to_x_m"))
     fields.done()
     if not reinforcement.from_x_m < reinforcement.to_x_m <= length_m:
@@ -639,12 +652,18 @@ def _fuselage(data: dict, path: str, parts_data: dict) -> Fuselage:
         raise AirframeError(f"{path}: nose + tail length {nose.length_m + tail.length_m} exceeds fuselage length {length_m}")
     for end_name, end in (("nose", nose), ("tail", tail)):
         try:
-            check_profile(end.profile, end.length_m, section.width_m / 2.0, end.params)
+            check_profile(end.profile, end.length_m, None, end.params)  # build_body validates against the loft shoulder radius
         except ValueError as error:
             raise AirframeError(f"{path}.{end_name}: {error}") from error
 
-    joints = _joints(fields.required("joints"), fields.at("joints"))
-    _check_joints_fit(joints, section, fields.at("joints"))
+    guide_data = fields.required("loft_stations")
+    if type(guide_data) is not list:
+        raise AirframeError(f"{fields.at('loft_stations')}: expected an array")
+    guides = tuple(_loft_station(row, f"{fields.at('loft_stations')}[{index}]", section)
+                   for index, row in enumerate(guide_data))
+    positions = [guide.x_m for guide in guides]
+    if positions != sorted(set(positions)) or any(x < 0 or x > length_m for x in positions):
+        raise AirframeError(f"{fields.at('loft_stations')}: positions must be strictly ascending within 0..{length_m} m")
     reinforcement_data = fields.optional("reinforcement", None)
     reinforcement = None if reinforcement_data is None else _reinforcement(reinforcement_data, fields.at("reinforcement"), section, length_m, parts_data)
 
@@ -669,7 +688,7 @@ def _fuselage(data: dict, path: str, parts_data: dict) -> Fuselage:
         section=section,
         nose=nose,
         tail=tail,
-        joints=joints,
+        loft_stations=guides,
         reinforcement=reinforcement,
         channels=tuple(channels),
     )
@@ -701,9 +720,12 @@ def _control(data: dict, path: str, panel_count: int) -> ControlSurface:
         pivot = _fraction(fields, "pivot")
     gap_m = fields.optional("gap_m", 0.0)
     gap_m = fields.number("gap_m", minimum=0.0, value=gap_m)
-    spar_diameter_m = fields.optional("spar_diameter_m", None)
-    if spar_diameter_m is not None:
-        spar_diameter_m = fields.number("spar_diameter_m", minimum=0.0, exclusive=True, value=spar_diameter_m)
+    rod_diameter_m = fields.optional("rod_diameter_m", None)
+    if rod_diameter_m is not None:
+        rod_diameter_m = fields.number("rod_diameter_m", minimum=0.0, exclusive=True, value=rod_diameter_m)
+    rod_x_offset_m = fields.number("rod_x_offset_m", value=fields.optional("rod_x_offset_m", 0.0))
+    rod_y_offset_m = fields.number("rod_y_offset_m", value=fields.optional("rod_y_offset_m", 0.0))
+    align_hinge_vertically = fields.flag("align_hinge_vertically") if "align_hinge_vertically" in fields.data else False
     roles = fields.required("roles")
     if type(roles) is not list or any(role not in CONTROL_ROLES for role in roles) or len(set(roles)) != len(roles):
         raise AirframeError(f"{fields.at('roles')}: expected a list of distinct roles from {CONTROL_ROLES}, got {roles!r}")
@@ -717,9 +739,10 @@ def _control(data: dict, path: str, panel_count: int) -> ControlSurface:
         raise AirframeError(f"{fields.at('servos')}: expected {panel_count} servo outputs (one per panel) from {SERVO_OUTPUTS[0]}..{SERVO_OUTPUTS[-1]}, got {servos!r}")
     fields.done()
     return ControlSurface(
-        kind=kind, chord_start=chord_start, span_start=span_start, span_end=span_end, pivot=pivot, roles=tuple(roles),
+        kind=kind, chord_start=chord_start, span_start=span_start, span_end=span_end, pivot=pivot,
+        align_hinge_vertically=align_hinge_vertically, roles=tuple(roles),
         deflection_min_deg=deflection_min_deg, deflection_max_deg=deflection_max_deg, rate_deg_s=rate_deg_s, servos=tuple(servos),
-        gap_m=gap_m, spar_diameter_m=spar_diameter_m,
+        gap_m=gap_m, rod_diameter_m=rod_diameter_m, rod_x_offset_m=rod_x_offset_m, rod_y_offset_m=rod_y_offset_m,
     )
 
 
@@ -774,6 +797,18 @@ def _root_base(data: dict, path: str) -> RootBase:
     return base
 
 
+def _surface_sections(data: dict, path: str, span_m: float) -> SurfaceSections:
+    fields = _Fields(data, path)
+    values = fields.required("cuts_m")
+    if type(values) is not list:
+        raise AirframeError(f"{fields.at('cuts_m')}: expected an array")
+    cuts = tuple(fields.number("cuts_m", minimum=0.0, exclusive=True, value=value) for value in values)
+    fields.done()
+    if list(cuts) != sorted(set(cuts)) or any(cut >= span_m for cut in cuts):
+        raise AirframeError(f"{path}.cuts_m: cuts must be strictly ascending between 0 and span {span_m} m")
+    return SurfaceSections(cuts_m=cuts)
+
+
 def _surface(data: dict, path: str, fuselage_length_m: float, parts_data: dict) -> Surface:
     fields = _Fields(data, path)
     mass = fields.optional("mass_kg", None)
@@ -781,6 +816,7 @@ def _surface(data: dict, path: str, fuselage_length_m: float, parts_data: dict) 
     control = fields.optional("control", None)
     spars = fields.optional("spars", None)
     root_base = fields.optional("root_base", None)
+    span_m = fields.positive("span_m")
     surface = Surface(
         name=fields.text("name"),
         x_root_le_m=fields.number("x_root_le_m", minimum=0.0),
@@ -789,7 +825,7 @@ def _surface(data: dict, path: str, fuselage_length_m: float, parts_data: dict) 
         dihedral_deg=fields.number("dihedral_deg"),
         vertical_offset=fields.number("vertical_offset"),
         root=fields.choice("root", SURFACE_ROOTS),
-        span_m=fields.positive("span_m"),
+        span_m=span_m,
         chord_root_m=fields.positive("chord_root_m"),
         chord_tip_m=fields.positive("chord_tip_m"),
         sweep_le_deg=fields.number("sweep_le_deg"),
@@ -800,6 +836,7 @@ def _surface(data: dict, path: str, fuselage_length_m: float, parts_data: dict) 
         control=None if control is None else _control(control, f"{path}.control", LAYOUT_PANEL_COUNTS[layout]),
         spars=None if spars is None else _spars(spars, f"{path}.spars", parts_data),
         root_base=None if root_base is None else _root_base(root_base, f"{path}.root_base"),
+        sections=_surface_sections(fields.required("sections"), f"{path}.sections", span_m),
     )
     fields.done()
     if not -1.0 <= surface.vertical_offset <= 1.0:
@@ -1090,7 +1127,8 @@ def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], parts: tup
     for index, mount_data in enumerate(fields.required("mounts")):
         mount_fields = _Fields(mount_data, f"{fields.at('mounts')}[{index}]")
         on = mount_fields.choice("on", MOUNT_TARGETS)
-        surface_name = span_position_m = x_offset_m = None
+        surface_name = span_position_m = None
+        x_offset_m = mount_fields.number("x_offset_m")
         if on == "surface":
             surface_name = mount_fields.text("surface")
             if surface_name not in surface_names:
@@ -1098,7 +1136,6 @@ def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], parts: tup
             span_position_m = mount_fields.number("span_position_m", minimum=0.0)
             if span_position_m > surface_names[surface_name].span_m:
                 raise AirframeError(f"{mount_fields.at('span_position_m')}: {span_position_m} is past the panel span {surface_names[surface_name].span_m}")
-            x_offset_m = mount_fields.number("x_offset_m")
         direction = mount_fields.choice("direction", THRUST_DIRECTIONS)
         thrust_axis_tilt_deg = mount_fields.number("thrust_axis_tilt_deg")
         if (on, direction) in (("nose", "pusher"), ("tail", "tractor")):
@@ -1164,7 +1201,7 @@ def _preset(data: dict, name: str, parts_data: dict) -> Preset:
         spars = _spars(fields.required("spars"), fields.at("spars"), parts_data)
     if "reinforcement" in fields.data:
         rod_fields = _Fields(fields.required("reinforcement"), fields.at("reinforcement"))
-        reinforcement = _rod_pattern(rod_fields, section, parts_data)
+        reinforcement = _rod_pattern(rod_fields, parts_data)
         rod_fields.done()
     if "limits" in fields.data:
         limit_fields = _Fields(fields.required("limits"), fields.at("limits"))
@@ -1208,14 +1245,19 @@ def _section_profile(data: dict, path: str, default: BodySection) -> SectionProf
     return profile
 
 
-def _fuselage_section(data: dict, path: str, default: BodySection) -> FuselageSection:
+def _loft_station(data: dict, path: str, default: BodySection) -> LoftStation:
+    fields = _Fields(data, path)
+    x_m = fields.number("x_m", minimum=0.0)
+    return LoftStation(x_m, _section_profile(fields.data, path, default))
+
+
+def _fuselage_section(data: dict, path: str) -> FuselageSection:
     fields = _Fields(data, path)
     section = FuselageSection(
         solid=fields.flag("solid"),
         empty_mass_kg=None if "empty_mass_kg" not in fields.data else fields.positive("empty_mass_kg"),
         complete_mass_kg=None if "complete_mass_kg" not in fields.data else fields.positive("complete_mass_kg"),
         fixed_length=fields.flag("fixed_length") if "fixed_length" in fields.data else False,
-        section=_section_profile(fields.optional("section", {}), fields.at("section"), default),
     )
     fields.done()
     return section
@@ -1313,10 +1355,13 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     rows = sections_fields.required("per_section")
     if type(rows) is not list or len(rows) != len(cuts) + 1:
         raise AirframeError(f"{sections_fields.at('per_section')}: needs one entry per section ({len(cuts) + 1})")
-    per_section = tuple(_fuselage_section(row, f"{sections_fields.at('per_section')}[{index}]", fuselage.section) for index, row in enumerate(rows))
+    per_section = tuple(_fuselage_section(row, f"{sections_fields.at('per_section')}[{index}]") for index, row in enumerate(rows))
     cut_joints = sections_fields.required("cut_joints")
     if type(cut_joints) is not list or len(cut_joints) != len(cuts) or any(joint not in CUT_JOINTS for joint in cut_joints):
         raise AirframeError(f"{sections_fields.at('cut_joints')}: needs one of {list(CUT_JOINTS)} per cut ({len(cuts)}), got {cut_joints!r}")
+    joints = _joints(sections_fields.required("joints"), sections_fields.at("joints"))
+    if joints.socket_wall_m > fuselage.section.wall_radial_m:
+        raise AirframeError(f"{sections_fields.at('joints')}.socket_wall_m exceeds the fuselage wall")
     sections_fields.done()
     unweighed_solid = [f"section {index + 1}" for index, section in enumerate(per_section) if section.solid and section.empty_mass_kg is None]
     if unweighed_solid and print_settings.bulk_density_kg_m3 is None:
@@ -1326,7 +1371,7 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     return Airframe(
         name=name, notes=notes, preset=preset, powered=powered, vtol=vtol, tailsitter=tailsitter, operating_point=operating_point, print=print_settings,
         fuselage=fuselage, surfaces=surfaces, propulsion=propulsion, volumes=volumes, parts=parts,
-        sections=Sections(cuts_m=cuts, per_section=per_section, cut_joints=tuple(cut_joints)),
+        sections=Sections(cuts_m=cuts, per_section=per_section, cut_joints=tuple(cut_joints), joints=joints),
     )
 
 
@@ -1394,15 +1439,16 @@ def blank_definition(name: str) -> dict:
             "section": {"width_m": 0.05, "height_m": 0.05, "shape": 2.0, "wall_radial_m": 0.00125},
             "nose": {"profile": "elliptical", "length_m": 0.05, "params": {}},
             "tail": {"profile": "parabolic", "length_m": 0.05, "params": {"k_prime": 1.0}},
-            "joints": {"type": "radial_screws", "count": 8, "screw": "M3", "insertion_depth_m": 0.01,
-                       "coupler_wall_m": 0.0045, "fit_clearance_m": 0.0003, "socket_wall_m": 0.00125,
-                       "hole_edge_dist_m": 0.006, "hole_diameter_m": 0.003, "hole_angle_offset_deg": 22.5},
+            "loft_stations": [],
             "channels": [],
         },
         "surfaces": [],
         "volumes": [],
         "parts": [],
-        "sections": {"cuts_m": [], "per_section": [{"solid": False, "section": {}}], "cut_joints": []},
+        "sections": {"cuts_m": [], "per_section": [{"solid": False}], "cut_joints": [],
+                     "joints": {"type": "radial_screws", "count": 8, "screw": "M3", "insertion_depth_m": 0.01,
+                       "coupler_wall_m": 0.0045, "fit_clearance_m": 0.0003, "socket_wall_m": 0.00125,
+                       "hole_edge_dist_m": 0.006, "hole_diameter_m": 0.003, "hole_angle_offset_deg": 22.5}},
     }
 
 
@@ -1418,7 +1464,7 @@ def main() -> None:
         volume_mass = [sum(volume.mass_kg[i] for volume in airframe.volumes if volume.mass_kg is not None) for i in (0, 1)]
         surface_mass = sum(surface.mass_kg for surface in airframe.surfaces if surface.mass_kg is not None)
         section_mass = sum(section.empty_mass_kg for section in airframe.sections.per_section if section.empty_mass_kg is not None)
-        coupler_mass = airframe.sections.cut_joints.count("coupler") * (airframe.fuselage.joints.coupler_mass_kg or 0.0)
+        coupler_mass = airframe.sections.cut_joints.count("coupler") * (airframe.sections.joints.coupler_mass_kg or 0.0)
         declared = [volume_mass[i] + surface_mass + motor_mass + section_mass + coupler_mass for i in (0, 1)]
         print(f"{argument}: {airframe.name!r} valid")
         print(f"  fuselage {airframe.fuselage.length_m:.3f} m, {len(airframe.surfaces)} surface sets, {len(airframe.volumes)} volumes, {motors} motors")

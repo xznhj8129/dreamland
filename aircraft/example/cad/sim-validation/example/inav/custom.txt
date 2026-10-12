@@ -1,0 +1,61 @@
+# SITL diff from the design, rewritten by controllers/inav.py on every run from it; to edit, copy it into inav/
+# quadrocketbuilder export of ezplane: fixed-wing, motors on throttle; servo mix from the
+# control roles, signs from each control's computed moments.
+set throttle_idle = 8
+mixer_profile 1
+set platform_type = AIRPLANE
+mmix reset
+mmix 0 1.000 +0.000 +0.000 +0.000    # motor 1 tail, cw
+smix reset
+smix 0 0 1 100 0 -1    # S1 pitch: C4 elevators panel 1
+smix 1 1 1 100 0 -1    # S2 pitch: C5 elevators panel 2
+smix 2 2 2 -100 0 -1    # S3 yaw: C3 rudder panel 1
+smix 3 3 0 -100 0 -1    # S4 roll: C1 main-wing panel 1
+smix 4 4 0 100 0 -1    # S5 roll: C2 main-wing panel 2
+# Generated SITL diff of a fixed-wing or glider: after the design's mixer, before the bench and battery lines.
+set mag_hardware = FAKE
+# switches: AUX1 arm, AUX2 angle, AUX3 nav althold, AUX4 nav poshold (mid) / nav rth (high)
+aux 0 0 0 1700 2100
+aux 1 1 1 1300 2100
+aux 2 3 2 1300 2100
+aux 3 11 3 1300 1600
+aux 4 10 3 1700 2100
+# NAV RTH returns home and lands (fixed-wing autoland), not just loiters
+set nav_rth_allow_landing = ALWAYS
+set fw_p_pitch = 15
+set fw_i_pitch = 5
+set fw_d_pitch = 5
+set fw_ff_pitch = 91
+set fw_p_roll = 15
+set fw_i_roll = 3
+set fw_d_roll = 7
+set fw_p_yaw = 50
+set fw_i_yaw = 0
+set fw_d_yaw = 20
+set fw_ff_yaw = 255
+set max_angle_inclination_rll = 600
+set max_angle_inclination_pit = 600
+set dterm_lpf_hz = 10
+set fw_turn_assist_pitch_gain =  0.400
+set nav_fw_pos_z_p = 25
+set nav_fw_pos_z_d = 8
+set nav_fw_pos_xy_p = 55
+set d_boost_min =  1.000
+set d_boost_max =  1.000
+set rc_expo = 30
+set rc_yaw_expo = 30
+set roll_rate = 18
+set pitch_rate = 10
+set yaw_rate = 3
+
+# What the bench's simulated hardware needs (inav-jsbsim-bench, MSP_SIMULATOR). Appended to every generated SITL diff.
+set receiver_type = SIM (SITL)
+set baro_hardware = FAKE
+set pitot_hardware = NONE
+feature GPS
+set gps_provider = MSP
+set init_gyro_cal = OFF
+set small_angle = 180    # air starts arm at whatever attitude they start in
+feature VBAT
+feature CURRENT_METER
+set battery_capacity = 2200

@@ -1,4 +1,4 @@
-"""One script convention and scheduler: START, optional PARAMETERS/TELEMETRY, and run(flight)."""
+"""One script convention and scheduler: optional PARAMETERS/TELEMETRY, and run(flight)."""
 
 import ast
 import json
@@ -42,6 +42,8 @@ class ScenarioSpec:
                         if target.id in values:
                             raise ValueError(f"Define {target.id} once")
                         values[target.id] = ast.literal_eval(node.value)
+                    if isinstance(target, ast.Name) and target.id == "START":
+                        raise ValueError("Initial conditions belong in the SIM toolbar or CLI; remove START")
                     if isinstance(target, ast.Name) and target.id in ("EXPERIMENT", "ENGINES"):
                         raise ValueError("Use PARAMETERS/TELEMETRY and the controller's script directory")
         parameters = values.get("PARAMETERS", {})
@@ -86,50 +88,6 @@ def scenario_path(directory, controller, name):
         raise ValueError("Choose a controller and a plain scenario name")
     path = directory / controller / (name + ".py")
     return path if path.is_file() else SCENARIOS_DIR / controller / (name + ".py")
-
-
-def starting_conditions(source):
-    from libs.simrun import START_OPTIONS, STARTS
-    for node in ast.parse(source).body:
-        if isinstance(node, ast.Assign) and any(isinstance(target, ast.Name) and target.id == "START" for target in node.targets):
-            value = ast.literal_eval(node.value)
-            if not isinstance(value, dict):
-                raise ValueError("START must be a dictionary of start conditions")
-            for key, setting in value.items():
-                if key == "start":
-                    if setting not in STARTS:
-                        raise ValueError(f"START start must be one of {STARTS}")
-                elif key not in START_OPTIONS:
-                    raise ValueError(f"unknown START condition: {key}")
-                else:
-                    value[key] = float(setting)
-                    if not math.isfinite(value[key]):
-                        raise ValueError(f"START {key} must be finite")
-            if "start" in value:
-                incompatible = [key for key in value if key != "start" and not START_OPTIONS[key].applies_to(value["start"])]
-                if incompatible:
-                    raise ValueError(f"START {incompatible} do not apply to {value['start']}")
-            return value
-    return {}
-
-
-def apply_start_defaults(args, source):
-    from libs.simrun import START_OPTIONS
-    initial = starting_conditions(source)
-    declared = initial.get("start", "air")
-    args.start = args.start or declared
-    skipped = []
-    for key, value in initial.items():
-        if key == "start":
-            continue
-        if args.start != declared and not START_OPTIONS[key].applies_to(args.start):
-            skipped.append(key)
-            continue
-        attribute = key.replace("-", "_")
-        if getattr(args, attribute) is None:
-            setattr(args, attribute, value)
-    if skipped:
-        print(f"Start method changed {declared} -> {args.start}; inapplicable START defaults: {', '.join(skipped)}", flush=True)
 
 
 def load_scenario(path):
@@ -232,7 +190,11 @@ class Flight:
         point = {"label": label, "t": self.elapsed, **(values or self.truth)}
         self.measurements.append(point)
         self.measurements_path.write_text(json.dumps(self.measurements, indent=2) + "\n")
-        print("Measurement: " + json.dumps(point), flush=True)
+        # The run output shows the status line only: the label, the time and any explicitly passed values,
+        # rounded; the full point (with truth data) stays in the measurements file.
+        brief = {"label": label, "t": round(self.elapsed, 3),
+                 **{name: round(value, 4) if isinstance(value, float) else value for name, value in values.items()}}
+        print("Measurement: " + json.dumps(brief), flush=True)
         return point
 
     def run(self, script, spec):

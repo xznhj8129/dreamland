@@ -2,7 +2,7 @@ import type { SceneItem } from './renderer'
 
 export type LineLevel = 'info' | 'warning' | 'problem'
 
-export type ComponentKind = 'surface' | 'part' | 'volume' | 'mount' | 'section' | 'battery' | 'fuselage'
+export type ComponentKind = 'surface' | 'part' | 'volume' | 'mount' | 'section' | 'battery' | 'fuselage' | 'loft'
 export interface ComponentSelection { kind: ComponentKind; index: number; label?: string }
 
 export interface ReportLine {
@@ -46,7 +46,10 @@ export interface ReportPages {
 export interface LogEntry {
   time: string
   title: string
+  /** The full text, traceback included; the Log tab renders this. */
   text: string
+  /** The one-line headline of a traceback entry, for the views' messages; older snapshots may omit it. */
+  summary?: string
 }
 
 /** The airframe/2 definition as stored; unknown fields keep the JSON shape the server sent. */
@@ -73,6 +76,9 @@ export interface ResolvedControl {
   surface: string
   panel_index: number
   servo: string
+  span_length_m: number
+  hinge_length_m: number
+  rod_diameter_m: number | null
 }
 
 /** webapp/serialize.py chart_payload: the Motor info chart curves (`editor_view.build_motor_info` 1069-1098). */
@@ -109,7 +115,7 @@ export interface ResolvedSnapshot {
 
 /** One movable element's screen outline from POST /api/draw (webapp/drawing.py _handles). */
 export interface DrawHandle {
-  target: 'cut' | 'surface' | 'spars' | 'volume' | 'part' | 'battery' | 'rod'
+  target: 'cut' | 'loft' | 'surface' | 'spars' | 'volume' | 'part' | 'battery' | 'rod'
   index: number
   kind: 'polygon' | 'line'
   /** Canvas px, flat x,y pairs: a closed loop for polygon, a polyline for line. */
@@ -148,6 +154,9 @@ export interface ScrollThumb {
 export interface DrawPayload {
   scene: SceneItem[]
   handles: DrawHandle[]
+  /** Front-view section-midpoint profiles, in section order, for selection highlighting. */
+  section_outlines: number[][]
+  loft_outlines: number[][]
   session_id: number
   metrics: Record<string, number | string>
   view: DrawView
@@ -197,16 +206,33 @@ export interface StateMessage extends Snapshot {
   type: 'state'
 }
 
+/** webapp/model3d.py _panel_meshes: an animatable control surface's servo, limits and hinge (airframe frame). */
+export interface Model3DControl {
+  /** 1.. front to back, then clockwise from the top as seen from behind. */
+  number: number
+  /** Index of the servo<N> telemetry/log column (libs.simrun's servo outputs). */
+  servo: number
+  /** Deflection limits in degrees about `axis`; min <= 0 <= max. */
+  min_deg: number
+  max_deg: number
+  /** Anchor point of the hinge line. */
+  hinge: [number, number, number]
+  /** Unit hinge axis; a right-hand rotation about it is a positive deflection. */
+  axis: [number, number, number]
+}
+
 /** webapp/model3d.py build_model3d: one component as a flat triangle mesh in metres, airframe frame (x forward). */
 export interface Model3DMesh {
   name: string
-  kind: 'body' | 'pod' | 'panel' | 'control' | 'volume' | 'part' | 'motor' | 'prop' | 'rod' | 'spar'
+  kind: 'body' | 'pod' | 'panel' | 'control' | 'volume' | 'part' | 'motor' | 'prop' | 'rod' | 'spar' | 'section' | 'loft' | 'feature'
   /** Flat x,y,z triples. */
   positions: number[]
   indices: number[]
   /** CSS hex colour, e.g. "#4fa3ff". */
   color: string
   opacity: number
+  /** Present on kind "control": the hinge metadata the flight scene animates. */
+  control?: Model3DControl
 }
 
 export interface Model3DMarker {
@@ -225,6 +251,8 @@ export interface Model3DBounds {
 export interface Model3DPayload {
   meshes: Model3DMesh[]
   markers: Model3DMarker[]
+  /** The resolved CG in metres, airframe frame (libs.geometry.ResolvedAirframe.cg_m). */
+  cg: [number, number, number]
   bounds: Model3DBounds
 }
 

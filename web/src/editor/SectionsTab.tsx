@@ -2,12 +2,11 @@ import { useState } from 'react'
 import type { ReactElement } from 'react'
 import { editorOp } from '../store'
 import type { ResolvedSection, Snapshot } from '../types'
-import { Card, CheckboxField, ChoiceField, EntryField, Group } from './fields'
+import { Card, CheckboxField, ChoiceField, EntryField, Fields } from './fields'
+import { formatValue } from './format'
 import { isObject } from './patch'
-import { ComponentPicker, useComponentIndex } from './selection'
+import { ComponentPicker, useComponentIndex, useSelection } from './selection'
 import { useFormApi } from './session'
-
-const SECTION_PROFILE_KEYS = ['width_m', 'height_m', 'shape']
 
 function itemisedLabel(section: ResolvedSection): string {
   const [low, high] = section.complete_itemised_kg
@@ -19,23 +18,32 @@ export function SectionsTab({ snapshot }: { snapshot: Snapshot }): ReactElement 
   const sections = isObject(api.definition.sections) ? api.definition.sections : {}
   const cuts = Array.isArray(sections.cuts_m) ? sections.cuts_m : []
   const fuselage = isObject(api.definition.fuselage) ? api.definition.fuselage : {}
-  const defaultSection = isObject(fuselage.section) ? fuselage.section : {}
+  const joints = isObject(sections.joints) ? sections.joints : {}
   const boundaries = [0, ...cuts, fuselage.length_m].map(Number)
   const cutJoints = Array.isArray(sections.cut_joints) ? sections.cut_joints : []
   const rows = Array.isArray(sections.per_section) ? sections.per_section.filter(isObject) : []
   const resolved = snapshot.definition_valid && snapshot.resolved?.sections.length === rows.length ? snapshot.resolved.sections : []
   const selected = useComponentIndex('section', rows.length)
+  const { select } = useSelection()
   const [notice, setNotice] = useState('')
   async function run(body: Record<string, unknown>): Promise<void> {
     const result = await editorOp(api.sessionId, body)
     setNotice(result.ok ? '' : result.message)
+    if (result.ok && body.op === 'section.add_cut') select('section', selected + (body.side === 'after' ? 1 : 0))
   }
   return <>
     <Card title="Fuselage sections">
-      <p className="form-hint">Select a section to edit its boundaries, cross-section, joint and mass.</p>
+      <p className="form-hint">Select a section to edit its boundaries, joint and mass. Cuts do not change the fuselage shape.</p>
       {notice && <div className="field-error">{notice}</div>}
     </Card>
-    <ComponentPicker kind="section" items={rows.map((row, index) => ({ name: `S${index + 1}`, detail: row.solid === true ? 'Solid' : 'Hollow' }))} />
+    <ComponentPicker kind="section" items={rows.map((row, index) => ({ name: `S${index + 1}`, detail: `${formatValue('length_m', boundaries[index + 1]! - boundaries[index]!, api.context)} mm · ${row.solid === true ? 'Solid' : 'Hollow'}` }))} />
+    <div className="button-row" role="group" aria-label="Add section">
+      <button type="button" disabled={!snapshot.definition_valid || rows.length === 0}
+        onClick={() => void run({ op: 'section.add_cut', index: selected, side: 'before' })}>Add before</button>
+      <button type="button" disabled={!snapshot.definition_valid || rows.length === 0}
+        onClick={() => void run({ op: 'section.add_cut', index: selected, side: 'after' })}>Add after</button>
+    </div>
+    <p className="form-hint">Splits the selected span in half; airframe length and loft stay unchanged.</p>
     {rows.map((row, index) => <div key={index} hidden={index !== selected}>
       <Card title={`S${index + 1}`}>
         {index > 0 ? <EntryField path={['sections','cuts_m',index - 1]} unitKey="cuts_m" label="Start (mm)" />
@@ -47,13 +55,6 @@ export function SectionsTab({ snapshot }: { snapshot: Snapshot }): ReactElement 
           onValue={value => void run({ op: 'section.length', index, value })} />
         <CheckboxField path={['sections','per_section',index,'fixed_length']} checked={row.fixed_length === true} label="Fix length" />
         <p className="form-hint">Fix preserves length during automatic resizing. Editing length keeps the airframe length and resizes the other unfixed sections proportionally.</p>
-        <Group label="Loft cross-section">
-          {SECTION_PROFILE_KEYS.map(key => <EntryField key={key}
-            path={['sections','per_section',index,'section',key]} unitKey={key}
-            label={key === 'shape' ? 'Shape exponent' : key === 'width_m' ? 'Width (mm)' : 'Height (mm)'} optional
-            defaultValue={defaultSection[key]} defaultLabel="Fuselage default" />)}
-          <p className="form-hint">Cross-section at this section’s midpoint ({((boundaries[index]! + boundaries[index + 1]!) * 500).toFixed(1)} mm), before nose/tail taper. Smooth transitions join adjoining midpoints. Shape: 1 = diamond, 2 = ellipse, 4 = rounded rectangle. Wall thickness stays global.</p>
-        </Group>
         {index < cuts.length ? <>
           <ChoiceField path={['sections','cut_joints',index]} value={cutJoints[index]} options={api.context.cut_joints} label="Joint at end cut" />
         </> : null}
@@ -66,6 +67,9 @@ export function SectionsTab({ snapshot }: { snapshot: Snapshot }): ReactElement 
         {index < cuts.length && <button type="button" className="danger" onClick={() => void run({ op: 'section.delete_cut', index })}>Remove end cut & merge sections</button>}
       </Card>
     </div>)}
+    <Card title="Joints">
+      <Fields data={joints} path={['sections', 'joints']} context={api.context} />
+    </Card>
     {!snapshot.definition_valid && <p className="field-error">Fix the definition errors in Log to refresh the section estimates.</p>}
   </>
 }

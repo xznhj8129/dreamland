@@ -1,9 +1,8 @@
 """Longitudinal- and front-view enrichment for the browser drawing, applied after the scene has been recorded.
 
-libs/graphics.py still draws the side/front scene exactly as it did for the Tk view (flat panel quads and one slanted spar line per panel in
-the side view, one straight span line per panel in the front view); the browser views instead show the panel's real
-airfoil sections and the spar rods as projected cross-sections. Nothing in libs/ changes: webapp.drawing.draw records
-the same scene with RecordingCanvas and then appends these items / removes the recorded panel and spar lines. The
+libs/graphics.py records panel quads, wing spar lines and physical hinge cylinders. The browser adapter
+replaces the panel and wing spar outlines with projected airfoil profiles and cylinder cross-sections, and
+supplies airfoil profiles at surface print cuts to the shared drawing helpers. The
 airfoil coordinates are the exact ones libs.cad lofts the solids from. The draw payload also carries the per-surface
 roll-slider detents derived from each surface's span direction.
 """
@@ -15,16 +14,12 @@ from functools import lru_cache
 from typing import Any, Callable
 
 from libs.cad import _airfoil_section_coordinates
-from libs.geometry import ResolvedAirframe, chord_direction, cross, thickness_direction, unit
-from libs.graphics import convex_hull, panel_outline
+from libs.geometry import ResolvedAirframe, chord_direction, thickness_direction
+from libs.graphics import convex_hull, draw_projected_rod, draw_surface_cut, panel_outline
 
 SPAR_TAG_PREFIX = "spars:"
 PROFILE_WIDTH_PX = 2
 EDGE_WIDTH_PX = 2
-SPAR_WIDTH_PX = 2
-SILHOUETTE_WIDTH_PX = 1
-SPAR_SECTION_SAMPLES = 20
-SPAR_SILHOUETTE_DASH = (2, 3)
 MATCH_DECIMALS = 2  # recorded items are matched with coordinates rounded to 0.01 px
 
 Project = Callable[[tuple[float, float, float]], tuple[float, float]]
@@ -74,15 +69,6 @@ def _replace_panel_quad(canvas, panel, surface_index: int, project: Project, ui_
         canvas.create_line(x0, y0, x1, y1, fill=ui_draw, width=EDGE_WIDTH_PX, tags=("drag", tag))
 
 
-def _circle_section(center: Vec, axis: Vec, radius: float) -> list[Vec]:
-    """The cross-section circle at center, in the plane perpendicular to the unit axis (stable basis u, w)."""
-    reference = (1.0, 0.0, 0.0) if abs(axis[0]) < 0.9 else (0.0, 1.0, 0.0)
-    u = unit(cross(reference, axis))
-    w = cross(axis, u)  # unit: axis and u are unit and perpendicular
-    return [tuple(c + radius * (math.cos(angle) * uc + math.sin(angle) * wc) for c, uc, wc in zip(center, u, w))
-            for angle in (2.0 * math.pi * sample / SPAR_SECTION_SAMPLES for sample in range(SPAR_SECTION_SAMPLES))]
-
-
 def enrich_longitudinal_scene(canvas, resolved: ResolvedAirframe, project: Project, ui_draw: str, rod_color: str) -> None:
     """Append the root/tip airfoil profiles and spar cross-sections of the side view, replacing the recorded lines.
 
@@ -127,16 +113,9 @@ def enrich_longitudinal_scene(canvas, resolved: ResolvedAirframe, project: Proje
         panel = next(panel for panel in surface_set.panels if panel.index == spar.panel_index)
         root = tuple(le + along_m * cd + spars.y_offset_m * td
                      for le, cd, td in zip(panel.attach_le, chord_direction(panel), thickness_direction(panel)))
-        axis = unit(tuple(end - start for end, start in zip(spar.end, root)))
         tags = ("drag", f"spars:{surface_indices[spar.surface]}")
-        projected: list[list[tuple[float, float]]] = []
-        for center in (root, spar.end):
-            screen = [project(point) for point in _circle_section(center, axis, spar.diameter_m / 2.0)]
-            projected.append(screen)
-            canvas.create_polygon([value for point in screen for value in point], outline=rod_color, fill="", width=SPAR_WIDTH_PX, tags=tags)
-        hull = convex_hull([point for screen in projected for point in screen])
-        canvas.create_polygon([value for point in hull for value in point], outline=rod_color, fill="", width=SILHOUETTE_WIDTH_PX,
-                              dash=SPAR_SILHOUETTE_DASH, tags=tags)
+        draw_projected_rod(canvas, root, spar.end, spar.diameter_m, project, rod_color, tags)
+    enrich_surface_cuts(canvas, resolved, project)
 
 
 def _drop_front_span_line(canvas, panel, project: Project, ui_draw: str) -> None:
@@ -172,6 +151,7 @@ def enrich_front_scene(canvas, resolved: ResolvedAirframe, project: Project, ui_
             hull = convex_hull(points)
             canvas.create_polygon([value for point in hull for value in point], outline=ui_draw, fill="", width=PROFILE_WIDTH_PX,
                                   tags=("drag", f"surface:{surface_index}"))
+    enrich_surface_cuts(canvas, resolved, project)
 
 
 def roll_detents(resolved: ResolvedAirframe | None) -> list[dict[str, Any]]:
@@ -201,3 +181,15 @@ def _wrap_roll(angle: float) -> float:
     """An angle modulo 180 deg, in [-90, 90]: +90 is kept when the angle was positive (a flat wing's planform)."""
     wrapped = (angle + 90.0) % 180.0 - 90.0
     return 90.0 if wrapped == -90.0 and angle > 0.0 else wrapped
+
+
+def enrich_surface_cuts(canvas, resolved: ResolvedAirframe, project: Project) -> None:
+    for surface_set in resolved.surfaces:
+        for panel in surface_set.panels:
+            span_m = surface_set.definition.span_m
+            for cut in surface_set.definition.sections.cuts_m:
+                fraction = cut / span_m
+                leading_edge = tuple(a + fraction * (b - a) for a, b in zip(panel.attach_le, panel.tip_le))
+                chord = panel.chord_root_m + fraction * (panel.chord_tip_m - panel.chord_root_m)
+                points = section_points(leading_edge, chord, chord_direction(panel), thickness_direction(panel), airfoil_profile(panel.airfoil))
+                draw_surface_cut(canvas, points, project, ("surface-cut",))

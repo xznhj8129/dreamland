@@ -29,6 +29,7 @@ const FIELD_NAMES: Record<string, string> = {
   span_start: 'Start (span fraction)', span_end: 'End (span fraction)', k_prime: "Parabolic K′",
   fin_position: 'Fin position', wall_radial_m: 'Radial wall thickness',
   vertical_offset: 'Vertical offset (body radius fraction)', bulk_density_kg_m3: 'Printed bulk density',
+  rod_diameter_m: 'Pivot rod diameter', rod_x_offset_m: 'Pivot rod x offset (aft)', rod_y_offset_m: 'Pivot rod y offset (up)',
 }
 
 /** editor_view.field_label (104-111). */

@@ -13,7 +13,6 @@ import asyncio
 import json
 import shutil
 import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -28,13 +27,14 @@ from webapp.server import create_app  # noqa: E402
 from webapp.state import AppState  # noqa: E402
 
 EXAMPLE = ROOT / "aircraft" / "example"
-AXIS_X_TARGETS = ("cut", "spars", "surface", "rod")
+AXIS_X_TARGETS = ("loft", "cut", "spars", "surface", "rod")
 
 
-def make_state(tmp: Path, name: str) -> AppState:
-    """AppState on a copy of the example project; the recompute never starts the aero thread."""
-    root = tmp / name
-    shutil.copytree(EXAMPLE, root)
+def make_state(output: Path, name: str) -> AppState:
+    """AppState on a persistent validation definition from the example; the recompute never starts the aero thread."""
+    root = output / name
+    root.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(EXAMPLE / "aircraft.json", root / "aircraft.json")
     state = AppState(Project(root=root))
     original = state.recompute
     state.recompute = lambda run_aero=True: original(run_aero=False)
@@ -62,7 +62,7 @@ def check_handles(state: AppState) -> None:
     side = draw(state, "Longitudinal")
     assert side["session_id"] == state.session_id
     present = targets(side)
-    for target in (("cut", 0), ("spars", 0), ("surface", 0), ("volume", 0), ("part", 0)):
+    for target in (("loft", 0), ("cut", 0), ("spars", 0), ("surface", 0), ("volume", 0), ("part", 0)):
         assert target in present, f"side view lost its {target[0]} handle"
     for handle in side["handles"]:
         assert set(handle) == {"target", "index", "kind", "coords", "horizontal", "vertical", "order"}
@@ -75,6 +75,7 @@ def check_handles(state: AppState) -> None:
     present = targets(front)
     for target in (("spars", 0), ("surface", 0), ("volume", 0), ("part", 0)):
         assert target in present, f"front view lost its {target[0]} handle"
+    assert len(front["loft_outlines"]) == len(state.definition["fuselage"]["loft_stations"])
     assert ("cut", 0) not in present, "cuts are not drawn in the front view, so they have no handle there"
     for handle in front["handles"]:
         axes = (handle["horizontal"], handle["vertical"])
@@ -112,8 +113,8 @@ def check_moves(state: AppState) -> None:
     definition = state.definition
 
     editor.apply_move(state, move_body(state, "cut", 0, {"x": -10.0}))
-    assert definition["sections"]["cuts_m"][0] == 0.005, definition["sections"]["cuts_m"][0]
-    print("ok   move cut: clamped to MIN_SECTION_LENGTH_M from the neighbour")
+    assert definition["sections"]["cuts_m"][0] == editor.MOVE_QUANTUM_M, definition["sections"]["cuts_m"][0]
+    print("ok   move cut: clamped inside its neighbour at drag resolution")
 
     editor.apply_move(state, move_body(state, "surface", 1, {"x": -10.0}))
     assert definition["surfaces"][1]["x_root_le_m"] == 0.0
@@ -198,13 +199,12 @@ async def check_routes(state: AppState) -> None:
 
 
 def main() -> None:
-    with tempfile.TemporaryDirectory(prefix="qrb-draw-drag-") as tmp:
-        temp = Path(tmp)
-        state = make_state(temp, "example")
-        assert state.definition_valid and not state.log, "the example project did not start clean"
-        check_handles(state)
-        check_moves(state)
-        asyncio.run(check_routes(make_state(temp, "http")))
+    output = EXAMPLE / "cad" / "drawing-validation"
+    state = make_state(output, "example")
+    assert state.definition_valid and not state.log, "the example project did not start clean"
+    check_handles(state)
+    check_moves(state)
+    asyncio.run(check_routes(make_state(output, "http")))
     print("draw/drag suite OK")
 
 

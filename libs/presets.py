@@ -5,7 +5,7 @@ apply_preset(definition, "tube62")
 preset_status(definition)  # "tube62" or "tube62 (modified)"
 
 Size presets (data/presets/<name>.json, in the definition's own form) on a raw airframe/2 definition. A preset fills
-the fuselage blocks it drives (section, joints, rod pattern); the aircraft keeps its own values and the preset name as a
+the aircraft blocks it drives (section, joints, rod pattern); the aircraft keeps its own values and the preset name as a
 label. The aircraft's own coupler mass and rod extent (from_x_m, to_x_m) are never driven. The preset's spars are what a
 surface set starts with when spars are added; they are not driven. Validation is libs/airframe.py's.
 """
@@ -45,7 +45,7 @@ def preset_carry_through(definition: dict) -> dict | None:
 def preset_blocks(definition: dict) -> dict:
     """The values of a definition a preset drives, shaped like a preset entry."""
     fuselage = definition["fuselage"]
-    blocks = {"section": dict(fuselage["section"]), "joints": {key: fuselage["joints"][key] for key in DRIVEN_JOINT_KEYS}}
+    blocks = {"section": dict(fuselage["section"]), "joints": {key: definition["sections"]["joints"][key] for key in DRIVEN_JOINT_KEYS}}
     if "reinforcement" in fuselage:
         blocks["reinforcement"] = {key: fuselage["reinforcement"][key] for key in ROD_PATTERN_KEYS}
     return blocks
@@ -74,7 +74,7 @@ def apply_preset(definition: dict, name: str) -> None:
     preset = read_presets()[name]
     fuselage = definition["fuselage"]
     fuselage["section"] = copy.deepcopy(preset["section"])
-    fuselage["joints"].update(copy.deepcopy(preset["joints"]))
+    definition["sections"]["joints"].update(copy.deepcopy(preset["joints"]))
     if "reinforcement" in preset:
         extent = {key: fuselage["reinforcement"][key] for key in ROD_EXTENT_KEYS} if "reinforcement" in fuselage else default_rod_extent(definition)
         fuselage["reinforcement"] = copy.deepcopy(preset["reinforcement"]) | extent

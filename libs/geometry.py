@@ -27,6 +27,7 @@ from libs.pointed_shapes import sample_pointed_profile
 
 END_PROFILE_SAMPLES = 14
 BODY_LOFT_SAMPLES = 32  # sampled cubic transitions for drawing, aero and CAD
+ROD_ENVELOPE_SAMPLES = 16
 POD_PROFILE_SAMPLES = 14
 PERIMETER_SAMPLES = 72
 SPAN_STRIPS = 64
@@ -151,7 +152,9 @@ class ControlPlacement:
     opening: tuple[Vec, Vec, Vec, Vec]  # the region cut out of the fixed panel (on the panel surface)
     moving: tuple[Vec, Vec, Vec, Vec]  # the moving surface region after the gap (on the panel surface)
     gap_m: float  # material removed between the fixed and the moving surface
-    spar_diameter_m: float | None  # the hinge rod's outer diameter; None = no rod
+    rod_diameter_m: float | None  # the pivot rod's outer diameter; None = no rod
+    span_length_m: float  # moving span after the end gaps, measured along the panel span
+    hinge_length_m: float
 
 
 @dataclass(frozen=True)
@@ -165,7 +168,7 @@ class MotorPlacement:
     bell_length_m: float
     pod_stations: tuple[tuple[float, float], ...]  # (x_m, radius_m) on the motor's axis line, nose to tail
     spin: str  # "cw" / "ccw" seen from where the thrust points (from above in hover)
-    mount_x_m: float  # where it is attached to the fuselage: where its surface set meets the body (exposed root LE), the nose (0) or the tail (length)
+    mount_x_m: float  # surface root LE, or the end mount face clamped to the body; assigns attached mass to a section
     panel: Panel | None  # the surface panel it sits on; None on the nose or tail
     mount_holes: MotorMountHoles | None
     mount_face: Vec
@@ -352,12 +355,14 @@ def _loft_section_at(loft: tuple[BodyStation, ...], taper: tuple[BodyStation, ..
 
 
 def build_body(airframe: Airframe, end_samples: int = END_PROFILE_SAMPLES) -> Body:
-    """Shared loft: section-midpoint controls, smooth cubic transitions, existing nose/tail taper."""
+    """Shared loft: independent shape controls, smooth cubic transitions, existing nose/tail taper."""
     fuselage = airframe.fuselage
-    bounds = (0.0, *airframe.sections.cuts_m, fuselage.length_m)
-    loft = tuple(BodyStation((x0 + x1) / 2.0, section.width_m, section.height_m, section.shape)
-                 for row, x0, x1 in zip(airframe.sections.per_section, bounds, bounds[1:])
-                 for section in (row.section.resolve(fuselage.section),))
+    loft = tuple(BodyStation(guide.x_m, section.width_m, section.height_m, section.shape)
+                 for guide in fuselage.loft_stations
+                 for section in (guide.section.resolve(fuselage.section),))
+    if not loft:  # An empty guide list explicitly means the global constant section.
+        section = fuselage.section
+        loft = (BodyStation(0.0, section.width_m, section.height_m, section.shape),)
     nose_end, tail_start = fuselage.nose.length_m, fuselage.length_m - fuselage.tail.length_m
     nose_radius = _interpolate_section(loft, nose_end, smooth=True).width_m / 2.0
     tail_radius = _interpolate_section(loft, tail_start, smooth=True).width_m / 2.0
@@ -373,6 +378,11 @@ def build_body(airframe: Airframe, end_samples: int = END_PROFILE_SAMPLES) -> Bo
             xs.update(a.x_m + (b.x_m - a.x_m) * k / BODY_LOFT_SAMPLES for k in range(BODY_LOFT_SAMPLES + 1))
     stations = tuple(_loft_section_at(loft, taper, x) for x in sorted(xs))
     return Body(stations, fuselage.length_m, nose_end, tail_start, loft, taper)
+
+
+def loft_section_at(body: Body, x_m: float) -> BodyStation:
+    """Untapered section at x: the profile edited by independent loft guides."""
+    return _interpolate_section(body.loft_stations, x_m, smooth=True)
 
 
 def body_section_at(body: Body, x_m: float) -> BodyStation:
@@ -463,9 +473,44 @@ def panel_point(panel: Panel, span_fraction: float, chord_fraction: float) -> Ve
     return tuple(a + (b - a) * chord_fraction for a, b in zip(le, te))
 
 
+def control_hinge_point(panel: Panel, control: ControlSurface, span_fraction: float) -> Vec:
+    """The physical hinge line, anchored inboard; alignment removes its chordwise sweep."""
+    fraction = control.chord_start if control.kind == "split" else control.pivot
+    if not control.align_hinge_vertically:
+        return panel_point(panel, span_fraction, fraction)
+    anchor = panel_point(panel, control.span_start, fraction)
+    span_m = dot(tuple(b - a for a, b in zip(panel.attach_le, panel.tip_le)), panel.span_dir)
+    return tuple(value + (span_fraction - control.span_start) * span_m * d for value, d in zip(anchor, panel.span_dir))
+
+
+def control_hinge_fraction(panel: Panel, control: ControlSurface, span_fraction: float) -> float:
+    """The hinge line's fraction of the local chord at a span station: the stored chord_start (split) / pivot
+    (all_moving) while the hinge follows the panel's chord lines; with align_hinge_vertically the chord fraction
+    where the hinge anchored at (span_start, chord_start|pivot) runs straight along panel.span_dir projected onto
+    the local chord (no chordwise sweep; incidence, dihedral and the panel's own sweep act through the panel's
+    frame vectors). A projection off the panel within the control's span is a ValueError, not a silent clamp."""
+    anchored = control.chord_start if control.kind == "split" else control.pivot
+    if not control.align_hinge_vertically:
+        return anchored
+    hinge_point = control_hinge_point(panel, control, span_fraction)
+    leading_edge = panel_point(panel, span_fraction, 0.0)
+    trailing_edge = panel_point(panel, span_fraction, 1.0)
+    chord_m = dot(tuple(t - l for t, l in zip(trailing_edge, leading_edge)), chord_direction(panel))
+    fraction = dot(tuple(p - l for p, l in zip(hinge_point, leading_edge)), chord_direction(panel)) / chord_m
+    span_end = control.span_end if control.kind == "split" else 1.0
+    if control.span_start <= span_fraction <= span_end and not 0.0 <= fraction <= 1.0:
+        raise AirframeError(
+            f"surface {panel.surface!r} panel {panel.index + 1}: the aligned hinge leaves the panel at span fraction "
+            f"{span_fraction:.4g} (local chord fraction {fraction:.4g}); reduce the surface sweep or taper, or bring the control's span inboard"
+        )
+    return fraction
+
+
 def control_cut_frames(panel: Panel, control: ControlSurface) -> dict:
-    """Plane frames for cutting one panel's control: hinge point+normal (chord_direction) for split, span
-    start/end points+normal (panel.span_dir), the gap, and the rod endpoints (m). The opening region is what
+    """Plane frames for cutting one panel's control: hinge point+normal perpendicular to the hinge for split, span
+    start/end points+normal (panel.span_dir), the gap, and the rod endpoints (m), shifted rod_x_offset_m aft
+    along the chord_direction and rod_y_offset_m along the panel normal. The hinge edge follows the chord lines,
+    or the aligned line from control_hinge_fraction when align_hinge_vertically is set. The opening region is what
     is cut out of the fixed panel; the moving region starts one gap aft of it (and one gap inboard at each
     span end where fixed material borders it)."""
     if control.kind == "split":
@@ -475,44 +520,62 @@ def control_cut_frames(panel: Panel, control: ControlSurface) -> dict:
     gap_m = control.gap_m
     chord_dir = chord_direction(panel)
     span_dir = panel.span_dir
+    hinge_start = control_hinge_point(panel, control, span_start)
+    hinge_end = control_hinge_point(panel, control, span_end)
+    hinge_dir = unit(cross(tuple(b - a for a, b in zip(hinge_start, hinge_end)), thickness_direction(panel)))
+    if dot(hinge_dir, chord_dir) < 0.0:
+        hinge_dir = tuple(-value for value in hinge_dir)
 
     def chord_at(span_fraction: float) -> float:
-        return panel.chord_root_m + (panel.chord_tip_m - panel.chord_root_m) * span_fraction
+        leading_edge, trailing_edge = panel_point(panel, span_fraction, 0.0), panel_point(panel, span_fraction, 1.0)
+        return dot(tuple(t - l for t, l in zip(trailing_edge, leading_edge)), hinge_dir)
 
     def along(point: Vec, distance_m: float, direction: Vec) -> Vec:
         return tuple(value + distance_m * d for value, d in zip(point, direction))
 
+    def rod_offset(point: Vec) -> Vec:
+        return along(along(point, control.rod_x_offset_m, chord_dir), control.rod_y_offset_m, panel.normal)
+
     span_start_point = panel_point(panel, span_start, 0.0)
     span_end_point = panel_point(panel, span_end, 0.0)
-    moving_start = span_start + gap_m / panel.span_m if span_start > 0.0 else span_start
-    moving_end = span_end - gap_m / panel.span_m if span_end < 1.0 else span_end
+    true_span_m = dot(tuple(b - a for a, b in zip(panel.attach_le, panel.tip_le)), span_dir)
+    moving_start = span_start + gap_m / true_span_m if span_start > 0.0 else span_start
+    moving_end = span_end - gap_m / true_span_m if span_end < 1.0 else span_end
     if control.kind == "split":
-        hinge_point = panel_point(panel, span_start, control.chord_start)
-        opening = (hinge_point, panel_point(panel, span_start, 1.0), panel_point(panel, span_end, 1.0), panel_point(panel, span_end, control.chord_start))
-        moving = (panel_point(panel, moving_start, control.chord_start + gap_m / chord_at(moving_start)),
+        control_hinge_fraction(panel, control, span_start)
+        hinge_fraction_end = control_hinge_fraction(panel, control, span_end)
+        hinge_point = hinge_start
+        opening = (hinge_point, panel_point(panel, span_start, 1.0), panel_point(panel, span_end, 1.0),
+                   panel_point(panel, span_end, hinge_fraction_end))
+        moving = (panel_point(panel, moving_start, control_hinge_fraction(panel, control, moving_start) + gap_m / chord_at(moving_start)),
                   panel_point(panel, moving_start, 1.0),
                   panel_point(panel, moving_end, 1.0),
-                  panel_point(panel, moving_end, control.chord_start + gap_m / chord_at(moving_end)))
-        rod_start = along(hinge_point, gap_m / 2.0, chord_dir)  # the rod sits centred in the gap
-        rod_end = along(panel_point(panel, span_end, control.chord_start), gap_m / 2.0, chord_dir)
+                  panel_point(panel, moving_end, control_hinge_fraction(panel, control, moving_end) + gap_m / chord_at(moving_end)))
+        rod_start = rod_offset(along(hinge_start, gap_m / 2.0, hinge_dir))  # the rod sits centred in the gap before its offsets
+        rod_end = rod_offset(along(hinge_end, gap_m / 2.0, hinge_dir))
     else:
-        hinge_point = panel_point(panel, span_start, control.pivot)
+        control_hinge_fraction(panel, control, span_start)
+        control_hinge_fraction(panel, control, span_end)
+        hinge_point = hinge_start
         opening = (span_start_point, panel_point(panel, span_start, 1.0), panel_point(panel, span_end, 1.0), span_end_point)
         moving = (panel_point(panel, moving_start, 0.0), panel_point(panel, moving_start, 1.0), panel_point(panel, span_end, 1.0), span_end_point)
-        rod_start, rod_end = hinge_point, panel_point(panel, span_end, control.pivot)
+        rod_start = rod_offset(hinge_point)
+        rod_end = rod_offset(hinge_end)
     return {
         "kind": control.kind,
         "hinge_point": hinge_point if control.kind == "split" else None,
-        "hinge_dir": chord_dir,
+        "hinge_dir": hinge_dir,
         "gap_m": gap_m,
         "span_start_point": span_start_point,
         "span_end_point": span_end_point,
         "span_dir": span_dir,
-        "spar_diameter_m": control.spar_diameter_m,
+        "rod_diameter_m": control.rod_diameter_m,
         "rod_start": rod_start,
         "rod_end": rod_end,
         "opening": opening,
         "moving": moving,
+        "moving_span_m": abs(dot(tuple(b - a for a, b in zip(span_start_point, span_end_point)), span_dir))
+                         - gap_m * (int(span_start > 0.0) + int(span_end < 1.0)),
     }
 
 
@@ -533,12 +596,14 @@ def build_controls(surfaces: tuple[SurfaceSet, ...]) -> tuple[ControlPlacement, 
             if dot(cross(axis, aft), panel.normal) > 0.0:
                 axis = tuple(-value for value in axis)
             found.append(((surface_set.definition.x_root_le_m, round(clockwise_deg, 6), order), surface_set.name, panel.index,
-                          control.servos[panel.index], outline, hinge, axis, opening, moving, control.gap_m, control.spar_diameter_m))
+                          control.servos[panel.index], outline, hinge, axis, opening, moving, control.gap_m, control.rod_diameter_m,
+                          frames["moving_span_m"]))
     found.sort(key=lambda item: item[0])
     return tuple(
         ControlPlacement(number=number, surface=name, panel_index=index, servo=servo, outline=outline, hinge=hinge, axis=axis,
-                         opening=opening, moving=moving, gap_m=gap_m, spar_diameter_m=spar_diameter_m)
-        for number, (_key, name, index, servo, outline, hinge, axis, opening, moving, gap_m, spar_diameter_m) in enumerate(found, start=1)
+                         opening=opening, moving=moving, gap_m=gap_m, rod_diameter_m=rod_diameter_m,
+                         span_length_m=span_length_m, hinge_length_m=math.dist(*hinge))
+        for number, (_key, name, index, servo, outline, hinge, axis, opening, moving, gap_m, rod_diameter_m, span_length_m) in enumerate(found, start=1)
     )
 
 
@@ -905,6 +970,23 @@ def shell_between(body: Body, x0: float, x1: float, wall_m: float, density_kg_m3
     for (xa, wa, ha, sa), (xb, wb, hb, sb) in zip(sections, sections[1:]):
         perimeter = (superellipse_perimeter(2.0 * wa, 2.0 * ha, sa) + superellipse_perimeter(2.0 * wb, 2.0 * hb, sb)) / 2.0
         segment = perimeter * math.hypot(xb - xa, ((wb - wa) + (hb - ha)) / 2.0) * wall_m * density_kg_m3  # mean wall slope
+        if sa != sb:  # shape morphs also slope between equal-width/height rings
+            rings_yz = []
+            for x, w, h, shape in ((xa, wa, ha, sa), (xb, wb, hb, sb)):
+                ring_points = []
+                for k in range(PERIMETER_SAMPLES):
+                    angle = 2.0 * math.pi * k / PERIMETER_SAMPLES
+                    radius = superellipse_radius(w, h, shape, angle) if min(w, h) > 0.0 else 0.0
+                    ring_points.append((x, radius * math.cos(angle), radius * math.sin(angle)))
+                rings_yz.append(ring_points)
+            area = 0.0
+            for k in range(PERIMETER_SAMPLES):
+                next_k = (k + 1) % PERIMETER_SAMPLES
+                p, q, r, s = rings_yz[0][k], rings_yz[0][next_k], rings_yz[1][k], rings_yz[1][next_k]
+                for a, b, c in ((p, q, r), (q, s, r)):
+                    normal = cross(tuple(y - x for x, y in zip(a, b)), tuple(y - x for x, y in zip(a, c)))
+                    area += math.sqrt(dot(normal, normal)) / 2.0
+            segment = area * wall_m * density_kg_m3
         ring = ring_inertia((wa + wb) / 2.0, (ha + hb) / 2.0)
         length_term = (xb - xa) ** 2 / 12.0
         rings.append((segment, ((xa + xb) / 2.0, 0.0, 0.0), (ring[0], ring[1] + length_term, ring[2] + length_term, 0.0, 0.0, 0.0)))
@@ -923,8 +1005,11 @@ def volume_size(volume: Volume, body: Body, wall_m: float) -> tuple[float, float
         radius = volume.diameter_m / 2.0
         return math.pi * radius * radius * volume.length_m, volume.length_m if volume.axis == "x" else volume.diameter_m
     if volume.shape == "bore":
-        half_w, half_h = body_half_extents(body, volume.x_m)
-        return superellipse_area(2.0 * (half_w - wall_m), 2.0 * (half_h - wall_m), body_section_at(body, volume.x_m).shape) * volume.length_m, volume.length_m
+        x0, x1 = volume.x_m - volume.length_m / 2.0, volume.x_m + volume.length_m / 2.0
+        xs = [x0, *(station.x_m for station in body.stations if x0 < station.x_m < x1), x1]
+        areas = [superellipse_area(max(section.width_m - 2.0 * wall_m, 0.0), max(section.height_m - 2.0 * wall_m, 0.0), section.shape)
+                 for x in xs for section in (body_section_at(body, x),)]
+        return sum((a + b) / 2.0 * (xb - xa) for xa, xb, a, b in zip(xs, xs[1:], areas, areas[1:])), volume.length_m
     return 0.0, 0.0
 
 
@@ -971,7 +1056,7 @@ def structure_mass_points(airframe: Airframe, body: Body, density_kg_m3: float) 
         mass = estimate if row.empty_mass_kg is None else row.empty_mass_kg
         points.append(MassPoint(f"section {index + 1} ({x0 * 1000:.0f}-{x1 * 1000:.0f} mm)", "structure", centroid, (mass, mass),
                                 row.empty_mass_kg is None, estimate, inertia))
-    coupler_mass = airframe.fuselage.joints.coupler_mass_kg
+    coupler_mass = airframe.sections.joints.coupler_mass_kg
     if coupler_mass is not None:
         for index, (cut, joint) in enumerate(zip(sections.cuts_m, sections.cut_joints)):
             if joint != "coupler":
@@ -1033,7 +1118,7 @@ def apply_complete_masses(airframe: Airframe, body: Body, points: list[MassPoint
 def socket_checks(airframe: Airframe, body: Body) -> list[str]:
     """A female end (a coupler or a mating spigot enters it) whose body tapers within the insertion depth below its socket
     (the outer surface at the cut less socket_wall_m): the socket breaks through the skin."""
-    sections, joints = airframe.sections, airframe.fuselage.joints
+    sections, joints = airframe.sections, airframe.sections.joints
     problems = []
     for index, (cut, joint) in enumerate(zip(sections.cuts_m, sections.cut_joints)):
         if joint == "none":  # no female end: the sections butt, nothing enters the skin
@@ -1070,20 +1155,34 @@ def preset_checks(airframe: Airframe) -> list[str]:
         return []
     limits, section = preset.limits, airframe.fuselage.section
     problems = []
-    checks = [("inner width", section.width_m - 2.0 * section.wall_radial_m, limits.inner_diameter_m),
-              ("inner height", section.height_m - 2.0 * section.wall_radial_m, limits.inner_diameter_m),
-              ("wall", section.wall_radial_m, limits.wall_radial_m)]
+    checks = [("wall", section.wall_radial_m, limits.wall_radial_m)]
     bounds = [0.0, *airframe.sections.cuts_m, airframe.fuselage.length_m]
     checks += [(f"section {index + 1} length", x1 - x0, limits.section_length_m) for index, (x0, x1) in enumerate(zip(bounds, bounds[1:]))]
-    for index, row in enumerate(airframe.sections.per_section):
-        profile = row.section.resolve(section)
-        if row.section.width_m is not None or row.section.height_m is not None:
-            checks += [(f"section {index + 1} inner width", profile.width_m - 2.0 * section.wall_radial_m, limits.inner_diameter_m),
-                       (f"section {index + 1} inner height", profile.height_m - 2.0 * section.wall_radial_m, limits.inner_diameter_m)]
     for label, value, (low, high) in checks:
         if not low - 1e-9 <= value <= high + 1e-9:
             problems.append(f"{label} {value * 1000:.2f} mm outside the {preset.name} limits {low * 1000:.2f}-{high * 1000:.2f} mm")
     return problems
+
+
+def reinforcement_checks(airframe: Airframe, body: Body) -> list[str]:
+    """Straight longitudinal rods must remain inside the loft's outer envelope."""
+    rods = airframe.fuselage.reinforcement
+    if rods is None:
+        return []
+    xs = [rods.from_x_m, *(station.x_m for station in body.stations if rods.from_x_m < station.x_m < rods.to_x_m), rods.to_x_m]
+    radius = rods.pattern.diameter_m / 2.0
+    worst = (0.0, rods.from_x_m, 0)
+    for x in xs:
+        section = body_section_at(body, x)
+        for index, (y, z) in enumerate(rods.pattern.positions_m()):
+            for k in range(ROD_ENVELOPE_SAMPLES):
+                angle = 2.0 * math.pi * k / ROD_ENVELOPE_SAMPLES
+                py, pz = y + radius * math.cos(angle), z + radius * math.sin(angle)
+                outer = superellipse_radius(section.width_m / 2.0, section.height_m / 2.0, section.shape, math.atan2(pz, py)) if min(section.width_m, section.height_m) > 0.0 else 0.0
+                worst = max(worst, (math.hypot(py, pz) - outer, x, index))
+    if worst[0] > 1e-9:
+        return [f"rod {worst[2] + 1} reaches {worst[0] * 1000:.1f} mm outside the fuselage at x {worst[1]:.3f} m"]
+    return []
 
 
 def volume_inertia(volume: Volume, body: Body, wall_m: float) -> Inertia:
@@ -1161,11 +1260,11 @@ def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[
             ]
             mount_x = surface_set.exposed_x_root_le_m
         elif mount.on == "nose":
-            positions = [("nose", (-bell_len / 2.0, 0.0, 0.0), None)]
-            mount_x = 0.0
+            positions = [("nose", (mount.x_offset_m - bell_len / 2.0, 0.0, 0.0), None)]
+            mount_x = min(airframe.fuselage.length_m, max(0.0, mount.x_offset_m))
         else:
-            positions = [("tail", (airframe.fuselage.length_m + bell_len / 2.0, 0.0, 0.0), None)]
-            mount_x = airframe.fuselage.length_m
+            positions = [("tail", (airframe.fuselage.length_m + mount.x_offset_m + bell_len / 2.0, 0.0, 0.0), None)]
+            mount_x = min(airframe.fuselage.length_m, max(0.0, airframe.fuselage.length_m + mount.x_offset_m))
         prop_side = -1.0 if mount.direction == "tractor" else 1.0  # tractor prop ahead of the motor (towards the nose)
         tilt = math.radians(mount.thrust_axis_tilt_deg)
         thrust_dir = (-math.cos(tilt), 0.0, math.sin(tilt))
@@ -1306,7 +1405,7 @@ def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirf
     if reinforcement is not None:
         points += reinforcement_mass_points(reinforcement, airframe.sections.cuts_m, parts_data["material"][reinforcement.pattern.material]["density_kg_m3"])
     points += [surface_mass_point(surface_set, airframe.print.bulk_density_kg_m3) for surface_set in surfaces]
-    spars = build_spars(surfaces, airframe.fuselage.joints.fit_clearance_m)
+    spars = build_spars(surfaces, airframe.sections.joints.fit_clearance_m)
     points += spar_mass_points(surfaces, spars, parts_data)
     carry_through = build_carry_through(surfaces, body, airframe.fuselage.section.wall_radial_m)
     points += carry_through_mass_points(surfaces, carry_through, airframe)
@@ -1344,4 +1443,4 @@ def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirf
         reference=build_reference(surfaces, body), wires=build_wires(airframe, motors),
     )
     return resolved, (volume_checks(airframe, body) + part_checks(airframe, body) + preset_checks(airframe) + socket_checks(airframe, body)
-                      + spar_checks(surfaces, spars))
+                      + reinforcement_checks(airframe, body) + spar_checks(surfaces, spars))

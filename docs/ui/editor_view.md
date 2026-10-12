@@ -19,7 +19,9 @@ EditorView split behavior
     - left / center / right panes are horizontally split
     - startup split is 25% / 50% / 25%
     - pane dividers remain draggable after startup
-    - compact form spacing; Auto/Override beside optional numeric inputs
+    - compact form spacing; a single Auto toggle beside optional numeric inputs (pressed = automatic)
+    - component pickers: uniform tight vertical rows; name left, detail right; selected row highlighted
+      sections show length and Solid/Hollow; guides show x; surfaces show span; volumes show x; parts show volume or x; mounts show target
     - Notes: editable text; blank allowed
 ```
 
@@ -92,7 +94,9 @@ LogTab [fill]
     * LogPanel [fill, scrollable, copyable, word-wrapped]
         * LogText [ui:fixed-width text]
             every error in red, appended with its time: definition errors, motor overloaded (no motor info, no propulsion
-            in the report), aero failures, load / save / preset errors, unhandled errors with their traceback
+            in the report), aero failures, load / save / preset errors, and unexpected errors in full — the traceback
+            with the failing context (for a CAD export, the task and the progress label it failed on), which also goes
+            to logs/webapp.log at the repo root as a durable copy
             a new entry brings the Log tab to the front; the status bar says "<what> (see Log)"; the Summary keeps the
             last valid report, explicitly labelled when the definition is invalid
 ```
@@ -169,15 +173,18 @@ OrthographicView [fill, switchable, pannable, zoomable]
         - mouse drag on a spar -> move that set's spars along the root chord (x offset)
         - draw top-left colored point guide: blue CG, red Neutral point, green Lift @ AoA, volumes, parts, wires, cuts
         - draw pods, motors, shafts, props, CG, CP, CL
+        - pink projected cut outlines: joint screws, motor bolts, head access and shaft relief
 
     mode Front
         - draw body as the front envelope of its lofted cross-sections
+        - selected loft guide: actual cross-section at its position highlighted white; selected printable section uses its midpoint
         - draw lifting surfaces as radial lines
         - draw volumes as dashed outlines, parts as solid outlines (a cross without library size)
         - draw wires as yellow dotted lines
         - draw spars as pink lines (solid = through, dashed = stops) and the carry-through as dashed pink outlines
         - draw top-left colored point guide: blue CG, red Neutral point, green Lift @ AoA, volumes, parts, wires, cuts
         - draw motor / pod / prop cross-sections
+        - pink projected cut outlines: joint screws, motor bolts, head access and shaft relief
 ```
 
 ### 3D tab
@@ -185,7 +192,11 @@ OrthographicView [fill, switchable, pannable, zoomable]
 ```text
 3DTab [fill]
 
-    - Transparent skin: translucent body, pods, panels and controls; internal parts remain visible
+    - Separate compact rows: axes/NP legend, visibility toggles, camera buttons
+    - Transparent skin [ui:toggle button]: translucent body, pods, panels and controls; internal parts remain visible
+    - Sections: toggle fuselage cross-section outlines and surface print-cut planes; off initially
+    - Loft guides: independently toggle fuselage cross-section outlines at loft guides; off initially
+    - Cuts & holes: pink cut-volume outlines for joint screws, motor bolts, head access and shaft relief; on initially
     - NP = static estimate; camera retained through transparency changes
     - Three.js model from webapp/model3d.py
     - drag to orbit, wheel to zoom
@@ -250,12 +261,16 @@ SizePresetPanel  (title "Size preset (data/presets/)")
 ```text
 FuselagePanel
     - airframe length: resize unfixed sections proportionally; fixed sections keep their lengths
-      parts, volumes, battery, surface roots, rod/channel endpoints and nose/tail stations follow the resized sections
+      parts, volumes, battery, surface roots, rod/channel endpoints, loft guides and nose/tail stations follow the resized sections
       component dimensions and surface-local hardware offsets remain unchanged
     * section: width, height, shape (superellipse exponent, 2 = circle), wall radial
     * nose, tail: profile [ui:dropdown], length, the profile's parameters
-    * joints: type [ui:dropdown], count (screws per section end), screw, insertion depth, coupler wall, fit clearance,
-      socket wall, hole edge dist, hole diameter, hole angle offset, coupler mass
+    * Loft guides: independent position mm, width mm, height mm, shape exponent; compact G<n> picker.
+      One Auto on/off button per profile field inherits the Fuselage default when on.
+      Add guide at the entered position, seeded from the interpolated profile; Remove guide deletes only the guide.
+      Smooth cubic transitions join guides before nose/tail taper; no guides uses the default section throughout.
+      Shape 1 = diamond, 2 = ellipse/circle, 4 = rounded rectangle; wall thickness stays global.
+      Position edits reorder guides; side-view orange guide lines drag along x without moving cuts.
 ```
 
 ### ReinforcementPanel
@@ -282,27 +297,29 @@ ReinforcementPanel  (title "Reinforcement (longitudinal rods)")
 ```text
 SectionsTab [scrollable]  (group title "Sections (cut lines; drag them in the side view)")
 
-    compact section picker labelled S<n>; fields for the selected section
+    vertical section picker labelled S<n>, length mm and Solid/Hollow at right; fields for the selected section
+    Add before / Add after below the picker split the selected span in half and select the new section on that side.
+    New section inherits Solid/Hollow and Fix length; airframe length, loft and placements stay unchanged.
+    Weighed sections require clearing their masses before splitting; the cut starts with joint none.
         start mm     shared with the previous section's end; first section fixed at nose origin 0
         end mm       shared with the next section's start; last section edits fuselage length
         length mm    keep airframe length; move boundaries and scale the other unfixed sections proportionally
         Fix length   preserve length during automatic resizing; explicit length edits still apply
                      refuse changes when no unfixed section can absorb them; rejected changes leave geometry unchanged
-        Loft cross-section: width mm, height mm, shape exponent; Auto inherits the Fuselage default per field.
-                     Section midpoint is the loft station before nose/tail taper; smooth cubic transitions join midpoints.
-                     Shape 1 = diamond, 2 = ellipse/circle, 4 = rounded rectangle; wall thickness stays global.
         joint        that cut's joint [ui:dropdown]: coupler (separate coupler, its mass at the cut), front_male (this
                      section carries the male end), rear_male (the next section does), none (the sections butt with no
                      coupler, spigot or screws); empty on the last section
         solid        [ui:checkbox]  off = hollow shell wall; on = solid less the volumes inside it
-        empty g      Auto = geometry estimate; Override = weighed printed mass [ui:textbox]
+        empty g      Auto = geometry estimate; Auto off = weighed printed mass [ui:textbox]
         calc         computed printed mass (hollow: shell wall x material density; solid: x print bulk density)
-        complete g   Auto = itemised components; Override = weighed complete mass [ui:textbox]
+        complete g   Auto = itemised components; Auto off = weighed complete mass [ui:textbox]
         items        itemised mass of everything attached in the section (props with their motor, motors with their mount,
                      wing sets at their root leading edge); a range when it holds a mass range
         Remove end cut & merge sections [ui:button] delete the section's end cut and its joint: the two sections merge, keeping the left one's solid flag,
-                     each weighed mass summed when both had one
-                     differing cross-sections refuse the merge; matching cross-sections keep the left one's overrides
+                     each weighed mass summed when both had one; mixed measured/automatic masses require clearing or measuring both first
+    * joints: type [ui:dropdown], count (screws per section end), screw, insertion depth, coupler wall, fit clearance,
+      socket wall, hole edge dist, hole diameter, hole angle offset, coupler mass
+    Cut and section-length edits preserve the body, guides and placements.
     calc and items update after every edit
     the side view labels each section "S<n> <empty> g" (* = computed), its length, "solid", and "<complete> g all" when weighed
 ```
@@ -314,8 +331,15 @@ SurfacesTab [arrange:column]
 
     - Add surface set [ui:button]
     * compact surface picker and selected surface inspector: its planform fields, mass (blank = computed), Delete
+      Sections: compact S<n> span-length list; S1 is the attached root, later fixed segments export separately.
+        Add before/after below the list: first cut leaves a 15 mm root (half span on shorter panels), later cuts bisect the selected segment.
+        Start and End are cut positions in mm from the root; the first Start is 0 and the last End is the fixed wing span (shown read-only; only its Start moves the last cut).
+        Remove end cut merges adjacent segments. Cuts apply to every panel; controls stay unsplit, spar holes stay aligned.
+        STEP/STL names W<surface>_P<panel>_S<segment>; Simple shows cyan airfoil cut outlines, 3D Sections shows cut planes.
       collapsed control surface group with Enable checkbox and its fields: kind (split: chord start, span start, span end; all-moving: pivot, span start),
-        roles, deflection min/max, rate, gap (blank = 0), hinge rod diameter (blank = no rod)
+        Align hinge vertically [ui:checkbox]: straight across span, anchored at the inboard hinge position; unchecked follows sweep.
+        roles, deflection min/max, rate, gap (blank = 0), pivot rod diameter (blank = no rod), pivot rod x offset (mm, + aft) and y offset (mm, + up), both blank = 0
+        Per-control span after gaps and pivot rod length in mm; pivot rods show projected end circles (plus a fixed-pixel centre dot) and dotted cylinder outlines in Simple, cylinders in 3D.
       collapsed spars group with Enable checkbox (ticking fills them from the aircraft's preset): material [ui:dropdown], diameter, count, spacing, x offset, y offset (up),
         carry-through [ui:checkbox]: stem width, length, flare radius, root length, wall fillet
       root base (not implemented) [ui:read-only]: length, width, height, forward offset, leading cut, trailing cut
@@ -332,7 +356,8 @@ MotorMountsTab [arrange:column]
     a surface mount puts one motor on every panel of the surface
     - Mounting holes [ui:checkbox]: single D1 hole or four radial slots from D1 to D2; slot width defaults to 3 mm
       center relief diameter/depth, bolt head diameter/seat depth; zero diameter disables relief/head cut
-      material behind the head seat cleared for bolt entry; cuts in CAD exports
+      bolt entry stops at the carrying section's inner cut; pink cut outlines in Simple and 3D; cuts in CAD exports
+    - X offset: all mounts; positive aft; nose/tail motor and pod move together from the end face
 ```
 
 ## Propulsion tab
@@ -475,7 +500,7 @@ Mass fields
 
 Numeric entries
     - Enter and blur apply the value
-    - optional fields: Auto shows the effective value and source; Override enables entry
+    - optional fields: the Auto toggle (pressed) shows the effective value and source; toggled off enables entry
     - Auto removes the explicit definition value
 
 Type fields

@@ -4,6 +4,7 @@ import { editorOp } from '../store'
 import type { Snapshot } from '../types'
 import { Modal } from '../components/Modal'
 import { Card, CheckboxField, ChoiceField, EntryField, Fields } from './fields'
+import { LoftGuides } from './LoftGuides'
 import { fieldLabel } from './format'
 import { isObject } from './patch'
 import { reinforcementForTick } from './reinforcement'
@@ -85,7 +86,6 @@ export function FuselageTab({ snapshot, onPresetsChanged }: { snapshot: Snapshot
 
   const rods = isObject(fuselage.reinforcement) ? fuselage.reinforcement : null
   const section = isObject(fuselage.section) ? fuselage.section : {}
-  const joints = isObject(fuselage.joints) ? fuselage.joints : {}
   const materials = Object.keys(context.parts_data.material ?? {}).sort()
 
   const renderEnd = (end: 'nose' | 'tail'): ReactElement => {
@@ -146,11 +146,9 @@ export function FuselageTab({ snapshot, onPresetsChanged }: { snapshot: Snapshot
         </fieldset>
         {renderEnd('nose')}
         {renderEnd('tail')}
-        <fieldset className="form-group">
-          <legend>joints</legend>
-          <Fields data={joints} path={['fuselage', 'joints']} context={context} />
-        </fieldset>
       </Card>
+
+      <LoftGuides />
 
       <Card title="Reinforcement (longitudinal rods)">
         <CheckboxField path={['fuselage', 'reinforcement']} checked={rods !== null} label="rods" onToggle={toggleReinforcement} />

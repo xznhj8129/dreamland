@@ -59,7 +59,6 @@ def baro_altitude_m(pressure_pa: float) -> float:
 
 
 RATE_HZ = 100
-START = {"start": "air"}
 
 
 def run(flight):

@@ -19,7 +19,7 @@ export interface SimOptions {
   scenarios: Record<string, string[]>
   /** The starts those scenarios allow (air, ground, catapult, rail). */
   starts: string[]
-  /** One row per libs.simrun START_OPTIONS entry, in order; blank input = the runner's default. A condition's
+  /** One row per libs.simrun START_OPTIONS entry, in order; displayed values are sent to the runner. A condition's
    *  flags say which start it applies to: air_only, launcher_only and catapult_only. */
   start_options: { key: string; label: string; air_only: boolean; launcher_only: boolean; catapult_only: boolean }[]
   /** The defaults each launch start shows as its fields' placeholders, keyed by START_OPTIONS key (a rail has no
@@ -39,9 +39,9 @@ export interface SimStart {
   /** The scenario name in scenarios/<controller>/. */
   scenario?: string
   start: string
-  /** A value per START_OPTIONS key ("wind-from" for wind_from); blank values are omitted. */
+  /** A value per START_OPTIONS key ("wind-from" for wind_from); all applicable displayed values are sent. */
   conditions?: Record<string, string>
-  /** An inav/*.txt file name, or "generated" (absent = generated from the design). */
+  /** An inav/*.txt file name, or "generated" (absent = the default, generated from the design). */
   inav_config?: string
   /** Maximum simulated seconds for any scenario. */
   duration?: string
@@ -50,7 +50,6 @@ export interface SimStart {
 export interface SimResource {
   source: string
   readonly: boolean
-  initial: Record<string, number | string>
   note: string
   error?: string | null
   scenario?: ScenarioOutline | null
@@ -70,6 +69,17 @@ export async function simResource(controller: string, kind: string, name: string
   const payload = await response.json()
   if (!response.ok) throw new Error(payload.message ?? 'Could not open SIM file')
   return payload as SimResource
+}
+
+/** POST /api/sim/resource/delete: remove one of the project's SIM files. The generated diff has no deletable name. */
+export async function deleteSimResource(controller: string, kind: string, name: string): Promise<void> {
+  const response = await fetch('/api/sim/resource/delete', {
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json' },
+    body: JSON.stringify({ controller, kind, name }),
+  })
+  const payload = await response.json()
+  if (!response.ok) throw new Error(payload.message ?? 'Could not delete SIM file')
 }
 
 /** One GET /api/sim/state flight-log tail (webapp.sim._read_log). */

@@ -1,12 +1,12 @@
 import { useState } from 'react'
 import type { ReactElement } from 'react'
 import { editorOp } from '../store'
-import type { Snapshot } from '../types'
+import type { ResolvedControl, Snapshot } from '../types'
 import { Card, CheckboxField, ChoiceField, EntryField, Fields, OptionalBlock } from './fields'
-import { fieldLabel } from './format'
+import { fieldLabel, formatValue } from './format'
 import { isObject } from './patch'
 import { useFormApi } from './session'
-import { ComponentPicker, useComponentIndex, useSelection } from './selection'
+import { ComponentList, ComponentPicker, useComponentIndex, useSelection } from './selection'
 
 /** editor_view.build_surfaces_tab (852-942): per-set card, generic fields, control surface, spars, root base. */
 export function SurfacesTab({ snapshot }: { snapshot: Snapshot }): ReactElement {
@@ -38,7 +38,7 @@ export function SurfacesTab({ snapshot }: { snapshot: Snapshot }): ReactElement 
         </div>
         {notice !== '' && <div className="field-error">{notice}</div>}
       </Card>
-      <ComponentPicker kind="surface" items={surfaces.map((item, index) => ({ name: String(item.name ?? `surface ${index + 1}`) }))} />
+      <ComponentPicker kind="surface" items={surfaces.map((item, index) => ({ name: String(item.name ?? `surface ${index + 1}`), detail: typeof item.span_m === 'number' ? `span ${formatValue('span_m', item.span_m, api.context)} mm` : undefined }))} />
       {surfaces.map((surface, index) => (
         <div key={index} hidden={index !== selected}><SurfaceCard index={index} surface={surface} snapshot={snapshot} numbers={numbers} onOp={run} /></div>
       ))}
@@ -62,7 +62,7 @@ function SurfaceCard({ index, surface, snapshot, numbers, onOp }: SurfaceCardPro
   const path = ['surfaces', index]
   const layout = typeof surface.layout === 'string' ? surface.layout : ''
   // 857: fin_position is only meaningful for a single fin or three fins.
-  const skip = ['mass_kg', 'control', 'spars', 'root_base', ...(layout === '1' || layout === '3' ? [] : ['fin_position'])]
+  const skip = ['mass_kg', 'control', 'spars', 'root_base', 'sections', ...(layout === '1' || layout === '3' ? [] : ['fin_position'])]
   const control = isObject(surface.control) ? surface.control : null
   const spars = isObject(surface.spars) ? surface.spars : null
   const rootBase = isObject(surface.root_base) ? surface.root_base : null
@@ -80,6 +80,7 @@ function SurfaceCard({ index, surface, snapshot, numbers, onOp }: SurfaceCardPro
       />
       <EntryField path={[...path, 'mass_kg']} unitKey="mass_kg" optional defaultLabel="Geometry estimate"
         defaultValue={snapshot.definition_valid ? snapshot.resolved?.mass_points?.find(point => point.name === `surface ${String(surface.name)}`)?.estimate_kg ?? undefined : undefined} />
+      <SurfaceSections index={index} surface={surface} onOp={onOp} />
       <OptionalBlock
         label="control surface"
         present={control !== null}
@@ -91,6 +92,7 @@ function SurfaceCard({ index, surface, snapshot, numbers, onOp }: SurfaceCardPro
             surfaceName={typeof surface.name === 'string' ? surface.name : ''}
             control={control}
             numbers={numbers}
+            placements={snapshot.definition_valid ? (snapshot.resolved?.controls ?? []).filter(item => item.surface === surface.name) : []}
             onOp={onOp}
           />
         )}
@@ -128,16 +130,49 @@ function SurfaceCard({ index, surface, snapshot, numbers, onOp }: SurfaceCardPro
   )
 }
 
+function SurfaceSections({ index, surface, onOp }: Pick<SurfaceCardProps, 'index' | 'surface' | 'onOp'>): ReactElement {
+  const api = useFormApi()
+  const [selection, setSelection] = useState(0)
+  const sections = isObject(surface.sections) ? surface.sections : {}
+  const cuts = Array.isArray(sections.cuts_m) ? sections.cuts_m.map(Number) : []
+  const bounds = [0, ...cuts, Number(surface.span_m)]
+  const selected = Math.min(selection, cuts.length)
+  const path = ['surfaces', index, 'sections', 'cuts_m']
+  async function add(side: 'before' | 'after'): Promise<void> {
+    await onOp({ op: 'surface.section.add', index, section_index: selected, side })
+    setSelection(selected + (side === 'after' ? 1 : 0))
+  }
+  return <details className="form-group" open>
+    <summary>Sections</summary>
+    <p className="form-hint">S1 stays attached; later fixed segments print separately. Controls stay in one piece.</p>
+    <ComponentList label="Select surface section" index={selected} onSelect={setSelection}
+      items={bounds.slice(1).map((end, position) => ({ name: position === 0 ? 'S1 · Root' : `S${position + 1}`,
+        detail: `${formatValue('length_m', end - bounds[position]!, api.context)} mm` }))} />
+    <div className="button-row" role="group" aria-label="Add surface section">
+      <button type="button" onClick={() => void add('before')}>Add before</button>
+      <button type="button" onClick={() => void add('after')}>Add after</button>
+    </div>
+    <p className="form-hint">First cut: 15 mm root (max half span). Later cuts halve the selected segment.</p>
+    {selected > 0 ? <EntryField path={[...path, selected - 1]} unitKey="length_m" label="Start (mm)" />
+      : <div className="form-row"><span className="form-label">Start (mm)</span><output>0</output></div>}
+    {selected < cuts.length ? <EntryField path={[...path, selected]} unitKey="length_m" label="End (mm)" />
+      : <div className="form-row"><span className="form-label">End (mm)</span><output>{formatValue('length_m', surface.span_m, api.context)}</output></div>}
+    <p className="form-hint">Start and End are cut positions in mm from the root; the first Start is 0, the last End is the fixed wing span. A shared boundary also changes the adjoining segment.</p>
+    {selected < cuts.length && <button type="button" className="danger" onClick={() => void onOp({ op: 'surface.section.delete', index, section_index: selected })}>Remove end cut & merge sections</button>}
+  </details>
+}
+
 interface ControlFieldsProps {
   index: number
   surfaceName: string
   control: Record<string, unknown>
   numbers: Map<string, number>
+  placements: ResolvedControl[]
   onOp: (body: Record<string, unknown>) => Promise<void>
 }
 
-/** editor_view.build_control (867-903): kind and its fields, roles, deflection limits, the gap and hinge rod, one servo per panel. */
-function ControlFields({ index, surfaceName, control, numbers, onOp }: ControlFieldsProps): ReactElement {
+/** editor_view.build_control (867-903): kind and its fields, roles, deflection limits, the gap and pivot rod, one servo per panel. */
+function ControlFields({ index, surfaceName, control, numbers, placements, onOp }: ControlFieldsProps): ReactElement {
   const api = useFormApi()
   const context = api.context
   const path = ['surfaces', index, 'control']
@@ -156,6 +191,15 @@ function ControlFields({ index, surfaceName, control, numbers, onOp }: ControlFi
       {Object.keys(kindFields).map((key) => (
         <EntryField key={key} path={[...path, key]} unitKey={key} />
       ))}
+      <CheckboxField
+        path={[...path, 'align_hinge_vertically']}
+        checked={control.align_hinge_vertically === true}
+        label="Align hinge vertically"
+      />
+      {placements.map(placement => <p className="form-hint" key={placement.number}>
+        C{placement.number}: span {formatValue('length_m', placement.span_length_m, context)} mm
+        {placement.rod_diameter_m !== null && ` · Pivot rod ${formatValue('length_m', placement.hinge_length_m, context)} mm`}
+      </p>)}
       <div className="form-row">
         <span className="form-label">roles</span>
         <div className="check-row">
@@ -174,7 +218,9 @@ function ControlFields({ index, surfaceName, control, numbers, onOp }: ControlFi
       ))}
       {[
         ['gap_m', 'blank = 0'],
-        ['spar_diameter_m', 'blank = no rod'],
+        ['rod_diameter_m', 'blank = no rod'],
+        ['rod_x_offset_m', 'blank = 0'],
+        ['rod_y_offset_m', 'blank = 0'],
       ].map(([key, blankHint]) => (
         <EntryField key={key} path={[...path, key]} unitKey={key} optional blankHint={blankHint} />
       ))}

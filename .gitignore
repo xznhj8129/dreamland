@@ -5,3 +5,6 @@ exports/
 aircraft/*/logs/*
 web/node_modules/
 web/dist/
+*.step
+*.stl
+logs/

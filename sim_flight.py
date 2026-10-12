@@ -16,7 +16,7 @@ from libs.flightlog import flight_log_path, flight_snapshot
 from libs.geometry import resolve_airframe
 from libs.jsbsim import reuse_or_export
 from libs.project import open_project
-from libs.scenario import CONTROLLERS, DEFAULT_LIMIT_S, Flight, ScenarioSpec, ScenarioStopped, apply_start_defaults, load_scenario, scenario_path
+from libs.scenario import CONTROLLERS, DEFAULT_LIMIT_S, Flight, ScenarioSpec, ScenarioStopped, load_scenario, scenario_path
 from libs.sensors import Hardware
 from libs.simrun import GroundHit, START_ALT_M, add_start_arguments, resolve_start, start_line, start_reasons, write_plots
 
@@ -46,7 +46,6 @@ def main():
     path = scenario_path(project.scenarios_dir, args.controller, args.scenario)
     source = path.read_text()
     spec = ScenarioSpec.from_source(source, args.controller)
-    apply_start_defaults(args, source)
     parts = load_parts_data()
     resolved, _ = resolve_airframe(load_airframe(project.build_path, parts), parts)
     airframe = resolved.airframe

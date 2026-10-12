@@ -4,6 +4,7 @@ import math
 from dataclasses import dataclass
 
 from inavbench import Bench, Catapult
+from libs.fdm import heading_deg, pitch_deg, pitch_rate_deg_s, roll_deg, roll_rate_deg_s
 from libs.jsbsim import INAV_THROTTLE_IDLE_PCT
 from libs.simrun import FT, KNOT_M_S
 
@@ -55,9 +56,9 @@ class AltitudePilot:
 
     def sticks(self, fdm) -> dict[str, float]:
         pitch_cmd = min(max(self.pitch_command_deg(fdm), self.pitch_limits_deg[0]), self.pitch_limits_deg[1])
-        heading_error = (self.target_heading_deg - fdm["attitude/psi-deg"] + 180.0) % 360.0 - 180.0
-        pitch = -(self.angle_gain_per_deg * (pitch_cmd - fdm["attitude/theta-deg"]) - self.rate_gain_per_deg_s * math.degrees(fdm["velocities/q-rad_sec"]))
-        roll = self.angle_gain_per_deg * -fdm["attitude/phi-deg"] - self.rate_gain_per_deg_s * math.degrees(fdm["velocities/p-rad_sec"])
+        heading_error = (self.target_heading_deg - heading_deg(fdm) + 180.0) % 360.0 - 180.0
+        pitch = -(self.angle_gain_per_deg * (pitch_cmd - pitch_deg(fdm)) - self.rate_gain_per_deg_s * pitch_rate_deg_s(fdm))
+        roll = self.angle_gain_per_deg * -roll_deg(fdm) - self.rate_gain_per_deg_s * roll_rate_deg_s(fdm)
         yaw = self.angle_gain_per_deg * heading_error
         return {axis: min(max(value, -1.0), 1.0) for axis, value in (("pitch", pitch), ("roll", roll), ("yaw", yaw))}
 
@@ -175,7 +176,7 @@ class ForwardFlight:
         pilot holding altitude and heading."""
         if self.tailsitter:
             fdm = bench.plant.fdm
-            self.pilot = AltitudePilot(target_alt_m=bench.truth()["agl_m"], target_heading_deg=fdm["attitude/psi-deg"])
+            self.pilot = AltitudePilot(target_alt_m=bench.truth()["agl_m"], target_heading_deg=heading_deg(fdm))
         else:
             bench.mode("ANGLE")
             if self.powered:
@@ -232,28 +233,28 @@ class ForwardFlight:
 
         # transition: forward profile, ACRO; the pilot pitches over gently and holds this altitude while the throttle
         # blends from hover to TRANSITION_MOTOR as the nose comes down (vertical thrust stays near the weight)
-        pilot = AltitudePilot(target_alt_m=bench.truth()["agl_m"], target_heading_deg=fdm["attitude/psi-deg"])
+        pilot = AltitudePilot(target_alt_m=bench.truth()["agl_m"], target_heading_deg=heading_deg(fdm))
         cruise_stick = (TRANSITION_MOTOR - idle) / (1.0 - idle)
         bench.mode("ANGLE", on=False)
         bench.mode("MIXER PROFILE 2")
         start = bench.elapsed
         lowest = highest = bench.truth()["agl_m"]
         while True:
-            nose_down = min(max(1.0 - fdm["attitude/theta-deg"] / 90.0, 0.0), 1.0)
+            nose_down = min(max(1.0 - pitch_deg(fdm) / 90.0, 0.0), 1.0)
             bench.sticks(throttle=hover_stick + (cruise_stick - hover_stick) * nose_down, **pilot.sticks(fdm))
             bench.run(0.02)
             altitude = bench.truth()["agl_m"]
             lowest, highest = min(lowest, altitude), max(highest, altitude)
-            if (bench.mixer_profile == FORWARD_MIXER_PROFILE and abs(fdm["attitude/theta-deg"]) < TRANSITION_DONE_PITCH_DEG
+            if (bench.mixer_profile == FORWARD_MIXER_PROFILE and abs(pitch_deg(fdm)) < TRANSITION_DONE_PITCH_DEG
                     and abs(bench.truth()["vd"]) < TRANSITION_DONE_CLIMB_M_S):
                 break
             if bench.elapsed - start > TAKEOFF_MAX_S:
-                raise RuntimeError(f"transition did not settle: pitch {fdm['attitude/theta-deg']:.1f} deg, climb {-bench.truth()['vd']:+.1f} m/s, profile {bench.mixer_profile}")
+                raise RuntimeError(f"transition did not settle: pitch {pitch_deg(fdm):.1f} deg, climb {-bench.truth()['vd']:+.1f} m/s, profile {bench.mixer_profile}")
         print(f"transition: level and settled after {bench.elapsed - start:.1f} s at {fdm['velocities/vt-fps'] * FT:.1f} m/s; "
               f"altitude {lowest - pilot.target_alt_m:+.1f} / {highest - pilot.target_alt_m:+.1f} m around {pilot.target_alt_m:.1f} m")
         # the heading taken nose-up at the start of the transition is meaningless (Euler heading near 90 deg pitch): the
         # pilot would hunt for it with the yaw stick; hold the heading the aircraft levelled out on instead
-        self.pilot = AltitudePilot(target_alt_m=pilot.target_alt_m, target_heading_deg=fdm["attitude/psi-deg"])
+        self.pilot = AltitudePilot(target_alt_m=pilot.target_alt_m, target_heading_deg=heading_deg(fdm))
 
     def glide(self, bench: Bench, speed_m_s: float) -> SpeedPilot:
         """Rate mode for both types with the gliding pilot holding speed_m_s: a fixed-wing leaves ANGLE (and NAV
@@ -262,7 +263,7 @@ class ForwardFlight:
             bench.mode("ANGLE", on=False)
             if self.powered:
                 bench.mode("NAV ALTHOLD", on=False)
-        self.pilot = SpeedPilot(target_alt_m=0.0, target_heading_deg=bench.plant.fdm["attitude/psi-deg"], target_speed_m_s=speed_m_s)
+        self.pilot = SpeedPilot(target_alt_m=0.0, target_heading_deg=heading_deg(bench.plant.fdm), target_speed_m_s=speed_m_s)
         return self.pilot
 
     def sticks(self, bench: Bench, throttle: float, override: dict[str, float] | None = None) -> None:
@@ -276,8 +277,8 @@ def level_line(bench: Bench, motor_count: int) -> str:
     motors = " ".join(f"{motor_fraction(us):.2f}" for us in bench.motors[:motor_count])
     rpm = f"  rpm {fdm['propulsion/engine[0]/propeller-rpm']:6.0f}" if motor_count else ""
     return (f"{bench.elapsed:5.1f}s airspeed {fdm['velocities/vt-fps'] * FT:5.1f} m/s  agl {fdm['position/h-agl-ft'] * FT:6.1f} m  "
-            f"climb {-fdm['velocities/v-down-fps'] * FT:+5.1f}  pitch {fdm['attitude/theta-deg']:+5.1f}  roll {fdm['attitude/phi-deg']:+6.1f}  "
-            f"heading {fdm['attitude/psi-deg']:5.1f}  AoA {fdm['aero/alpha-deg']:+5.1f}  motors {motors}{rpm}  "
+            f"climb {-fdm['velocities/v-down-fps'] * FT:+5.1f}  pitch {pitch_deg(fdm):+5.1f}  roll {roll_deg(fdm):+6.1f}  "
+            f"heading {heading_deg(fdm):5.1f}  AoA {fdm['aero/alpha-deg']:+5.1f}  motors {motors}{rpm}  "
             + (f"profile {bench.mixer_profile + 1 if bench.mixer_profile is not None else 1}  {'ARMED' if bench.fc.armed else 'disarmed'}"
                if isinstance(bench, Bench) else "direct pilot"))
 

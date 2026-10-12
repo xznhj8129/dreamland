@@ -36,7 +36,7 @@ from libs.airframe import load_airframe, load_parts_data
 from libs.geometry import resolve_airframe
 from libs.project import PROJECTS_DIR, open_project
 
-DEFAULT_PROJECTS = tuple(PROJECTS_DIR / name for name in ("m62v1", "m62v2", "quadlancer62", "simpleplane"))
+DEFAULT_PROJECTS = tuple(PROJECTS_DIR / name for name in ("m62v1", "m62v2", "quadlancer62", "example"))
 CHECK_DEFLECTION_DEG = 10.0
 VLM_SPANWISE_RESOLUTION = 12
 VLM_CHORDWISE_RESOLUTION = 8

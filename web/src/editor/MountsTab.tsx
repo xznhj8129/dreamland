@@ -45,7 +45,7 @@ export function MountsTab(): ReactElement {
         </div>
         {notice !== '' && <div className="field-error">{notice}</div>}
       </Card>
-      <ComponentPicker kind="mount" items={mounts.map((item, index) => ({ name: `Mount ${index + 1} · ${String(item.on)}` }))} />
+      <ComponentPicker kind="mount" items={mounts.map((item, index) => ({ name: `Mount ${index + 1}`, detail: String(item.on) }))} />
       {mounts.map((mount, index) => (
         <div key={index} hidden={index !== selected}><MountCard index={index} mount={mount} surfaceNames={surfaceNames} onOp={run} /></div>
       ))}
@@ -84,9 +84,10 @@ function MountCard({ index, mount, surfaceNames, onOp }: MountCardProps): ReactE
         <>
           <ChoiceField path={[...path, 'surface']} value={mount.surface} options={surfaceNames} />
           <EntryField path={[...path, 'span_position_m']} unitKey="span_position_m" />
-          <EntryField path={[...path, 'x_offset_m']} unitKey="x_offset_m" />
         </>
       )}
+      <EntryField path={[...path, 'x_offset_m']} unitKey="x_offset_m" label="X offset (mm, positive aft)" />
+      {on !== 'surface' && <p className="form-hint">Moves the motor and pod together from the {on} mounting face.</p>}
       <ChoiceField path={[...path, 'direction']} value={mount.direction} options={context.choices.direction ?? []} />
       <ChoiceField path={[...path, 'spin']} value={mount.spin} options={spins} />
       <EntryField path={[...path, 'thrust_axis_tilt_deg']} unitKey="thrust_axis_tilt_deg" />
@@ -103,7 +104,7 @@ function MountCard({ index, mount, surfaceNames, onOp }: MountCardProps): ReactE
           <EntryField path={[...path, 'holes', 'center_depth_m']} unitKey="center_depth_m" label="Center relief depth (mm)" />
           <EntryField path={[...path, 'holes', 'head_diameter_m']} unitKey="head_diameter_m" label="Bolt head diameter (mm)" />
           <EntryField path={[...path, 'holes', 'head_depth_m']} unitKey="head_depth_m" label="Head seat depth from mount face (mm)" />
-          <p className="form-hint">Zero relief/head diameter disables that cut. Material behind the head seat is cleared for bolt entry. Cuts appear in CAD exports.</p>
+          <p className="form-hint">Zero relief/head diameter disables that cut. Bolt access stops at this mount’s section boundary. Pink outlines show the cuts in Simple and 3D.</p>
         </>}
       </OptionalBlock>
       <OptionalBlock label="pod" present={pod !== null} onToggle={(checked) => void onOp({ op: 'mount.pod.toggle', index, enabled: checked })}>

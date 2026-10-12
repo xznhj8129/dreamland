@@ -22,11 +22,21 @@ export interface CadAnswer {
   message: string
 }
 
-function lastLogText(payload: unknown): string | null {
+/** GET /api/cad/progress: the one CAD export in flight, as the view's progress line shows it. */
+export interface CadProgress {
+  running: boolean
+  task: string | null
+  label: string | null
+  done: number
+  total: number
+}
+
+function lastLogMessage(payload: unknown): string | null {
   if (typeof payload !== 'object' || payload === null) return null
   const log = (payload as { log?: unknown }).log
   if (!Array.isArray(log) || log.length === 0) return null
-  const last = log[log.length - 1] as { text?: unknown }
+  const last = log[log.length - 1] as { text?: unknown; summary?: unknown }
+  if (typeof last.summary === 'string' && last.summary !== '') return last.summary
   return typeof last.text === 'string' ? last.text : null
 }
 
@@ -41,6 +51,22 @@ function asCadResult(payload: unknown): CadResult | null {
     notes: candidate.notes,
     detail: candidate.detail,
     ...(typeof candidate.mode === 'string' ? { mode: candidate.mode } : {}),
+  }
+}
+
+function asCadProgress(payload: unknown): CadProgress | null {
+  if (typeof payload !== 'object' || payload === null) return null
+  const candidate = payload as Partial<CadProgress>
+  if (typeof candidate.running !== 'boolean') return null
+  if (candidate.task != null && typeof candidate.task !== 'string') return null
+  if (candidate.label != null && typeof candidate.label !== 'string') return null
+  if (typeof candidate.done !== 'number' || typeof candidate.total !== 'number') return null
+  return {
+    running: candidate.running,
+    task: candidate.task ?? null,
+    label: candidate.label ?? null,
+    done: candidate.done,
+    total: candidate.total,
   }
 }
 
@@ -63,7 +89,7 @@ async function post(url: string, body?: unknown): Promise<CadAnswer> {
     payload = null
   }
   if (!response.ok) {
-    return { ok: false, result: null, message: lastLogText(payload) ?? `Export failed (${response.status})` }
+    return { ok: false, result: null, message: lastLogMessage(payload) ?? `Export failed (${response.status})` }
   }
   const result = asCadResult(payload)
   if (result === null) return { ok: false, result: null, message: 'Export answered with no result.' }
@@ -78,8 +104,8 @@ export function exportStl(includePropDiscs: boolean): Promise<CadAnswer> {
   return post('/api/cad/stl', { include_prop_discs: includePropDiscs })
 }
 
-export function exportSections(): Promise<CadAnswer> {
-  return post('/api/cad/sections')
+export function exportSections(format: 'step' | 'stl'): Promise<CadAnswer> {
+  return post('/api/cad/sections', { format })
 }
 
 export function exportDrawings(): Promise<CadAnswer> {
@@ -88,6 +114,17 @@ export function exportDrawings(): Promise<CadAnswer> {
 
 export function exportVarsets(): Promise<CadAnswer> {
   return post('/api/cad/varsets')
+}
+
+/** The one export in flight, polled while an export's request is open; null when unreachable or malformed. */
+export async function cadProgress(): Promise<CadProgress | null> {
+  try {
+    const response = await fetch('/api/cad/progress')
+    if (!response.ok) return null
+    return asCadProgress(await response.json())
+  } catch {
+    return null
+  }
 }
 
 /** The read-only URL for a project-relative output path (GET /files/<tail>). */

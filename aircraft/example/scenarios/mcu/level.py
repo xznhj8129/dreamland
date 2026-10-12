@@ -28,7 +28,6 @@ REPORT_EVERY_M = 500.0  # truth: print a line each time the aircraft is this muc
 
 
 RATE_HZ = 100
-START = {"start": "air"}
 
 
 LOG_FIELDS = ('est_roll', 'est_pitch', 'roll_estimate_error')

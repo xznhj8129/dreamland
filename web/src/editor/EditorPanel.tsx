@@ -19,12 +19,12 @@ import { useSelection } from './selection'
 const DESIGN_TABS = ['Airframe', 'Fuselage', 'Sections', 'Surfaces', 'Volumes', 'Motor mounts', 'Optimization'] as const
 const BUILD_TABS = ['Propulsion', 'Parts', 'Wiring'] as const
 
-const SELECTION_TABS = { surface: 'Surfaces', volume: 'Volumes', mount: 'Motor mounts', section: 'Sections', fuselage: 'Fuselage' } as const
+const SELECTION_TABS = { surface: 'Surfaces', volume: 'Volumes', mount: 'Motor mounts', section: 'Sections', fuselage: 'Fuselage', loft: 'Fuselage' } as const
 type Group = 'Design' | 'Build'
 
 /** Aircraft forms grouped into Design and Build; Optimization is a planned evaluator view. */
 export function EditorPanel({ snapshot }: { snapshot: Snapshot | null }): ReactElement {
-  const { active } = useSelection()
+  const { active, indices, select } = useSelection()
   const [group, setGroup] = useState<Group>('Design')
   const [designTab, setDesignTab] = useState<string>(DESIGN_TABS[0])
   const [buildTab, setBuildTab] = useState<string>(BUILD_TABS[0])
@@ -65,6 +65,8 @@ export function EditorPanel({ snapshot }: { snapshot: Snapshot | null }): ReactE
   const chooseTab = (name: string): void => {
     if (group === 'Design') setDesignTab(name)
     else setBuildTab(name)
+    if (name === 'Fuselage') select('loft', indices.loft ?? 0)
+    if (name === 'Sections') select('section', indices.section ?? 0)
   }
 
   return (

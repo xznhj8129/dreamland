@@ -4,7 +4,7 @@ import { listProjects, newProject, openProject, saveProject, saveProjectAs } fro
 import type { CommandResult } from '../store'
 import { Modal } from './Modal'
 
-const PLANNED_VIEWS: readonly string[] = ['Aero Analysis', 'VLM']
+const PLANNED_VIEWS: readonly string[] = ['VLM']
 
 type DialogKind = 'new' | 'load' | 'saveAs'
 

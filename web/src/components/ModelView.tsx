@@ -2,13 +2,13 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { buildAirframe, disposeAirframe, isModel3DPayload } from '../airframeMesh'
+import type { AirframeGroups } from '../airframeMesh'
 import type { Model3DBounds, Model3DPayload, Snapshot } from '../types'
 
 /** The 2D canvas colour (guibuilder.py UI_CANVAS) keeps the 3D view on the app's dark theme. */
 const BACKGROUND = '#141517'
 const FIT_MARGIN = 1.15
-/** Marker sphere radius as a fraction of the model's largest dimension. */
-const MARKER_RADIUS_FRACTION = 0.02
 /** Looking straight down a preset axis makes the (0, 0, 1) up vector degenerate; nudge the axis. */
 const AXIS_NUDGE = 1e-3
 const ISO_DIRECTION = new THREE.Vector3(1.0, -1.0, 0.6).normalize()
@@ -20,28 +20,6 @@ interface LoadedModel {
   key: string
   session: number
   payload: Model3DPayload
-}
-
-function disposeGroupContents(group: THREE.Group): void {
-  const children = group.children.slice()
-  group.clear()
-  for (const child of children) {
-    if (child instanceof THREE.Mesh) {
-      child.geometry.dispose()
-      const material = child.material
-      if (Array.isArray(material)) {
-        for (const entry of material) entry.dispose()
-      } else {
-        material.dispose()
-      }
-    }
-  }
-}
-
-function isModel3DPayload(value: unknown): value is Model3DPayload {
-  if (typeof value !== 'object' || value === null) return false
-  const candidate = value as { meshes?: unknown; markers?: unknown; bounds?: unknown }
-  return Array.isArray(candidate.meshes) && Array.isArray(candidate.markers) && typeof candidate.bounds === 'object' && candidate.bounds !== null
 }
 
 /**
@@ -56,8 +34,8 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
   const canvasHostRef = useRef<HTMLDivElement | null>(null)
   const cameraRef = useRef<THREE.PerspectiveCamera | null>(null)
   const controlsRef = useRef<OrbitControls | null>(null)
-  const groupRef = useRef<THREE.Group | null>(null)
-  const markerGroupRef = useRef<THREE.Group | null>(null)
+  const sceneRef = useRef<THREE.Scene | null>(null)
+  const airframeRef = useRef<AirframeGroups | null>(null)
   const boundsRef = useRef<Model3DBounds | null>(null)
   const lastCentreRef = useRef<THREE.Vector3 | null>(null)
   const framedSessionRef = useRef<number | null>(null)
@@ -66,6 +44,13 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
   const [model, setModel] = useState<LoadedModel | null>(null)
   const [notice, setNotice] = useState('')
   const [transparentSkin, setTransparentSkin] = useState(false)
+  const [showGuides, setShowGuides] = useState(false)
+  const [showSections, setShowSections] = useState(false)
+  const [showFeatures, setShowFeatures] = useState(true)
+  /** The toggles' latest values, so a payload rebuild reapplies them without rebuilding on a toggle. */
+  const showGuidesRef = useRef(showGuides)
+  const showSectionsRef = useRef(showSections)
+  const showFeaturesRef = useRef(showFeatures)
 
   const session = snapshot?.session_id ?? -1
   const revision = snapshot?.definition_revision ?? -1
@@ -136,13 +121,9 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
     const sun = new THREE.DirectionalLight(0xffffff, 2.0)
     sun.position.set(2, -3, 4)
     scene.add(sun)
-    const group = new THREE.Group()
-    const markerGroup = new THREE.Group()
-    scene.add(group, markerGroup)
+    sceneRef.current = scene
     cameraRef.current = camera
     controlsRef.current = controls
-    groupRef.current = group
-    markerGroupRef.current = markerGroup
 
     const resize = (width: number, height: number): void => {
       if (width < 1 || height < 1) return
@@ -175,14 +156,15 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
       renderer.setAnimationLoop(null)
       controls.removeEventListener('change', onControlsChange)
       controls.dispose()
-      disposeGroupContents(group)
-      disposeGroupContents(markerGroup)
+      if (airframeRef.current !== null) {
+        disposeAirframe(airframeRef.current)
+        airframeRef.current = null
+      }
       renderer.dispose()
       renderer.domElement.remove()
+      sceneRef.current = null
       cameraRef.current = null
       controlsRef.current = null
-      groupRef.current = null
-      markerGroupRef.current = null
       boundsRef.current = null
       lastCentreRef.current = null
       framedSessionRef.current = null
@@ -191,11 +173,14 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
 
   // Rebuild only when the payload changes; the first payload of a session frames the camera, later ones keep it.
   useEffect(() => {
-    const group = groupRef.current
-    const markerGroup = markerGroupRef.current
-    if (group === null || markerGroup === null) return
-    disposeGroupContents(group)
-    disposeGroupContents(markerGroup)
+    const scene = sceneRef.current
+    if (scene === null) return
+    if (airframeRef.current !== null) {
+      const previous = airframeRef.current
+      scene.remove(previous.group, previous.markerGroup, previous.guideGroup, previous.sectionGroup, previous.featureGroup)
+      disposeAirframe(previous)
+      airframeRef.current = null
+    }
     if (model === null) {
       boundsRef.current = null
       dirtyRef.current = true
@@ -203,37 +188,14 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
     }
     const data = model.payload
     boundsRef.current = data.bounds
+    const groups = buildAirframe(data, { transparentSkin })
+    groups.guideGroup.visible = showGuidesRef.current
+    groups.sectionGroup.visible = showSectionsRef.current
+    groups.featureGroup.visible = showFeaturesRef.current
+    scene.add(groups.group, groups.markerGroup, groups.guideGroup, groups.sectionGroup, groups.featureGroup)
+    airframeRef.current = groups
     const minimum = new THREE.Vector3(data.bounds.min[0], data.bounds.min[1], data.bounds.min[2])
     const maximum = new THREE.Vector3(data.bounds.max[0], data.bounds.max[1], data.bounds.max[2])
-    const size = new THREE.Vector3().subVectors(maximum, minimum)
-    const markerRadius = Math.max(Math.max(size.x, size.y, size.z) * MARKER_RADIUS_FRACTION, 0.005)
-    for (const mesh of data.meshes) {
-      const geometry = new THREE.BufferGeometry()
-      geometry.setAttribute('position', new THREE.Float32BufferAttribute(mesh.positions, 3))
-      geometry.setIndex(mesh.indices)
-      geometry.computeVertexNormals()
-      const doubleSided = mesh.kind === 'panel' || mesh.kind === 'control'
-      const seeThrough = mesh.kind === 'volume' || mesh.kind === 'prop'
-      const skin = transparentSkin && ['body', 'pod', 'panel', 'control'].includes(mesh.kind)
-      const material = new THREE.MeshStandardMaterial({
-        color: new THREE.Color(mesh.color),
-        side: doubleSided || skin ? THREE.DoubleSide : THREE.FrontSide,
-        transparent: skin || mesh.opacity < 1,
-        opacity: skin ? 0.18 : mesh.opacity,
-        depthWrite: !seeThrough && !skin,
-        roughness: 0.7,
-        metalness: 0.05,
-      })
-      group.add(new THREE.Mesh(geometry, material))
-    }
-    for (const marker of data.markers) {
-      const sphere = new THREE.Mesh(
-        new THREE.SphereGeometry(markerRadius, 20, 14),
-        new THREE.MeshBasicMaterial({ color: new THREE.Color(marker.color) }),
-      )
-      sphere.position.set(marker.position[0], marker.position[1], marker.position[2])
-      markerGroup.add(sphere)
-    }
     const centre = new THREE.Vector3().addVectors(minimum, maximum).multiplyScalar(0.5)
     if (framedSessionRef.current !== model.session) {
       framedSessionRef.current = model.session
@@ -254,6 +216,24 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
     }
     dirtyRef.current = true
   }, [model, placeCamera, transparentSkin])
+
+  useEffect(() => {
+    showSectionsRef.current = showSections
+    if (airframeRef.current !== null) airframeRef.current.sectionGroup.visible = showSections
+    dirtyRef.current = true
+  }, [showSections])
+
+  useEffect(() => {
+    showGuidesRef.current = showGuides
+    if (airframeRef.current !== null) airframeRef.current.guideGroup.visible = showGuides
+    dirtyRef.current = true
+  }, [showGuides])
+
+  useEffect(() => {
+    showFeaturesRef.current = showFeatures
+    if (airframeRef.current !== null) airframeRef.current.featureGroup.visible = showFeatures
+    dirtyRef.current = true
+  }, [showFeatures])
 
   // Fetch once per session/revision/aero state while the tab is visible; abort a request whose key goes stale.
   useEffect(() => {
@@ -305,26 +285,42 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
       style={{ display: visible ? 'flex' : 'none' }}
       data-model-meshes={model?.payload.meshes.length ?? 0}
       data-model-markers={model?.payload.markers.length ?? 0}
+      data-model-guides={showGuides ? model?.payload.meshes.filter(mesh => mesh.kind === 'loft').length ?? 0 : 0}
+      data-model-sections={showSections ? model?.payload.meshes.filter(mesh => mesh.kind === 'section').length ?? 0 : 0}
+      data-model-features={showFeatures ? model?.payload.meshes.filter(mesh => mesh.kind === 'feature').length ?? 0 : 0}
     >
-      <div className="graphics-controls">
-        <span className="axes-label">X = Front &nbsp; Y = Right &nbsp; Z = Up</span>
-        <span className="axes-label">NP = static estimate</span>
-        <label className="check-row"><input type="checkbox" checked={transparentSkin} onChange={event => setTransparentSkin(event.target.checked)} />Transparent skin</label>
-        <button type="button" onClick={() => placeCamera(null)} disabled={model === null}>
-          Fit view
-        </button>
-        <button type="button" onClick={() => placeCamera(TOP_DIRECTION)} disabled={model === null}>
-          Top
-        </button>
-        <button type="button" onClick={() => placeCamera(FRONT_DIRECTION)} disabled={model === null}>
-          Front
-        </button>
-        <button type="button" onClick={() => placeCamera(SIDE_DIRECTION)} disabled={model === null}>
-          Side
-        </button>
-        <button type="button" onClick={() => placeCamera(ISO_DIRECTION)} disabled={model === null}>
-          Iso
-        </button>
+      <div className="graphics-controls model-controls">
+        <div className="model-legend">
+          <span className="axes-label">X = Front &nbsp; Y = Right &nbsp; Z = Up</span>
+          <span className="axes-label">NP = static estimate</span>
+        </div>
+        <div className="button-row" role="group" aria-label="Visibility">
+          <button type="button" aria-pressed={transparentSkin} className={transparentSkin ? 'active' : ''}
+            onClick={() => setTransparentSkin(value => !value)} disabled={model === null}>Transparent skin</button>
+          <button type="button" aria-pressed={showGuides} className={showGuides ? 'active' : ''}
+            onClick={() => setShowGuides(value => !value)} disabled={model === null}>Loft guides</button>
+          <button type="button" aria-pressed={showSections} className={showSections ? 'active' : ''}
+            onClick={() => setShowSections(value => !value)} disabled={model === null}>Sections</button>
+          <button type="button" aria-pressed={showFeatures} className={showFeatures ? 'active' : ''}
+            onClick={() => setShowFeatures(value => !value)} disabled={model === null}>Cuts &amp; holes</button>
+        </div>
+        <div className="button-row" role="group" aria-label="Camera views">
+          <button type="button" onClick={() => placeCamera(null)} disabled={model === null}>
+            Fit view
+          </button>
+          <button type="button" onClick={() => placeCamera(TOP_DIRECTION)} disabled={model === null}>
+            Top
+          </button>
+          <button type="button" onClick={() => placeCamera(FRONT_DIRECTION)} disabled={model === null}>
+            Front
+          </button>
+          <button type="button" onClick={() => placeCamera(SIDE_DIRECTION)} disabled={model === null}>
+            Side
+          </button>
+          <button type="button" onClick={() => placeCamera(ISO_DIRECTION)} disabled={model === null}>
+            Iso
+          </button>
+        </div>
         {notice !== '' && <span className="draw-error">{notice}</span>}
       </div>
       <div className="model-canvas" ref={canvasHostRef}>

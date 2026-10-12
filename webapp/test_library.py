@@ -2,7 +2,7 @@
 
 Run: /home/anon/miniconda3/envs/drone/bin/python webapp/test_library.py
 
-libs.airframe.PARTS_DIR is pointed at a temp copy of data/parts (both libs load/save look the module global up at
+libs.airframe.PARTS_DIR is pointed at a persistent validation copy of data/parts in aircraft/example/cad (both libs load/save look the module global up at
 call time); the real data/parts is hashed before and after and must be byte-identical.
 """
 
@@ -13,7 +13,6 @@ import hashlib
 import json
 import shutil
 import sys
-import tempfile
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -41,9 +40,10 @@ def hash_tree(root: Path) -> dict[str, str]:
     }
 
 
-def make_state(tmp: Path, parts: Path) -> AppState:
-    root = tmp / "example"
-    shutil.copytree(EXAMPLE, root)
+def make_state(output: Path, parts: Path) -> AppState:
+    root = output / "example"
+    root.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(EXAMPLE / "aircraft.json", root / "aircraft.json")
     airframe.PARTS_DIR = parts  # libs.airframe.load_parts_data/save_parts_category read this global at call time
     state = AppState(Project(root=root))
     original = state.recompute
@@ -167,17 +167,16 @@ async def check_routes(state: AppState) -> None:
 
 def main() -> None:
     real_before = hash_tree(PARTS)
-    with tempfile.TemporaryDirectory(prefix="qrb-library-") as tmp:
-        temp = Path(tmp)
-        parts = temp / "parts"
-        shutil.copytree(PARTS, parts)
-        state = make_state(temp, parts)
-        check_payload(state)
-        check_saves(state, parts)
-        check_rename_move(state, parts)
-        check_delete(state, parts)
-        check_bad_input(state)
-        asyncio.run(check_routes(state))
+    output = EXAMPLE / "cad" / "library-validation"
+    parts = output / "parts"
+    shutil.copytree(PARTS, parts, dirs_exist_ok=True)
+    state = make_state(output, parts)
+    check_payload(state)
+    check_saves(state, parts)
+    check_rename_move(state, parts)
+    check_delete(state, parts)
+    check_bad_input(state)
+    asyncio.run(check_routes(state))
     real_after = hash_tree(PARTS)
     assert real_before == real_after, "the real data/parts changed"
     print("ok   real data/parts byte-identical before/after")
