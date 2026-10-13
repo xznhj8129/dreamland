@@ -515,8 +515,8 @@ def control_hinge_fraction(panel: Panel, control: ControlSurface, span_fraction:
     hinge_point = control_hinge_point(panel, control, span_fraction)
     leading_edge = panel_point(panel, span_fraction, 0.0)
     trailing_edge = panel_point(panel, span_fraction, 1.0)
-    chord_m = dot(tuple(t - l for t, l in zip(trailing_edge, leading_edge)), chord_direction(panel))
-    fraction = dot(tuple(p - l for p, l in zip(hinge_point, leading_edge)), chord_direction(panel)) / chord_m
+    chord_m = dot(tuple(t - l for t, l in zip(trailing_edge, leading_edge)), chord_direction(panel))  # noqa: E741 (renaming changes the JSBSim export fingerprint)
+    fraction = dot(tuple(p - l for p, l in zip(hinge_point, leading_edge)), chord_direction(panel)) / chord_m  # noqa: E741
     span_end = control.span_end if control.kind == "split" else 1.0
     if control.span_start <= span_fraction <= span_end and not 0.0 <= fraction <= 1.0:
         raise AirframeError(
@@ -548,7 +548,7 @@ def control_cut_frames(panel: Panel, control: ControlSurface) -> dict:
 
     def chord_at(span_fraction: float) -> float:
         leading_edge, trailing_edge = panel_point(panel, span_fraction, 0.0), panel_point(panel, span_fraction, 1.0)
-        return dot(tuple(t - l for t, l in zip(trailing_edge, leading_edge)), hinge_dir)
+        return dot(tuple(t - l for t, l in zip(trailing_edge, leading_edge)), hinge_dir)  # noqa: E741
 
     def along(point: Vec, distance_m: float, direction: Vec) -> Vec:
         return tuple(value + distance_m * d for value, d in zip(point, direction))

@@ -28,3 +28,5 @@
 - `git commit -- <paths>` commits the working-tree content of those paths, not the staged index: it re-adds files that were only removed with `git rm --cached`. To commit part of the index, build the tree in a temporary GIT_INDEX_FILE.
 - Never show several values as one 'label value, label value, ...' line in the UI: use a labelled list (fields.tsx ValueList) or a table.
 - Never run a full JSBSim export (minutes) for a throwaway or fixture copy, and never two at once. If a build is needed, build the real aircraft project and leave its export in place.
+- Before any sim run, CLI flight or suite on a project, check its JSBSim fingerprint is current (export_fingerprint vs jsbsim/export.fingerprint, a cheap check). If it would rebuild, stop and ask; never start a run that rebuilds, and never kill one mid-export: the export deletes the old fingerprint first, so an interrupted rebuild throws the old model away.
+- Any edit to code the export reaches (libs/jsbsim.py, geometry, aero, airframe, propulsion, rocketmotors, motorlib), even a variable rename, invalidates every aircraft's model. Avoid such edits unless they are the task.

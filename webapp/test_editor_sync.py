@@ -1,6 +1,6 @@
 """Log-clean assertions for the browser editor's structural ops and field sets.
 
-Run: /home/anon/miniconda3/envs/drone/bin/python webapp/test_editor_sync.py
+Run: uv run python -m webapp.test_editor_sync
 
 The ops run on a throwaway copy of aircraft/example, in process, against AppState exactly as webapp/server.py
 calls them. Every accepted edit must leave definition_valid true with no new "Definition error" (or unexpected

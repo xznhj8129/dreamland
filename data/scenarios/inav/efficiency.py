@@ -24,7 +24,7 @@ def run(mission):
     holding tolerance) down in LEVEL_SPEED_STEP_M_S steps, until level flight cannot be held: per step speed, AoA,
     motor, battery power and current, Wh/km (means over its last LEVEL_STEADY_S seconds); then the slowest level speed, best range and best endurance on
     USABLE_BATTERY_FRACTION of the pack."""
-    bench, flight, export, motor_count = controller.engine, controller.forward, mission.export, mission.motor_count
+    bench, export, motor_count = controller.engine, mission.export, mission.motor_count
     sweep_from_m_s = mission.parameters.get("sweep_from")
     controller.forward_start()
     fdm = bench.plant.fdm

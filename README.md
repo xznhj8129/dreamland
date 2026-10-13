@@ -19,6 +19,9 @@
 
 ---
 
+> [!WARNING]
+> **Pre-alpha.** Dreamland is unstable and changes daily: the aircraft file format, the UI and the APIs break without notice, and the results are unvalidated against real flight. INAV simulation needs a special INAV build (a SITL with a stepped clock, from the author's fork) and the author's JSBSim bench. Installation is still being made portable. Expect rough edges, and do not trust it with anything you cannot afford to crash.
+
 Dreamland is a sandbox design and simulation environment for small unmanned aircraft and rockets. You loft an airframe, attach lifting surfaces, mount propulsion and place real components inside it; Dreamland computes how it balances, how it flies and what it weighs, flies it in simulation against real flight-controller firmware, and generates the printable parts.
 
 It is built for hobby flying: RC planes, drones, gliders, rockets, anything you can imagine.
@@ -116,14 +119,26 @@ The full list is in [TODO.md](TODO.md).
 
 ## Getting started
 
-Python 3 with `aerosandbox`, `neuralfoil`, `cadquery`, `jsbsim`, `aiohttp`, `numpy`, `scipy`, `pandas`, `matplotlib` and `threadpoolctl`; Node.js for the browser UI. Simulation also needs `inav-jsbsim-bench`, and INAV runs need an INAV SITL build.
+Needs git, [uv](https://docs.astral.sh/uv/), Node.js and Docker. uv installs the right Python and every pinned dependency (`pyproject.toml`, `uv.lock`) into a local `.venv`.
+
+First, the INAV JSBSim bench and the INAV SITL build with the stepped clock, cloned into the gitignored `vendor/` (temporary, until both are published). SITL builds in INAV's Docker image; `--host` builds it with the local toolchain instead:
+
+```bash
+scripts/setup_vendor.sh
+```
+
+Then the Python environment and the browser UI:
+
+```bash
+uv sync
+```
 
 ```bash
 cd web && npm install && npm run build
 ```
 
 ```bash
-python webbuilder.py aircraft/example
+uv run python webbuilder.py aircraft/example
 ```
 
 The full command reference is in [docs/usage.md](docs/usage.md).

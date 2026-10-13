@@ -14,7 +14,7 @@ from libs.simrun import battery_power_w, build_vehicle, electrical_columns
 REPO_DIR = Path(__file__).resolve().parent.parent
 ANGLE_GAIN = 0.02
 RATE_GAIN = 0.002
-DEFAULT_SITL_PATH = REPO_DIR.parent / "inav-claude" / "inav" / "build_sitl" / "bin" / "SITL.elf"
+DEFAULT_SITL_PATH = REPO_DIR / "vendor" / "inav" / "build" / "build_SITL" / "bin" / "SITL.elf"  # scripts/setup_vendor.sh
 INAV_TEMPLATES_DIR = REPO_DIR / "data" / "inav"
 TAILSITTER_TEMPLATE = INAV_TEMPLATES_DIR / "tailsitter.txt"  # switches and modes of a generated diff, after the design's mixer
 PLANE_TEMPLATE = INAV_TEMPLATES_DIR / "plane.txt"
@@ -125,10 +125,10 @@ forward = None
 def connect(project, resolved, export, args, state, hardware, log_path):
     sitl_path = args.sitl or DEFAULT_SITL_PATH
     if not sitl_path.is_file():
-        raise FileNotFoundError(f"INAV SITL build missing: {sitl_path}")
+        raise FileNotFoundError(f"INAV SITL build missing: {sitl_path}; run scripts/setup_vendor.sh (or pass --sitl)")
     diff = flown_diff(project, export, resolved.airframe.tailsitter, args.inav_config)
     project.sitl_dir.mkdir(parents=True, exist_ok=True)
-    print(f"INAV firmware: {sitl_path.relative_to(REPO_DIR.parent) if sitl_path.is_relative_to(REPO_DIR.parent) else sitl_path.name}")
+    print(f"INAV firmware: {sitl_path.relative_to(REPO_DIR) if sitl_path.is_relative_to(REPO_DIR) else sitl_path}")
     print(f"INAV settings: {diff.relative_to(project.root) if diff.is_relative_to(project.root) else diff.name}")
     vehicle = build_vehicle(export, str(diff), args.start, state, resolved.airframe.tailsitter)
     motor_count = len(export.motor_properties)

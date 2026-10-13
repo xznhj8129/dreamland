@@ -55,7 +55,7 @@ Primary files:
 - Keep web-specific engine adapters in `webapp/`; prefer adapter code there over changing `libs/` (change `libs/` only when the shared engine itself changes). The retired Tk sources live in git history; `webapp/editor.py` and `webapp/library.py` cite them, and `docs/ui/` documents the behavior those ports follow.
 - The 2D scene is recorded from `libs/graphics.py` unchanged and enriched in `webapp/drawing_enrich.py`; do not fork a second drawing implementation in JS.
 - Web mutations go through the browser store's queued editor calls; element drags use the move-with-draw fast path (geometry-only recompute, no snapshot/WS push per motion; the release syncs the full state).
-- Run the web app under the drone env: `cd web && npm install && npm run build`, then `/home/anon/miniconda3/envs/drone/bin/python webbuilder.py aircraft/example`. Rebuild `web/` after front-end edits and restart the server after `webapp/` edits.
+- Run everything in the uv venv (`scripts/setup_vendor.sh`, then `uv sync`): `cd web && npm install && npm run build`, then `uv run python webbuilder.py aircraft/example`. Rebuild `web/` after front-end edits and restart the server after `webapp/` edits.
 - Keep the headless suites (`webapp/test_draw_drag.py`, `webapp/test_editor_sync.py`, `webapp/test_library.py`) passing when touching drawing, editor or library paths.
 
 ## Save / Load Contract

@@ -1,6 +1,6 @@
 """Check resolved loft and CAD envelopes on a saved aircraft project.
 
-Run: python -m libs.test_body_loft aircraft/example
+Run: uv run python -m libs.test_body_loft aircraft/example
 The body STEP and measurements are retained in the project's cad directory.
 """
 

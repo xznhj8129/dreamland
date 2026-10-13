@@ -1,6 +1,6 @@
 """Headless assertions for the CAD export progress record (webapp/cad.py, GET /api/cad/progress).
 
-Run: /home/anon/miniconda3/envs/drone/bin/python webapp/test_cad_progress.py
+Run: uv run python -m webapp.test_cad_progress
 
 The route set runs on a throwaway copy of aircraft/example and exercises the cheapest real export (varsets), so no
 CadQuery build runs: the endpoint's idle shape, the record helpers behind it, and that a finished or failed export

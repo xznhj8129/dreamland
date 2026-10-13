@@ -1,6 +1,6 @@
 """Exercise printable fastener openings and their live previews.
 
-Run: python -m libs.test_print_features aircraft/example --check joints|views
+Run: uv run python -m libs.test_print_features aircraft/example --check joints|views
 CAD diagnostics are retained under the project's cad/fastener-check directory.
 """
 

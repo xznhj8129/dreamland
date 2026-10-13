@@ -1,6 +1,6 @@
 """Headless assertions for the part-library API (webapp/library.py, the /api/library routes).
 
-Run: /home/anon/miniconda3/envs/drone/bin/python webapp/test_library.py
+Run: uv run python -m webapp.test_library
 
 libs.airframe.PARTS_DIR is pointed at a persistent validation copy of data/parts in aircraft/example/cad (both libs load/save look the module global up at
 call time); the real data/parts is hashed before and after and must be byte-identical.

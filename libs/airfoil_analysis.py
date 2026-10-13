@@ -45,6 +45,8 @@ DEFAULT_SWEEP_ALPHA_MIN_DEG = -20.0
 DEFAULT_SWEEP_ALPHA_MAX_DEG = 20.0
 DEFAULT_SWEEP_ALPHA_STEP_DEG = 1.0
 SUMMARY_CONFIDENCE_MIN = 0.5
+# NeuralFoil outputs read at the single operating point (each a one-element array there)
+OPERATING_OUTPUTS = ("CL", "CD", "CM", "Top_Xtr", "Bot_Xtr", "analysis_confidence")
 SUMMARY_ZERO_LIFT_ALPHA_WINDOW_DEG = 15.0
 SUMMARY_BEST_LD_ALPHA_MIN_DEG = -5.0
 SUMMARY_BEST_LD_ALPHA_MAX_DEG = 15.0
@@ -269,7 +271,7 @@ def analyze_airfoil_record(record: dict, flow_conditions: dict, neuralfoil_setti
         model_size=neuralfoil_settings["model_size"],
         include_360_deg_effects=neuralfoil_settings["include_360_deg_effects"],
     )
-    operating_outputs = airfoil.get_aero_from_neuralfoil(
+    neuralfoil_operating = airfoil.get_aero_from_neuralfoil(
         alpha=flow_conditions["alpha_deg"],
         Re=flow_conditions["reynolds"],
         mach=flow_conditions["mach"],
@@ -279,28 +281,27 @@ def analyze_airfoil_record(record: dict, flow_conditions: dict, neuralfoil_setti
         model_size=neuralfoil_settings["model_size"],
         include_360_deg_effects=neuralfoil_settings["include_360_deg_effects"],
     )
+    operating = {key: np.asarray(neuralfoil_operating[key], dtype=float).item() for key in OPERATING_OUTPUTS}
     cl_values = np.array(sweep_outputs["CL"], dtype=float)
     cd_values = np.array(sweep_outputs["CD"], dtype=float)
     cm_values = np.array(sweep_outputs["CM"], dtype=float)
     confidence_values = np.array(sweep_outputs["analysis_confidence"], dtype=float)
     cl_cd_values = np.full_like(cl_values, np.nan, dtype=float)
     np.divide(cl_values, cd_values, out=cl_cd_values, where=cd_values > 0.0)
-    operating_cl_cd = float("nan")
-    if float(operating_outputs["CD"]) > 0.0:
-        operating_cl_cd = float(operating_outputs["CL"] / operating_outputs["CD"])
+    operating_cl_cd = operating["CL"] / operating["CD"] if operating["CD"] > 0.0 else float("nan")
     return {
         "name": record["name"],
         "source": record["source"],
         "path": record.get("path", ""),
         "operating_point": {
             **flow_conditions,
-            "cl": float(operating_outputs["CL"]),
-            "cd": float(operating_outputs["CD"]),
-            "cm": float(operating_outputs["CM"]),
+            "cl": operating["CL"],
+            "cd": operating["CD"],
+            "cm": operating["CM"],
             "cl_cd": operating_cl_cd,
-            "top_xtr": float(operating_outputs["Top_Xtr"]),
-            "bot_xtr": float(operating_outputs["Bot_Xtr"]),
-            "confidence": float(operating_outputs["analysis_confidence"]),
+            "top_xtr": operating["Top_Xtr"],
+            "bot_xtr": operating["Bot_Xtr"],
+            "confidence": operating["analysis_confidence"],
         },
         "sweep": {
             "alpha_deg": sweep_alpha_deg,

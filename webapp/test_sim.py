@@ -1,6 +1,6 @@
 """Headless assertions for the SIM run backend (webapp/sim.py, the /api/sim routes).
 
-Run: /home/anon/miniconda3/envs/drone/bin/python webapp/test_sim.py
+Run: uv run python -m webapp.test_sim
 
 Flies the real aircraft/example project, so its runs land in its logs/ and an export-code change rebuilds its own model
 once. The suite's own files (two INAV diffs, an mcu launch_check scenario) are written for the run and removed after,

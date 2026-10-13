@@ -75,8 +75,6 @@ Agent added TODOs, freeform, remove done ones
         - parttojson.FCMacro (FreeCAD tree to JSON). Hidden objects are silently dropped; link_document and link_path hold each other's values.
         - README class hierarchy (Complex / System / Subsystem / Module / Submodule / Component / Subcomponent) and 2R04B1 assembly tree.
 
-- Add a requirements file (deps aerosandbox, neuralfoil, cadquery only in conda env "drone").
-
 - Rockets (solid motors done 2026-10-12: data/rocket_motors, rocket mounts, JSBSim burn, MCU ignite, mcu/launch):
         - Motor database: more RASP files from thrustcurve.org (only AeroTech F42T so far).
         - Recovery: ejection at the motor's delay, parachute (drag area, deploy, descent rate); minirocket's chute bay ballast stands in.

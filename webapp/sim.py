@@ -132,7 +132,7 @@ def options(state: AppState) -> dict[str, Any]:
         "scenario_templates": {controller: read_resource(state, "scenario", "stability.py" if controller == "mcu" else "experiment.py", controller)
                                for controller in CONTROLLERS},
         "aero_model": AERO_PROVENANCE,
-        "firmware": DEFAULT_SITL_PATH.relative_to(REPO_DIR.parent).as_posix(),
+        "firmware": DEFAULT_SITL_PATH.relative_to(REPO_DIR).as_posix(),
         "condition_defaults": defaults,
         "inav_configs": [{"file": path.name, "label": ("real FC diff: " if is_real_fc_diff(path) else "SITL diff: ") + path.name}
                          for path in sorted(project.inav_dir.glob("*.txt"))],

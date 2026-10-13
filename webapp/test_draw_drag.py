@@ -1,6 +1,6 @@
 """Headless assertions for the 2D draw handles and the drag move op.
 
-Run: /home/anon/miniconda3/envs/drone/bin/python webapp/test_draw_drag.py
+Run: uv run python -m webapp.test_draw_drag
 
 The state is a throwaway copy of aircraft/example, in process, exercised exactly as webapp/server.py calls it:
 draw at 900x600 in both modes for the handle list, then apply_move for the clamps and the session fence, including

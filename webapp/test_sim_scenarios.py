@@ -1,6 +1,6 @@
 """Real HTTP -> Python scenario -> INAV SITL flights with persistent project validation outputs.
 
-Run with the drone Python: python -m webapp.test_sim_scenarios
+Run: uv run python -m webapp.test_sim_scenarios
 The shared harness SITL must support stepped time. No mock bench or controller is used.
 """
 

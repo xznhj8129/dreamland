@@ -2,7 +2,7 @@
 
 ## Running it
 
-Dependencies (aerosandbox, neuralfoil, cadquery, pandas, numpy, threadpoolctl) live in the conda env `drone`.
+Install with `scripts/setup_vendor.sh` and `uv sync` (README, Getting started). Run the commands below with `uv run` (e.g. `uv run python webbuilder.py aircraft/example`) or with `.venv` activated.
 
 ```
 cd web && npm install && npm run build                        # once, and after front-end edits
@@ -38,7 +38,7 @@ aircraft/<project>/
     aircraft.json   the definition (airframe/2)
     inav/           INAV diffs: real FC dumps, and SITL diffs flown as written
       generated/    the diff a run flies, written from the design or a real FC dump (templates in data/inav/); copy into inav/ to edit
-    sitl/           eeprom.bin, sitl.log; firmware is shared: inav-claude/inav/build_sitl/bin/SITL.elf (--sitl overrides it)
+    sitl/           eeprom.bin, sitl.log; firmware is shared: vendor/inav/build/build_SITL/bin/SITL.elf from scripts/setup_vendor.sh (--sitl overrides it)
     jsbsim/         JSBSim export
     logs/           SITL and script flight logs and plots
     cad/            STEP / STL exports, blueprint drawings: cutaway, threeview, xray (.svg / .png)

@@ -1,6 +1,6 @@
 """Headless assertions for the Aero Analysis backend (webapp/airfoils.py, the /api/airfoils routes).
 
-Run: /home/anon/miniconda3/envs/drone/bin/python webapp/test_airfoils.py
+Run: uv run python -m webapp.test_airfoils
 
 The session store is process-local (imported DATs are lost on restart, as in the retired Tk view), so this suite
 imports its own foils and checks them through the real routes. The airfoil routes never touch the project state;
