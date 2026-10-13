@@ -31,7 +31,7 @@ if str(ROOT) not in sys.path:  # runnable from anywhere
 from aiohttp.test_utils import TestClient, TestServer  # noqa: E402
 
 from libs.project import Project  # noqa: E402
-from libs.simrun import KNOT_M_S, add_start_arguments, resolve_start, start_line  # noqa: E402
+from libs.simrun import KNOT_M_S, add_start_arguments, apply_start_defaults, resolve_start, start_line  # noqa: E402
 from webapp import sim  # noqa: E402
 from webapp.server import create_app  # noqa: E402
 from webapp.state import AppState  # noqa: E402
@@ -173,7 +173,7 @@ async def check_options(client: TestClient) -> None:
     assert configs["bench-sitl.txt"] == "SITL diff: bench-sitl.txt", configs
     assert configs["bench-real.txt"] == "real FC diff: bench-real.txt", configs
     assert {"efficiency", "top-speed", "controls", "glide", "experiment"} <= set(payload["scenarios"]["inav"]), payload["scenarios"]
-    assert {"level", "stability"} == set(payload["scenarios"]["mcu"]), payload["scenarios"]
+    assert {"launch", "level", "stability"} == set(payload["scenarios"]["mcu"]), payload["scenarios"]
     assert payload["starts"] == ["air", "catapult", "rail"], payload["starts"]
     options_list = payload["start_options"]
     assert [item["key"] for item in options_list] == [
@@ -474,20 +474,34 @@ def check_start_ownership(state: AppState) -> None:
 
     # 4. the CLI parser with no --start defaults to air
     bare = parser.parse_args([])
+    apply_start_defaults(bare, {})
     assert bare.start == "air", bare.start
 
-    # 5. a script that still declares START is refused by ScenarioSpec, naming where the conditions belong
-    external = 'START = {"start": "catapult"}\n\ndef run(flight):\n    pass\n'
-    try:
-        ScenarioSpec.from_source(external, "inav")
-    except ValueError as problem:
-        assert "Initial conditions belong in the SIM toolbar or CLI" in str(problem), problem
-    else:
-        raise AssertionError("a script that still declares START was accepted")
+    # 5. a scenario's START fills what the CLI leaves out, the CLI wins, and the outline carries it
+    declared = 'START = {"start": "rail", "launch-pitch": 85}\n\ndef run(flight):\n    pass\n'
+    spec = ScenarioSpec.from_source(declared, "mcu")
+    assert spec.payload()["start"] == {"start": "rail", "launch-pitch": 85}, spec.payload()
+    args = parser.parse_args([])
+    apply_start_defaults(args, spec.start)
+    assert (args.start, args.launch_pitch) == ("rail", 85.0), args
+    args = parser.parse_args(["--launch-pitch", "30"])
+    apply_start_defaults(args, spec.start)
+    assert (args.start, args.launch_pitch) == ("rail", 30.0), args
+    args = parser.parse_args(["--start", "air"])
+    apply_start_defaults(args, spec.start)
+    assert (args.start, args.launch_pitch) == ("air", None), args
+    for bad, message in (('{"altitude": 5}', "unknown"), ('{"start": "rail", "alt": 100}', "does not apply"),
+                         ('{"start": "orbit"}', "start must be one of"), ('{"wind-speed": "3"}', "finite number")):
+        try:
+            ScenarioSpec.from_source(f"START = {bad}\n\ndef run(flight):\n    pass\n", "inav")
+        except ValueError as problem:
+            assert message in str(problem), (bad, problem)
+        else:
+            raise AssertionError(f"START = {bad} was accepted")
 
     print("ok   start ownership: the acro_climb resource and the options scenario templates carry no initial conditions; "
           "acro_climb plans air without a start; explicit catapult launch-pitch/speed pass through and resolve; "
-          "CLI defaults to air; a START declaration is refused")
+          "CLI defaults to air; a scenario START fills the CLI's gaps, the CLI wins, bad STARTs are refused")
 
 
 async def check_routes(state: AppState) -> None:

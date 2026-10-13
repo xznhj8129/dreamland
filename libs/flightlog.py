@@ -6,7 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from libs.fdm import pitch_rate_deg_s, roll_rate_deg_s, yaw_rate_deg_s
-from libs.simrun import FT, electrical_columns
+from libs.simrun import FT, electrical_columns, rocket_columns
 
 MAX_TELEMETRY_HZ = 50.0
 
@@ -51,6 +51,8 @@ def flight_snapshot(engine, export):
     row |= {f"servo{index}": value for index, value in enumerate(engine.servos[:len(export.servo_properties)])}
     if export.motors:
         row |= electrical_columns(fdm, export, motor_count)
+    if export.rockets:
+        row |= rocket_columns(fdm, export)
     return row
 
 

@@ -354,6 +354,7 @@ export function SimView(): ReactElement {
   const [scenarioDirty, setScenarioDirty] = useState(false)
   const [diffDirty, setDiffDirty] = useState(false)
   const [outline, setOutline] = useState<Outline | null>(null)
+  const appliedStartRef = useRef('')
   const scenarioFile = scenario === '__new__' ? '__new__' : scenario ? scenario + '.py' : null
 
 
@@ -463,6 +464,22 @@ export function SimView(): ReactElement {
 
   const setCondition = (key: string, value: string): void => {
     setConditions((current) => ({ ...current, [key]: value }))
+  }
+
+  /** Pre-select a scenario's START in the toolbar, once per scenario file and START; the user may change it after. */
+  const applyScenarioStart = (file: string | null, plan: Outline | null | undefined): void => {
+    if (!plan) return
+    const key = `${controller}/${file ?? ''}:${JSON.stringify(plan.start)}`
+    if (key === appliedStartRef.current) return
+    appliedStartRef.current = key
+    const { start: chosen, ...values } = plan.start
+    if (typeof chosen === 'string') {
+      if ((options?.starts ?? []).includes(chosen)) setStart(chosen)
+      else setStatus(`Scenario START: a ${chosen} start is not available for this aircraft`)
+    }
+    if (Object.keys(values).length > 0) {
+      setConditions((current) => ({ ...current, ...Object.fromEntries(Object.entries(values).map(([option, value]) => [option, String(value)])) }))
+    }
   }
 
   const toggleY = (name: string): void => {
@@ -657,10 +674,11 @@ export function SimView(): ReactElement {
           <button type="button" className={tab === 'performance' ? 'tab active' : 'tab'} onClick={() => setTab('performance')}>Performance</button>
         </div>
         <SimFileEditor controller={controller} kind="scenario" name={scenarioFile} project={project} template={options?.scenario_templates[controller]?.source ?? ''} templateOutline={options?.scenario_templates[controller]?.scenario} running={running} visible={tab === 'scenario'} onDirty={setScenarioDirty} onDiscard={() => { if (scenario === '__new__') setScenario(options?.scenarios[controller]?.[0] ?? ''); setScenarioDirty(false) }}
-          onLoad={resource => { setOutline(resource.scenario ?? null); setScenarioReady(!resource.error) }}
+          onLoad={resource => { setOutline(resource.scenario ?? null); setScenarioReady(!resource.error); applyScenarioStart(scenarioFile, resource.scenario) }}
           onSaved={(name, resource) => {
             setScenario(name.slice(0, -3)); setScenarioDirty(false); setScenarioReady(true)
             setOutline(resource.scenario ?? null)
+            applyScenarioStart(name, resource.scenario)
             void simOptions().then(setOptions)
           }} />
         <SimFileEditor controller={controller} kind="diff" name={inavConfig} project={project} template="" revision={diffRevision} running={running} visible={tab === 'diff'} onDirty={setDiffDirty} onDiscard={() => setDiffDirty(false)} onLoad={() => {}}
@@ -688,7 +706,7 @@ export function SimView(): ReactElement {
               {controller === INAV && <p className="form-hint">RC roll, pitch and yaw: −1…1. Throttle: 0…1. Positive pitch stick pushes the nose down.</p>}
               {controller === 'mcu' && <p className="form-hint">Write controller.esc[index] and controller.servo[index] in PWM microseconds (1000…2000). Read flight.sensors for the simulated I2C/SPI hardware. Control loops belong in the script.</p>}
               <p className="form-hint">Controller commands come from the imported module. flight.truth and flight.state report simulator state; flight.sensors exposes the raw hardware readings.</p>
-              <p className="form-hint">The toolbar sets initial conditions. PARAMETERS and TELEMETRY are optional for every scenario. flight.wait runs on simulated time; flight.measure records a measurement.</p>
+              <p className="form-hint">The toolbar sets initial conditions; an optional START pre-selects the scenario's own. PARAMETERS and TELEMETRY are optional for every scenario. flight.wait runs on simulated time; flight.measure records a measurement.</p>
               <p className="form-hint">An unmet wait condition fails visibly at its timeout. Returning from run ends the flight. phase(name, description) labels a step.</p>
             </> : <p className="form-hint">Project SITL diffs are flown as saved. Generated diffs are refreshed on each run; save a copy to customize them. Real FC dumps retain the existing SITL conversion of mixer and AUX settings.</p>}
           </div>

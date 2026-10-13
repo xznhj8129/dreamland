@@ -77,15 +77,15 @@
     "surfaces": [
         {
             "name": "main-wing",
-            "x_root_le_m": 0.32705,
+            "x_root_le_m": 0.32162,
             "layout": "H",
             "fin_position": "top",
             "dihedral_deg": 5.0,
             "vertical_offset": 0.6,
             "root": "body",
-            "span_m": 0.3,
-            "chord_root_m": 0.1,
-            "chord_tip_m": 0.07,
+            "span_m": 0.35,
+            "chord_root_m": 0.12,
+            "chord_tip_m": 0.08,
             "sweep_le_deg": 3,
             "incidence_deg": 3.0,
             "incidence_mode": "symmetric",
@@ -144,7 +144,7 @@
         },
         {
             "name": "elevators",
-            "x_root_le_m": 0.53179,
+            "x_root_le_m": 0.56592,
             "layout": "H",
             "fin_position": "top",
             "dihedral_deg": 0.0,
@@ -185,7 +185,7 @@
         },
         {
             "name": "rudder",
-            "x_root_le_m": 0.5,
+            "x_root_le_m": 0.54756,
             "layout": "1",
             "fin_position": "top",
             "dihedral_deg": 0.0,
@@ -225,7 +225,7 @@
         },
         {
             "name": "underfin",
-            "x_root_le_m": 0.52,
+            "x_root_le_m": 0.56028,
             "layout": "1",
             "fin_position": "bottom",
             "dihedral_deg": 0.0,
@@ -246,19 +246,9 @@
         }
     ],
     "propulsion": {
-        "motor": {
-            "manufacturer": "Brother Hobby",
-            "name": "Tornado T5 3115 PRO 900"
-        },
-        "prop": "APC SF 9x6",
-        "battery": {
-            "model": "commercial",
-            "part": "CNHL-2200mah-6S",
-            "volume": "battery"
-        },
-        "esc": "ESC",
         "mounts": [
             {
+                "type": "electric",
                 "on": "tail",
                 "direction": "pusher",
                 "spin": "cw",
@@ -272,31 +262,44 @@
                 "x_offset_m": 0.01
             }
         ],
-        "wiring": {
-            "battery": {
-                "gauge_awg": 14,
-                "conductors": 2,
-                "plugs": [
-                    "XT60",
-                    "XT60"
-                ]
+        "electric": {
+            "motor": {
+                "manufacturer": "Brother Hobby",
+                "name": "Tornado T5 3115 PRO 900"
             },
-            "motors": [
-                {
-                    "gauge_awg": 18,
-                    "conductors": 3,
+            "prop": "APC SF 9x6",
+            "battery": {
+                "model": "commercial",
+                "part": "CNHL-2200mah-6S",
+                "volume": "battery"
+            },
+            "esc": "ESC",
+            "wiring": {
+                "battery": {
+                    "gauge_awg": 14,
+                    "conductors": 2,
                     "plugs": [
-                        "MR60"
+                        "XT60",
+                        "XT60"
                     ]
-                }
-            ]
+                },
+                "motors": [
+                    {
+                        "gauge_awg": 18,
+                        "conductors": 3,
+                        "plugs": [
+                            "MR60"
+                        ]
+                    }
+                ]
+            }
         }
     },
     "volumes": [
         {
             "name": "battery",
             "shape": "rounded_box",
-            "x_m": 0.22745,
+            "x_m": 0.14139,
             "size_m": [
                 0.125,
                 0.04,
@@ -309,7 +312,7 @@
         {
             "name": "ballast",
             "shape": "bore",
-            "x_m": 0.1119,
+            "x_m": 0.25884,
             "mass_kg": 0.02,
             "length_m": 0.05
         }
@@ -355,9 +358,9 @@
     "sections": {
         "cuts_m": [
             0.05801,
-            0.1559,
+            0.21799,
             0.30729,
-            0.4296,
+            0.45109,
             0.6137
         ],
         "per_section": [

@@ -6,7 +6,7 @@ summary = propulsion_summary(resolved, parts_data)
 
 The propulsion model shared by the GUI, the report and the JSBSim export: motorlib (libs/motorlib, the rcplanes.online
 multirotor calculator: its motor and prop data and formulas) at full throttle, static, on the definition's battery, with
-the resistance between the cells and each motor worked out from the design: its own wire run (propulsion.wiring, the
+the resistance between the cells and each motor worked out from the design: its own wire run (propulsion.electric.wiring, the
 route from geometry) and the shared battery run (wiring_resistances). Throttle is ESC duty, as INAV's motor output
 (DShot): motor voltage = duty x pack voltage.
 
@@ -78,10 +78,10 @@ class WiringResistance:
 
 def wiring_resistances(resolved: ResolvedAirframe, parts_data: dict) -> tuple[WiringResistance, ...]:
     """Per motor, in motor order: the routes of resolved.wires (battery part to ESC part, ESC part to each motor) with
-    the gauges and plugs of propulsion.wiring, the battery's own connector first on the battery run."""
-    propulsion = resolved.airframe.propulsion
-    battery = propulsion.battery
-    esc = library_part(resolved, parts_data, propulsion.esc)
+    the gauges and plugs of propulsion.electric.wiring, the battery's own connector first on the battery run."""
+    electric = resolved.airframe.propulsion.electric
+    battery = electric.battery
+    esc = library_part(resolved, parts_data, electric.esc)
     battery_route = route_length_m(resolved.wires.battery)
     not_modelled = []
     if battery.ir_ohm_per_cell is not None:
@@ -99,7 +99,7 @@ def wiring_resistances(resolved: ResolvedAirframe, parts_data: dict) -> tuple[Wi
     else:
         esc_ohm = 0.0
         not_modelled.append("ESC resistance (no mosfet_rds_on_ohm)")
-    battery_run = propulsion.wiring.battery
+    battery_run = electric.wiring.battery
     battery_plugs = (battery.connector, *battery_run.plugs)
     return tuple(
         WiringResistance(
@@ -108,7 +108,7 @@ def wiring_resistances(resolved: ResolvedAirframe, parts_data: dict) -> tuple[Wi
             motor_plugs_ohm=plugs_ohm(run.plugs, parts_data), esc_ohm=esc_ohm, battery_route_m=battery_route, motor_route_m=route_length_m(route),
             not_modelled=tuple(not_modelled),
         )
-        for run, route in zip(propulsion.wiring.motors, resolved.wires.motors, strict=True)
+        for run, route in zip(electric.wiring.motors, resolved.wires.motors, strict=True)
     )
 
 
@@ -166,12 +166,12 @@ def motor_models(resolved: ResolvedAirframe, parts_data: dict) -> tuple[MotorMod
 def motor_model(resolved: ResolvedAirframe, parts_data: dict, wiring: WiringResistance) -> MotorModel:
     """motorlib's full-throttle point of one motor wired as given, the other motors drawing the same."""
     airframe = resolved.airframe
-    propulsion = airframe.propulsion
-    battery = propulsion.battery
+    electric = airframe.propulsion.electric
+    battery = electric.battery
     sim = MotorSim(
         repo=motor_repo(), cell=None, cell_volt=battery.cell_voltage_v, controller=None, wire_gauge=None, wire_length_m=0.0,
-        external_resistance_ohm=wiring.per_motor_ohm, motor_mfg=propulsion.motor.manufacturer, motor_type=propulsion.motor.name,
-        propeller=propulsion.prop, cells=battery.series, parallel=battery.parallel, motors=len(resolved.motors),
+        external_resistance_ohm=wiring.per_motor_ohm, motor_mfg=electric.motor.manufacturer, motor_type=electric.motor.name,
+        propeller=electric.prop, cells=battery.series, parallel=battery.parallel, motors=len(resolved.motors),
         altitude_m=0.0, temp_c=AIR_TEMP_C, wire_temp_c=AIR_TEMP_C, temp_motor_c=MOTOR_TEMP_C,
     )
     static = dict(sim.static)
@@ -183,7 +183,7 @@ def motor_model(resolved: ResolvedAirframe, parts_data: dict, wiring: WiringResi
     revs = rpm / 60.0
     thrust = float(static["thrust_g"]) / len(resolved.motors) / 1000.0 * G_ACCEL
     return MotorModel(
-        label=f"{propulsion.motor.manufacturer} {propulsion.motor.name} ({kv:g} KV)", prop=propulsion.prop, cells=battery.series,
+        label=f"{electric.motor.manufacturer} {electric.motor.name} ({kv:g} KV)", prop=electric.prop, cells=battery.series,
         parallel=battery.parallel, pack_mah=battery.capacity_mah, pack_wh=battery.capacity_mah / 1000.0 * pack_v,
         pack_voltage_v=pack_v, diameter_m=diameter, pitch_m=sim.prop.pitch_in * INCH_M, rho=rho, kv_rpm_v=kv,
         resistance_ohm=(pack_v - rpm / kv) / current, no_load_current_a=io, full_rpm=rpm, full_thrust_n=thrust, full_current_a=current,

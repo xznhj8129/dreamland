@@ -22,6 +22,7 @@ import aerosandbox as asb
 
 from libs.motorlib import DataRepo
 from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS, check_profile, normalize_shape_name
+from libs.rocketmotors import RocketMotor, RocketMotorError, rocket_motor
 
 SCHEMA = "airframe/2"
 SECTION_PROFILE_KEYS = ("width_m", "height_m", "shape")
@@ -56,7 +57,10 @@ PART_TABLES = ("battery", "connector", "prop", "material", "mounting")  # data/p
 PART_CATEGORIES = ("battery", *PART_ROLES)  # what can be placed in an airframe (parts[], the battery)
 AXES = ("x", "y", "z")
 ORIENTATION_KEYS = ("yaw_deg", "pitch_deg", "roll_deg")  # a placed part's turn (PlacedPart), each optional (absent = 0)
+MOUNT_TYPES = ("electric", "rocket")  # what a motor mount carries: an electric motor and prop, or a solid rocket motor
 MOUNT_TARGETS = ("nose", "tail", "surface")
+ROCKET_MOUNT_TARGETS = ("tail", "surface")  # a rocket motor fires aft: not from the nose
+ELECTRIC_MOUNT_KEYS = ("direction", "spin", "pod", "holes")  # mount fields only an electric mount has
 THRUST_DIRECTIONS = ("tractor", "pusher")
 # Prop spin, seen from where the thrust points (from above in hover). A surface mount carries 2+ motors that spin in
 # pairs, props out or in; a nose or tail mount carries one motor, cw or ccw.
@@ -334,15 +338,17 @@ class MotorMountHoles:
 
 @dataclass(frozen=True)
 class Mount:
-    on: str
+    type: str  # MOUNT_TYPES
+    on: str  # MOUNT_TARGETS; a rocket mount ROCKET_MOUNT_TARGETS
     surface: str | None
     span_position_m: float | None  # along each panel from its root
-    x_offset_m: float  # from the surface root leading edge or the nose/tail mounting face; positive aft
-    direction: str
-    spin: str  # SURFACE_PROP_SPINS on a surface, SINGLE_PROP_SPINS on the nose or tail
+    x_offset_m: float  # from the surface root leading edge or the nose/tail mounting face; positive aft. A rocket
+                       # mount: where the motor's aft (nozzle) end sits; the motor runs forward from there
+    direction: str | None  # electric: THRUST_DIRECTIONS; None on a rocket mount (the nozzle points aft)
+    spin: str | None  # electric: SURFACE_PROP_SPINS on a surface, SINGLE_PROP_SPINS on the nose or tail; None on a rocket mount
     thrust_axis_tilt_deg: float  # thrust line tilted up (+z) from the body axis, e.g. to pass through the CG
-    pod: Pod | None
-    holes: MotorMountHoles | None = None
+    pod: Pod | None  # electric only
+    holes: MotorMountHoles | None = None  # electric only
 
 
 @dataclass(frozen=True)
@@ -377,18 +383,37 @@ class Wiring:
 
 
 @dataclass(frozen=True)
-class Propulsion:
+class ElectricPropulsion:
+    """The electric system: one motor and prop model on every electric mount, the pack, the ESC and the wiring."""
     motor: MotorRef
     prop: str  # motorlib propeller (libs/motorlib/data/propellers.csv)
     battery: Battery
     esc: str  # name of the placed ESC part (battery leads end and motor leads start there)
-    mounts: tuple[Mount, ...]
-    wiring: Wiring
+    wiring: Wiring  # motors: one run per electric motor, in motor order
     motor_mass_kg: float  # per motor, motorlib
     bell_diameter_m: float  # stator diameter, motorlib
     bell_length_m: float  # stator height, motorlib
     prop_diameter_m: float
     prop_mass_kg: float  # per prop, from data/parts/prop.json sizes
+
+
+@dataclass(frozen=True)
+class RocketLoad:
+    """A solid rocket motor loaded into a rocket mount (on a surface mount: into every panel's position)."""
+    mount: int  # mount number, 1-based as the editor shows "Mount N"
+    motor: RocketMotor  # data/rocket_motors/<motor.name>.eng
+
+
+@dataclass(frozen=True)
+class Propulsion:
+    mounts: tuple[Mount, ...]
+    electric: ElectricPropulsion | None  # required when a mount is electric
+    rocket: tuple[RocketLoad, ...]  # at most one per rocket mount; an empty rocket mount fires nothing
+
+    @property
+    def electric_mounts(self) -> tuple[tuple[int, Mount], ...]:
+        """(mount number, mount) of every electric mount, in mount order."""
+        return tuple((number, mount) for number, mount in enumerate(self.mounts, start=1) if mount.type == "electric")
 
 
 @dataclass(frozen=True)
@@ -550,12 +575,13 @@ class _Fields:
             raise AirframeError(f"{self.path}: unknown field(s) {sorted(self.data)}")
 
 
-def _end_profile(data: dict, path: str) -> EndProfile:
+def _end_profile(data: dict, path: str, flat_allowed: bool) -> EndProfile:
+    """flat_allowed: length 0 is a flat end (a rocket's base) instead of a taper."""
     fields = _Fields(data, path)
     profile = normalize_shape_name(fields.text("profile"))
     if profile not in POINTED_SHAPE_PARAM_KEYS:
         raise AirframeError(f"{fields.at('profile')}: {profile!r} is not one of {sorted(POINTED_SHAPE_PARAM_KEYS)}")
-    length_m = fields.positive("length_m")
+    length_m = fields.number("length_m", minimum=0.0, exclusive=not flat_allowed)
     params_fields = _Fields(fields.required("params"), fields.at("params"))
     params = {key: params_fields.number(key) for key in POINTED_SHAPE_PARAM_KEYS[profile]}
     params_fields.done()
@@ -646,8 +672,8 @@ def _fuselage(data: dict, path: str, parts_data: dict) -> Fuselage:
     length_m = fields.positive("length_m")
     section = _body_section(fields.required("section"), fields.at("section"))
 
-    nose = _end_profile(fields.required("nose"), fields.at("nose"))
-    tail = _end_profile(fields.required("tail"), fields.at("tail"))
+    nose = _end_profile(fields.required("nose"), fields.at("nose"), flat_allowed=False)
+    tail = _end_profile(fields.required("tail"), fields.at("tail"), flat_allowed=True)
     if nose.length_m + tail.length_m > length_m:
         raise AirframeError(f"{path}: nose + tail length {nose.length_m + tail.length_m} exceeds fuselage length {length_m}")
     for end_name, end in (("nose", nose), ("tail", tail)):
@@ -1100,7 +1126,54 @@ def _motor_mount_holes(data: dict, path: str) -> MotorMountHoles:
     return holes
 
 
-def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], parts: tuple[PlacedPart, ...], volumes: dict[str, Volume], parts_data: dict) -> Propulsion:
+def _mount(data: dict, path: str, surfaces: dict[str, Surface]) -> Mount:
+    fields = _Fields(data, path)
+    mount_type = fields.choice("type", MOUNT_TYPES)
+    on = fields.choice("on", MOUNT_TARGETS if mount_type == "electric" else ROCKET_MOUNT_TARGETS)
+    surface_name = span_position_m = None
+    x_offset_m = fields.number("x_offset_m")
+    if on == "surface":
+        surface_name = fields.text("surface")
+        if surface_name not in surfaces:
+            raise AirframeError(f"{fields.at('surface')}: {surface_name!r} is not a defined surface")
+        span_position_m = fields.number("span_position_m", minimum=0.0)
+        if span_position_m > surfaces[surface_name].span_m:
+            raise AirframeError(f"{fields.at('span_position_m')}: {span_position_m} is past the panel span {surfaces[surface_name].span_m}")
+    thrust_axis_tilt_deg = fields.number("thrust_axis_tilt_deg")
+    if mount_type == "rocket":
+        fields.done()
+        return Mount(type=mount_type, on=on, surface=surface_name, span_position_m=span_position_m, x_offset_m=x_offset_m, direction=None,
+                     spin=None, thrust_axis_tilt_deg=thrust_axis_tilt_deg, pod=None)
+    direction = fields.choice("direction", THRUST_DIRECTIONS)
+    if (on, direction) in (("nose", "pusher"), ("tail", "tractor")):
+        raise AirframeError(f"{fields.at('direction')}: a {on} motor must be a {'tractor' if on == 'nose' else 'pusher'}")
+    spin = fields.choice("spin", SURFACE_PROP_SPINS if on == "surface" else SINGLE_PROP_SPINS)
+    pod_data = fields.optional("pod", None)
+    pod = None
+    if pod_data is not None:
+        pod_fields = _Fields(pod_data, fields.at("pod"))
+        pod = Pod(
+            diameter_m=pod_fields.positive("diameter_m"),
+            flat_length_m=pod_fields.number("flat_length_m", minimum=0.0),
+            curve_length_m=pod_fields.number("curve_length_m", minimum=0.0),
+            profile=normalize_shape_name(pod_fields.text("profile")),
+        )
+        pod_fields.done()
+        if POINTED_SHAPE_PARAM_KEYS.get(pod.profile) != []:
+            raise AirframeError(f"{fields.at('pod')}.profile: {pod.profile!r} must be a parameter-free profile {[key for key, value in POINTED_SHAPE_PARAM_KEYS.items() if not value]}")
+        try:
+            check_profile(pod.profile, pod.curve_length_m, pod.diameter_m / 2.0)
+        except ValueError as error:
+            raise AirframeError(f"{fields.at('pod')}: {error}") from error
+    holes_data = fields.optional("holes", None)
+    holes = None if holes_data is None else _motor_mount_holes(holes_data, fields.at("holes"))
+    fields.done()
+    return Mount(type=mount_type, on=on, surface=surface_name, span_position_m=span_position_m, x_offset_m=x_offset_m, direction=direction, spin=spin,
+                 thrust_axis_tilt_deg=thrust_axis_tilt_deg, pod=pod, holes=holes)
+
+
+def _electric(data: dict, path: str, mounts: tuple[Mount, ...], surfaces: tuple[Surface, ...], parts: tuple[PlacedPart, ...], volumes: dict[str, Volume],
+              parts_data: dict) -> ElectricPropulsion:
     fields = _Fields(data, path)
     motor_fields = _Fields(fields.required("motor"), fields.at("motor"))
     motor = MotorRef(manufacturer=motor_fields.text("manufacturer"), name=motor_fields.text("name"))
@@ -1122,63 +1195,58 @@ def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], parts: tup
     if categories.get(esc) != "esc":
         raise AirframeError(f"{fields.at('esc')}: {esc!r} must name a part whose part is 'esc:<name>'; esc parts: {sorted(n for n, c in categories.items() if c == 'esc')}")
 
-    surface_names = {surface.name: surface for surface in surfaces}
-    mounts = []
-    for index, mount_data in enumerate(fields.required("mounts")):
-        mount_fields = _Fields(mount_data, f"{fields.at('mounts')}[{index}]")
-        on = mount_fields.choice("on", MOUNT_TARGETS)
-        surface_name = span_position_m = None
-        x_offset_m = mount_fields.number("x_offset_m")
-        if on == "surface":
-            surface_name = mount_fields.text("surface")
-            if surface_name not in surface_names:
-                raise AirframeError(f"{mount_fields.at('surface')}: {surface_name!r} is not a defined surface")
-            span_position_m = mount_fields.number("span_position_m", minimum=0.0)
-            if span_position_m > surface_names[surface_name].span_m:
-                raise AirframeError(f"{mount_fields.at('span_position_m')}: {span_position_m} is past the panel span {surface_names[surface_name].span_m}")
-        direction = mount_fields.choice("direction", THRUST_DIRECTIONS)
-        thrust_axis_tilt_deg = mount_fields.number("thrust_axis_tilt_deg")
-        if (on, direction) in (("nose", "pusher"), ("tail", "tractor")):
-            raise AirframeError(f"{mount_fields.at('direction')}: a {on} motor must be a {'tractor' if on == 'nose' else 'pusher'}")
-        spin = mount_fields.choice("spin", SURFACE_PROP_SPINS if on == "surface" else SINGLE_PROP_SPINS)
-        pod_data = mount_fields.optional("pod", None)
-        pod = None
-        if pod_data is not None:
-            pod_fields = _Fields(pod_data, mount_fields.at("pod"))
-            pod = Pod(
-                diameter_m=pod_fields.positive("diameter_m"),
-                flat_length_m=pod_fields.number("flat_length_m", minimum=0.0),
-                curve_length_m=pod_fields.number("curve_length_m", minimum=0.0),
-                profile=normalize_shape_name(pod_fields.text("profile")),
-            )
-            pod_fields.done()
-            if POINTED_SHAPE_PARAM_KEYS.get(pod.profile) != []:
-                raise AirframeError(f"{mount_fields.at('pod')}.profile: {pod.profile!r} must be a parameter-free profile {[key for key, value in POINTED_SHAPE_PARAM_KEYS.items() if not value]}")
-            try:
-                check_profile(pod.profile, pod.curve_length_m, pod.diameter_m / 2.0)
-            except ValueError as error:
-                raise AirframeError(f"{mount_fields.at('pod')}: {error}") from error
-        holes_data = mount_fields.optional("holes", None)
-        holes = None if holes_data is None else _motor_mount_holes(holes_data, mount_fields.at("holes"))
-        mount_fields.done()
-        mounts.append(Mount(on=on, surface=surface_name, span_position_m=span_position_m, x_offset_m=x_offset_m, direction=direction, spin=spin,
-                            thrust_axis_tilt_deg=thrust_axis_tilt_deg, pod=pod, holes=holes))
-    if not mounts:
-        raise AirframeError(f"{fields.at('mounts')}: at least one mount is required")
     wiring_fields = _Fields(fields.required("wiring"), fields.at("wiring"))
-    count = motor_count(((mount.on, mount.surface) for mount in mounts), {surface.name: surface.layout for surface in surfaces})
+    count = motor_count(((mount.on, mount.surface) for mount in mounts if mount.type == "electric"), {surface.name: surface.layout for surface in surfaces})
     motor_runs = wiring_fields.required("motors")
     if type(motor_runs) is not list or len(motor_runs) != count:
-        raise AirframeError(f"{wiring_fields.at('motors')}: needs one run per motor ({count}), in motor order")
+        raise AirframeError(f"{wiring_fields.at('motors')}: needs one run per electric motor ({count}), in motor order")
     wiring = Wiring(battery=_wire_run(wiring_fields.required("battery"), wiring_fields.at("battery"), parts_data),
                     motors=tuple(_wire_run(run, f"{wiring_fields.at('motors')}[{index}]", parts_data) for index, run in enumerate(motor_runs)))
     wiring_fields.done()
     fields.done()
-    return Propulsion(
-        motor=motor, prop=prop, battery=battery, esc=esc, mounts=tuple(mounts), wiring=wiring, motor_mass_kg=motor_data.weight_g / 1000.0,
+    return ElectricPropulsion(
+        motor=motor, prop=prop, battery=battery, esc=esc, wiring=wiring, motor_mass_kg=motor_data.weight_g / 1000.0,
         bell_diameter_m=motor_data.stator_diameter_mm / 1000.0, bell_length_m=motor_data.stator_height_mm / 1000.0,
         prop_diameter_m=prop_data.diam_in * INCH_M, prop_mass_kg=prop_mass_kg(prop_data.diam_in, parts_data),
     )
+
+
+def _rocket(data: dict, path: str, mounts: tuple[Mount, ...]) -> tuple[RocketLoad, ...]:
+    fields = _Fields(data, path)
+    loads = []
+    for index, load_data in enumerate(fields.required("motors")):
+        load_fields = _Fields(load_data, f"{fields.at('motors')}[{index}]")
+        number = load_fields.required("mount")
+        if type(number) is not int or not 1 <= number <= len(mounts) or mounts[number - 1].type != "rocket":
+            rocket_numbers = [n for n, mount in enumerate(mounts, start=1) if mount.type == "rocket"]
+            raise AirframeError(f"{load_fields.at('mount')}: {number!r} must be the number of a rocket mount {rocket_numbers}")
+        if number in (load.mount for load in loads):
+            raise AirframeError(f"{load_fields.at('mount')}: mount {number} already holds a motor")
+        name = load_fields.text("motor")
+        try:
+            motor = rocket_motor(name)
+        except RocketMotorError as error:
+            raise AirframeError(f"{load_fields.at('motor')}: {error}") from error
+        load_fields.done()
+        loads.append(RocketLoad(mount=number, motor=motor))
+    fields.done()
+    return tuple(loads)
+
+
+def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], parts: tuple[PlacedPart, ...], volumes: dict[str, Volume], parts_data: dict) -> Propulsion:
+    fields = _Fields(data, path)
+    surface_names = {surface.name: surface for surface in surfaces}
+    mounts = tuple(_mount(mount_data, f"{fields.at('mounts')}[{index}]", surface_names) for index, mount_data in enumerate(fields.required("mounts")))
+    if not mounts:
+        raise AirframeError(f"{fields.at('mounts')}: at least one mount is required")
+    electric_data = fields.optional("electric", None)
+    if electric_data is None and any(mount.type == "electric" for mount in mounts):
+        raise AirframeError(f"{fields.at('electric')}: required: electric mounts {[n for n, mount in enumerate(mounts, start=1) if mount.type == 'electric']} need the electric system")
+    electric = None if electric_data is None else _electric(electric_data, fields.at("electric"), mounts, surfaces, parts, volumes, parts_data)
+    rocket_data = fields.optional("rocket", None)
+    rocket = () if rocket_data is None else _rocket(rocket_data, fields.at("rocket"), mounts)
+    fields.done()
+    return Propulsion(mounts=mounts, electric=electric, rocket=rocket)
 
 
 def _limit_range(fields: _Fields, key: str) -> tuple[float, float]:
@@ -1342,8 +1410,10 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     if BATTERY_PART_NAME in {part.name for part in parts}:
         raise AirframeError(f"{fields.at('parts')}: {BATTERY_PART_NAME!r} is the propulsion battery's name; rename that part")
     propulsion = None if propulsion_data is None else _propulsion(propulsion_data, fields.at("propulsion"), surfaces, parts, volumes_by_name, parts_data)
-    if propulsion is not None:
-        parts = (*parts, propulsion.battery.placed)
+    if vtol and not propulsion.electric_mounts:
+        raise AirframeError(f"{fields.at('vtol')}: a VTOL hovers on electric motors; it needs an electric mount")
+    if propulsion is not None and propulsion.electric is not None:
+        parts = (*parts, propulsion.electric.battery.placed)
 
     sections_fields = _Fields(fields.required("sections"), fields.at("sections"))
     cuts = tuple(
@@ -1458,9 +1528,10 @@ def main() -> None:
         airframe = load_airframe(Path(argument), parts_data)
         motors = 0
         motor_mass = 0.0
-        if airframe.propulsion is not None:
-            motors = len(airframe.propulsion.wiring.motors)
-            motor_mass = motors * (airframe.propulsion.motor_mass_kg + airframe.propulsion.prop_mass_kg)
+        if airframe.propulsion is not None and airframe.propulsion.electric is not None:
+            electric = airframe.propulsion.electric
+            motors = len(electric.wiring.motors)
+            motor_mass = motors * (electric.motor_mass_kg + electric.prop_mass_kg)
         volume_mass = [sum(volume.mass_kg[i] for volume in airframe.volumes if volume.mass_kg is not None) for i in (0, 1)]
         surface_mass = sum(surface.mass_kg for surface in airframe.surfaces if surface.mass_kg is not None)
         section_mass = sum(section.empty_mass_kg for section in airframe.sections.per_section if section.empty_mass_kg is not None)

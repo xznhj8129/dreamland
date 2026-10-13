@@ -31,7 +31,7 @@ Model choices (best estimates where no data exists):
   by the pitch ratio over the APC's (zero thrust at J = 1.46 x pitch / diameter). Rotor inertia = prop only.
 - Aerodynamics: the editor's lifting line + bodies at forward zero-sideslip points; AeroBuildup sideslip increments,
   outer envelope and rate damping (FlightAero documents the blend). Tables cover AoA -180..180, sideslip -90..90 and
-  AERO_SPEEDS_M_S. Matching models are consistency, not independent aerodynamic validation.
+  the solved airspeeds (aero_speeds_m_s). Matching models are consistency, not independent aerodynamic validation.
 - Control surfaces: each control's increments from the same blended model at sideslip 0, the base AoA/speed grids
   and CONTROL_DEFLECTION_GRID_DEG. The forward model includes interacting-wing response to the actual deflection;
   the outer AeroBuildup envelope uses finite_wing_factor. Separate control increments add up in JSBSim, omitting
@@ -39,6 +39,12 @@ Model choices (best estimates where no data exists):
   output Sn (1000..2000 us, as -1..1 on
   SERVO_PROPERTY) maps -1 / 0 / +1 to deflection_min / 0 / deflection_max, through an actuator rate-limited to
   rate_deg_s.
+- Rocket motors: JSBSim's solid rocket engine, thrust looked up by propellant burned, from the RASP curve as
+  published, each ROCKET_CURVE_STEP_S step of it (linear in time, as RASP means it) at its mean thrust; Isp = total impulse / (propellant
+  mass x g0), so the burn delivers the curve's impulse and ends when its tank (the propellant, a cylindrical grain at
+  the casing centre) is empty. No buildup ramp (the curve has its own). The nozzle has zero exit area: the curve is
+  measured thrust, used as given. A motor ignites when its throttle command is 1 (RocketEngine.throttle_property) and
+  burns to the end. The mass balance is the dry airframe; the propellant mass lives in the tanks.
 - Contact points: the tail end and every panel tip trailing edge, as STRUCTURE contacts; JSBSim decides which touch
   (it may lean onto wingtips that end short of the tail); a fixed-wing also gets the nose tip. Springs sized for CONTACT_SUPPORTING_POINTS carrying the weight. Start standing at stance_height_m: JSBSim's ground trim (do_simple_trim) crashes on a nose-up model.
 """
@@ -62,9 +68,10 @@ import time
 from threadpoolctl import threadpool_limits
 
 from libs.aero import AERO_MODEL_SIZE, ForwardAero, build_asb_airplane, with_side_deflections
-from libs.airframe import INCH_M, Propulsion, motor_repo, motorlib_motor
-from libs.geometry import STANDARD_GRAVITY_M_S2, Inertia, ResolvedAirframe, Vec
+from libs.airframe import INCH_M, ElectricPropulsion, motor_repo, motorlib_motor
+from libs.geometry import STANDARD_GRAVITY_M_S2, Inertia, ResolvedAirframe, RocketPlacement, Vec, dry_mass_properties
 from libs.propulsion import MotorModel, motor_models, rpm_for_thrust, static_points
+from libs.rocketmotors import RocketMotor
 
 REPO_DIR = Path(__file__).resolve().parent.parent
 EXPORT_ROOT = "export_jsbsim"  # the code an export runs is what this function reaches (export_code_digest)
@@ -76,12 +83,14 @@ APC_REFERENCE_PROP = "DJI_9450"  # JSBSim's bundled APC 9x4.5E table, for the Ct
 APC_REFERENCE_PITCH_RATIO = 4.5 / 9.0
 AERO_ALPHA_DEG = np.concatenate((np.arange(-180.0, -30.0, 10.0), np.arange(-30.0, 31.0, 2.0), np.arange(40.0, 181.0, 10.0)))
 AERO_BETA_DEG = np.array([-90.0, -60.0, -45.0, -30.0, -20.0, -15.0, -10.0, -7.5, -5.0, -2.5, 0.0, 2.5, 5.0, 7.5, 10.0, 15.0, 20.0, 30.0, 45.0, 60.0, 90.0])
-# Airspeeds the tables are solved at (Reynolds number: section polars and body drag); JSBSim holds the end values
-# beyond them. Independent of the definition's operating airspeed, which is a guess.
+# Airspeeds the tables are solved at (Reynolds and Mach number: section polars, body and wave drag); JSBSim holds the
+# end values beyond them. Independent of the definition's operating airspeed, which is a guess. An airframe with rocket
+# motors adds ROCKET_AERO_SPEEDS_M_S, up to about Mach 0.9 where the subsonic models end (aero_speeds_m_s).
 AERO_SPEEDS_M_S = np.array([5.0, 10.0, 15.0, 20.0, 30.0, 40.0, 50.0])
+ROCKET_AERO_SPEEDS_M_S = np.array([75.0, 100.0, 150.0, 200.0, 250.0, 300.0])
 FT_M = 0.3048
 ALPHA_RAD_ROWS = ("aero/alpha-rad", np.radians(AERO_ALPHA_DEG))  # table_xml (property, breakpoints)
-AIRSPEED_FPS = ("velocities/vt-fps", AERO_SPEEDS_M_S / FT_M)
+AIRSPEED_PROPERTY = "velocities/vt-fps"
 CONTROL_COEFFICIENTS = ("CX", "CY", "CZ", "Cl", "Cm", "Cn")
 FORWARD_ALPHA_LIMIT_DEG = 30.0
 ENVELOPE_ALPHA_END_DEG = 45.0
@@ -93,7 +102,7 @@ AERO_PROVENANCE = "Lifting line + bodies in forward flight; AeroBuildup sideslip
 # stalled column (half of +-45 deg gave 90x the real adverse yaw and a ninth of the roll at 5 deg).
 CONTROL_DEFLECTION_GRID_DEG = (2.5, 5.0, 10.0, 15.0, 20.0, 30.0, 45.0)
 CONTROL_FACTOR_PROBE_DEG = 2.0  # finite_wing_factor: twist / control deflection
-CONTROL_FACTOR_AOA_DEG = 2.0  # finite_wing_factor: AoA it is taken at (mean over AERO_SPEEDS_M_S)
+CONTROL_FACTOR_AOA_DEG = 2.0  # finite_wing_factor: AoA it is taken at (mean over the solved airspeeds)
 CONTROL_DERIVATIVE_AOA_DEG = 5.0  # derivatives for the servo mix: mean over AoA within this of zero
 CONTROL_ROLE_MIN_FRACTION = 0.05  # a role is mixed when its moment (flaps: lift) is at least this fraction of the control's largest
 INAV_SERVO_INPUTS = {"roll": 0, "pitch": 1, "yaw": 2, "flaps": 14}  # smix input sources: stabilized axes, FEATURE_FLAPS
@@ -110,12 +119,27 @@ CONTACT_FRICTION = (0.8, 0.5)  # static, dynamic (as JSBSim's F450)
 CONTACT_TYPE = "STRUCTURE"  # BOGEY is a wheel: its rolling direction degenerates with the body axis vertical and the contact explodes
 INAV_THROTTLE_IDLE_PCT = 8  # INAV default; motor output = idle + stick x (1 - idle)
 MOTOR_THROTTLE_PROPERTY = "fcs/throttle-cmd-norm[{index}]"
+ENGINE_THRUST_PROPERTY = "propulsion/engine[{index}]/thrust-lbs"
+ROCKET_CURVE_STEP_S = 0.002
+ROCKET_TABLE_DIGITS = 10  # burned-propellant rows near burnout differ in the 7th digit
+KG_PER_LB = 0.45359237
+N_PER_LBF = 4.4482216152605
 # INAV quad X output order as (front, right) in the hover frame: rear-right, front-right, rear-left, front-left.
 INAV_QUAD_X_ORDER = ((False, True), (True, True), (False, False), (True, False))
 
 
 class ExportError(Exception):
     """The airframe is of a kind this export does not cover yet."""
+
+
+@dataclass(frozen=True)
+class RocketEngine:
+    """A loaded rocket motor as a JSBSim engine: set throttle_property to 1 to ignite it; it burns to the end."""
+    name: str  # RocketPlacement.name
+    mount: int  # mount number
+    designation: str
+    throttle_property: str
+    thrust_property: str  # lbf
 
 
 @dataclass(frozen=True)
@@ -136,6 +160,14 @@ class JSBSimExport:
     servo_rules: tuple[tuple[int, str, int, str], ...]  # (servo, role, sign, controls) for INAV
     forward_alpha_limit_deg: float  # full lifting-line correction; tighter for swept strips that reverse flow
     envelope_alpha_end_deg: float  # correction fades to pure AeroBuildup here
+    rockets: tuple[RocketEngine, ...]  # in resolved rocket order, after the electric motors' engines
+    top_table_speed_m_s: float  # the fastest solved airspeed; JSBSim holds the tables' end values beyond it
+
+    @property
+    def electric_engines(self) -> tuple[int, ...]:
+        """JSBSim engine numbers of the electric motors, the first engines; the only ones started at load, since
+        starting an engine runs it at full throttle and that would light a solid rocket."""
+        return tuple(range(len(self.motors)))
 
 
 @dataclass(frozen=True)
@@ -149,7 +181,7 @@ class ControlTable:
     rate_deg_s: float
     finite_wing_factor: float  # AeroBuildup is given deflection x this (finite_wing_factor)
     deflection_deg: np.ndarray
-    increments: dict[str, np.ndarray]  # CONTROL_COEFFICIENTS (body axes) over the undeflected aircraft: (AERO_SPEEDS_M_S, AERO_ALPHA_DEG, deflection_deg)
+    increments: dict[str, np.ndarray]  # CONTROL_COEFFICIENTS (body axes) over the undeflected aircraft: (FlightAero.speeds_m_s, AERO_ALPHA_DEG, deflection_deg)
     derivatives: dict[str, float]  # per degree of deflection near neutral, mean over the airspeeds and AoA within CONTROL_DERIVATIVE_AOA_DEG of zero
 
 
@@ -184,6 +216,16 @@ def inav_mixers(resolved: ResolvedAirframe, order: tuple[int, ...]) -> dict[str,
     return {"hover": hover, "forward": tuple((-yaw, pitch, roll) for roll, pitch, yaw in hover)}
 
 
+def aero_speeds_m_s(resolved: ResolvedAirframe) -> np.ndarray:
+    """The airspeeds the tables are solved at: AERO_SPEEDS_M_S, and ROCKET_AERO_SPEEDS_M_S when rocket motors are loaded."""
+    return np.concatenate((AERO_SPEEDS_M_S, ROCKET_AERO_SPEEDS_M_S)) if resolved.rockets else AERO_SPEEDS_M_S
+
+
+def airspeed_fps(speeds_m_s: np.ndarray) -> tuple[str, np.ndarray]:
+    """table_xml (property, breakpoints) of the solved airspeeds."""
+    return AIRSPEED_PROPERTY, speeds_m_s / FT_M
+
+
 def jsbsim_inertia(inertia: Inertia) -> tuple[float, float, float, float, float, float]:
     """Geometry-frame tensor entries -> JSBSim body frame (x fwd, y right, z down) ixx..iyz with positive products."""
     ixx, iyy, izz, txy, txz, tyz = inertia
@@ -214,8 +256,8 @@ def extended(x: np.ndarray, rows: np.ndarray) -> np.ndarray:
     return np.where(x <= x1, np.interp(x, rows[:, 0], rows[:, 1]), y1 + (x - x1) * (y1 - y0) / (x1 - x0))
 
 
-def table_rows(rows) -> str:
-    return "\n".join("        " + "  ".join(f"{value:.6g}" for value in row) for row in rows)
+def table_rows(rows, digits: int = 6) -> str:
+    return "\n".join("        " + "  ".join(f"{value:.{digits}g}" for value in row) for row in rows)
 
 
 def body_coefficients(aero: dict, op_point: asb.OperatingPoint, resolved: ResolvedAirframe) -> np.ndarray:
@@ -238,6 +280,7 @@ class FlightAero:
 
     def __init__(self, resolved: ResolvedAirframe):
         self.resolved = resolved
+        self.speeds_m_s = aero_speeds_m_s(resolved)
         self.forward = ForwardAero(resolved)
         self.airplane = build_asb_airplane(resolved)
         self.atmosphere = asb.Atmosphere(altitude=resolved.airframe.operating_point.altitude_m)
@@ -291,10 +334,11 @@ def aero_tables(resolved: ResolvedAirframe, model: FlightAero | None = None) -> 
     grid at sideslip 0."""
     model = model or FlightAero(resolved)
     airplane, atmosphere = model.airplane, model.atmosphere
-    speed, alpha, beta = np.meshgrid(AERO_SPEEDS_M_S, AERO_ALPHA_DEG, AERO_BETA_DEG, indexing="ij")
+    speeds = model.speeds_m_s
+    speed, alpha, beta = np.meshgrid(speeds, AERO_ALPHA_DEG, AERO_BETA_DEG, indexing="ij")
     values = model.run(speed, alpha, beta)
     tables = {name: values[index].reshape(speed.shape) for index, name in enumerate(CONTROL_COEFFICIENTS)}
-    speed, alpha = np.meshgrid(AERO_SPEEDS_M_S, AERO_ALPHA_DEG, indexing="ij")
+    speed, alpha = np.meshgrid(speeds, AERO_ALPHA_DEG, indexing="ij")
     rates = asb.AeroBuildup(
         airplane=airplane, op_point=asb.OperatingPoint(atmosphere=atmosphere, velocity=speed.ravel(), alpha=alpha.ravel()), model_size=AERO_MODEL_SIZE,
     ).run_with_stability_derivatives(alpha=False, beta=False, p=True, q=True, r=True)
@@ -304,7 +348,7 @@ def aero_tables(resolved: ResolvedAirframe, model: FlightAero | None = None) -> 
             invalid = np.argwhere(~np.isfinite(table))
             index = invalid[0]
             sideslip = f", sideslip {AERO_BETA_DEG[index[2]]:g} deg" if table.ndim == 3 else ""
-            raise ValueError(f"Flight aero returned non-finite {name} at {AERO_SPEEDS_M_S[index[0]]:g} m/s, "
+            raise ValueError(f"Flight aero returned non-finite {name} at {speeds[index[0]]:g} m/s, "
                              f"AoA {AERO_ALPHA_DEG[index[1]]:g} deg{sideslip}; {len(invalid)} invalid grid points")
     return tables, dampers
 
@@ -332,8 +376,8 @@ def control_tables(resolved: ResolvedAirframe, model: FlightAero | None = None) 
         return []
     model = model or FlightAero(resolved)
     hybrid = model.forward.hybrid
-    probe_point = asb.OperatingPoint(atmosphere=model.atmosphere, velocity=AERO_SPEEDS_M_S, alpha=np.full(len(AERO_SPEEDS_M_S), CONTROL_FACTOR_AOA_DEG))
-    speed, alpha = np.meshgrid(AERO_SPEEDS_M_S, AERO_ALPHA_DEG, indexing="ij")
+    probe_point = asb.OperatingPoint(atmosphere=model.atmosphere, velocity=model.speeds_m_s, alpha=np.full(len(model.speeds_m_s), CONTROL_FACTOR_AOA_DEG))
+    speed, alpha = np.meshgrid(model.speeds_m_s, AERO_ALPHA_DEG, indexing="ij")
     base = model.run(speed, alpha)
     near = np.abs(AERO_ALPHA_DEG) <= CONTROL_DERIVATIVE_AOA_DEG
     placements = {control.number: control for control in resolved.controls}
@@ -475,16 +519,16 @@ def coefficient_xml(name: str, description: str, factors: str, table: str) -> st
     </function>"""
 
 
-def control_aero_xml(tables: list[ControlTable], coefficient: str, factors: str) -> str:
+def control_aero_xml(tables: list[ControlTable], coefficient: str, factors: str, speeds_m_s: np.ndarray) -> str:
     return "".join(coefficient_xml(
         f"{coefficient}_control_{table.number}", f"{coefficient} increment of {table.label} (shared forward model, outer deflection x {table.finite_wing_factor:.3f})", factors,
-        table_xml(("aero/alpha-deg", AERO_ALPHA_DEG), (CONTROL_POSITION_PROPERTY.format(number=table.number), table.deflection_deg), table.increments[coefficient], AIRSPEED_FPS),
+        table_xml(("aero/alpha-deg", AERO_ALPHA_DEG), (CONTROL_POSITION_PROPERTY.format(number=table.number), table.deflection_deg), table.increments[coefficient], airspeed_fps(speeds_m_s)),
     ) for table in tables)
 
 
-def aero_axis_xml(coefficient: str, table: np.ndarray, factors: str) -> str:
+def aero_axis_xml(coefficient: str, table: np.ndarray, factors: str, speeds_m_s: np.ndarray) -> str:
     return coefficient_xml(coefficient, f"{coefficient} ({AERO_PROVENANCE}, body axes)", factors,
-                           table_xml(ALPHA_RAD_ROWS, ("aero/beta-rad", np.radians(AERO_BETA_DEG)), table, AIRSPEED_FPS))
+                           table_xml(ALPHA_RAD_ROWS, ("aero/beta-rad", np.radians(AERO_BETA_DEG)), table, airspeed_fps(speeds_m_s)))
 
 
 def engine_xml(resolved: ResolvedAirframe, files: list[tuple[str, str]]) -> str:
@@ -500,7 +544,7 @@ def engine_xml(resolved: ResolvedAirframe, files: list[tuple[str, str]]) -> str:
     </engine>""" for placement, (motor_file, prop_file) in zip(resolved.motors, files, strict=True))
 
 
-def write_engine_files(propulsion: Propulsion, model: MotorModel, engine_dir: Path, file_stem: str, pack_voltage_v: float | None) -> tuple[str, str]:
+def write_engine_files(electric: ElectricPropulsion, model: MotorModel, engine_dir: Path, file_stem: str, pack_voltage_v: float | None) -> tuple[str, str]:
     """The JSBSim motor and propeller files of one motor model; returns their names. pack_voltage_v as for export_jsbsim."""
     diameter_m = model.diameter_m
     pack_voltage = model.pack_voltage_v if pack_voltage_v is None else pack_voltage_v
@@ -511,7 +555,7 @@ def write_engine_files(propulsion: Propulsion, model: MotorModel, engine_dir: Pa
     apc_j = j_grid * apc_zero_j / zero_j
     ct_table = ct0 * extended(apc_j, shapes["C_THRUST"])
     cp_table = cp0 * extended(apc_j, shapes["C_POWER"])
-    prop_ixx = propulsion.prop_mass_kg * (diameter_m / 2.0) ** 2 / 3.0
+    prop_ixx = electric.prop_mass_kg * (diameter_m / 2.0) ** 2 / 3.0
     engine_dir.mkdir(parents=True, exist_ok=True)
     motor_file, prop_file = f"{file_stem}_motor", f"{file_stem}_prop"
     (engine_dir / f"{motor_file}.xml").write_text(f"""<?xml version="1.0"?>
@@ -547,6 +591,71 @@ def write_engine_files(propulsion: Propulsion, model: MotorModel, engine_dir: Pa
 </propeller>
 """)
     return motor_file, prop_file
+
+
+def write_rocket_engine_file(motor: RocketMotor, engine_dir: Path, file_stem: str) -> str:
+    """The JSBSim solid rocket engine of one motor (see the module notes); returns its file name."""
+    times_s = np.array([t for t, _f in motor.curve])
+    times = np.union1d(np.arange(0.0, motor.burn_time_s, ROCKET_CURVE_STEP_S), times_s)
+    thrust_n = np.interp(times, times_s, [f for _t, f in motor.curve])
+    impulse_ns = np.concatenate(([0.0], np.cumsum((thrust_n[1:] + thrust_n[:-1]) / 2.0 * np.diff(times))))
+    burned_kg = motor.propellant_kg * impulse_ns / impulse_ns[-1]
+    isp_s = impulse_ns[-1] / (motor.propellant_kg * STANDARD_GRAVITY_M_S2)
+    # Each step's mean thrust from where it starts burning: JSBSim burns propellant at thrust / Isp, so a row at 0 N
+    # would never burn on (no ignition from a 0 N start, no burnout towards a 0 N end); the last step's mean holds
+    # until the tank is empty, which ends the burn.
+    means = (thrust_n[1:] + thrust_n[:-1]) / 2.0
+    rows = [*zip(burned_kg[:-1] / KG_PER_LB, means / N_PER_LBF), (burned_kg[-1] / KG_PER_LB, means[-1] / N_PER_LBF)]
+    engine_dir.mkdir(parents=True, exist_ok=True)
+    (engine_dir / f"{file_stem}.xml").write_text(f"""<?xml version="1.0"?>
+<!-- quadrocketbuilder: {motor.manufacturer} {motor.designation} (data/rocket_motors/{motor.name}.eng), {impulse_ns[-1]:.3f} Ns, {motor.burn_time_s:g} s.
+     Thrust (lbf) against propellant burned (lb): each {ROCKET_CURVE_STEP_S:g} s step of the RASP curve at its mean thrust; Isp = impulse / (propellant x g0). -->
+<rocket_engine name="{motor.manufacturer} {motor.designation}">
+  <isp> {isp_s:.4f} </isp>
+  <thrust_table name="propulsion/thrust_prop_remain" type="internal">
+    <tableData>
+{table_rows(rows, ROCKET_TABLE_DIGITS)}
+    </tableData>
+  </thrust_table>
+</rocket_engine>
+""")
+    return file_stem
+
+
+def write_nozzle_file(engine_dir: Path, file_stem: str) -> str:
+    """A zero exit-area nozzle: the motor curves are measured thrust, used without an ambient-pressure correction."""
+    engine_dir.mkdir(parents=True, exist_ok=True)
+    (engine_dir / f"{file_stem}.xml").write_text("""<?xml version="1.0"?>
+<nozzle name="measured thrust">
+  <area unit="FT2"> 0.0 </area>
+</nozzle>
+""")
+    return file_stem
+
+
+def rocket_xml(rockets: tuple[RocketPlacement, ...], files: dict[str, str], nozzle_file: str) -> tuple[str, str]:
+    """(engines, tanks): one engine per rocket, fed by its own tank (tank i = rocket i), the propellant as a
+    cylindrical grain filling the casing at its centre; files by motor name."""
+    engines = "".join(f"""
+    <engine file="{files[rocket.motor.name]}" name="{rocket.name}">
+      <feed> {index} </feed>
+      <thruster file="{nozzle_file}">
+        <location unit="M"> <x> {rocket.nozzle[0]:.5f} </x> <y> {rocket.nozzle[1]:.5f} </y> <z> {rocket.nozzle[2]:.5f} </z> </location>
+        <orient unit="DEG"> <roll> 0 </roll> <pitch> {math.degrees(math.atan2(rocket.thrust_dir[2], -rocket.thrust_dir[0])):.3f} </pitch> <yaw> 0 </yaw> </orient>
+      </thruster>
+    </engine>""" for index, rocket in enumerate(rockets))
+    tanks = "".join(f"""
+    <tank type="FUEL">  <!-- {rocket.name} propellant -->
+      <location unit="M"> <x> {rocket.center[0]:.5f} </x> <y> {rocket.center[1]:.5f} </y> <z> {rocket.center[2]:.5f} </z> </location>
+      <radius unit="M"> {rocket.motor.diameter_m / 2.0:.5f} </radius>
+      <grain_config type="CYLINDRICAL">
+        <length unit="M"> {rocket.motor.length_m:.5f} </length>
+        <bore_diameter unit="M"> 0.0 </bore_diameter>
+      </grain_config>
+      <capacity unit="LBS"> {rocket.motor.propellant_kg / KG_PER_LB:.6f} </capacity>
+      <contents unit="LBS"> {rocket.motor.propellant_kg / KG_PER_LB:.6f} </contents>
+    </tank>""" for rocket in rockets)
+    return engines, tanks
 
 
 def feed_canonical(digest, value) -> None:
@@ -659,16 +768,16 @@ def export_fingerprint(resolved: ResolvedAirframe, parts_data: dict, out_dir: Pa
     operating_point = dataclasses.replace(airframe.operating_point, aoa_deg=0.0, airspeed_m_s=0.0)
     digest = hashlib.sha256(repr((model_name, str(out_dir), pack_voltage_v, asb.__version__, neuralfoil.__version__)).encode())
     feed_canonical(digest, dataclasses.replace(resolved, airframe=dataclasses.replace(airframe, name="", notes="", preset=None, operating_point=operating_point)))
-    propulsion = airframe.propulsion
-    if propulsion is not None:
-        esc = next(part.part for part in airframe.parts if part.name == propulsion.esc).partition(":")[2]
-        runs = (propulsion.wiring.battery, *propulsion.wiring.motors)
-        plugs = {propulsion.battery.connector, *(plug for run in runs for plug in run.plugs)}
-        gauges = {run.gauge_awg for run in runs} | ({propulsion.battery.lead_awg} if propulsion.battery.lead_awg is not None else set())
+    electric = None if airframe.propulsion is None else airframe.propulsion.electric
+    if electric is not None:
+        esc = next(part.part for part in airframe.parts if part.name == electric.esc).partition(":")[2]
+        runs = (electric.wiring.battery, *electric.wiring.motors)
+        plugs = {electric.battery.connector, *(plug for run in runs for plug in run.plugs)}
+        gauges = {run.gauge_awg for run in runs} | ({electric.battery.lead_awg} if electric.battery.lead_awg is not None else set())
         repo = motor_repo()
         feed_canonical(digest, {
             "esc": parts_data["esc"][esc], "connectors": {plug: parts_data["connector"][plug] for plug in plugs},
-            "motor": repr(motorlib_motor(propulsion.motor)), "prop": repr(repo.prop(propulsion.prop)),
+            "motor": repr(motorlib_motor(electric.motor)), "prop": repr(repo.prop(electric.prop)),
             "wires": {gauge: repr(repo.wire(gauge)) for gauge in gauges},
         })
     digest.update(export_code_digest().encode())
@@ -708,18 +817,31 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
     models: tuple[MotorModel, ...] = ()
     pack_voltage = hover_fraction = hover_stick_us = None
     engines_xml = ""
-    if airframe.propulsion is not None:
+    if resolved.motors:
         models = motor_models(resolved, parts_data)
         pack_voltage = models[0].pack_voltage_v if pack_voltage_v is None else pack_voltage_v
         distinct = list(dict.fromkeys(models))  # motors wired alike share their files
-        written = [write_engine_files(airframe.propulsion, model, out_dir / "engine", f"{model_name}_{index + 1}", pack_voltage_v) for index, model in enumerate(distinct)]
+        written = [write_engine_files(airframe.propulsion.electric, model, out_dir / "engine", f"{model_name}_{index + 1}", pack_voltage_v) for index, model in enumerate(distinct)]
         engines_xml = engine_xml(resolved, [written[distinct.index(model)] for model in models])
         if airframe.vtol:  # hover: weight shared by the motors; the mean of the duties that hold that thrust's static RPM
             hover_fraction = float(np.mean([static_points(model, rpm_for_thrust(model, weight_n / len(models)), pack_voltage).duty for model in models]))
             idle = INAV_THROTTLE_IDLE_PCT / 100.0
             hover_stick_us = int(round(1000.0 + 1000.0 * (hover_fraction - idle) / (1.0 - idle)))
-    cg = resolved.cg_m
-    ixx, iyy, izz, ixy, ixz, iyz = jsbsim_inertia(resolved.inertia_kg_m2)
+    rocket_engines: tuple[RocketEngine, ...] = ()
+    tanks_xml = ""
+    if resolved.rockets:
+        nozzle_file = write_nozzle_file(out_dir / "engine", f"{model_name}_nozzle")
+        motors = {rocket.motor.name: rocket.motor for rocket in resolved.rockets}
+        files = {name: write_rocket_engine_file(motor, out_dir / "engine", f"{model_name}_rocket_{index + 1}") for index, (name, motor) in enumerate(motors.items())}
+        rockets_xml, tanks_xml = rocket_xml(resolved.rockets, files, nozzle_file)
+        engines_xml += rockets_xml
+        rocket_engines = tuple(RocketEngine(name=rocket.name, mount=rocket.mount, designation=rocket.motor.designation,
+                                            throttle_property=MOTOR_THROTTLE_PROPERTY.format(index=len(models) + index),
+                                            thrust_property=ENGINE_THRUST_PROPERTY.format(index=len(models) + index))
+                               for index, rocket in enumerate(resolved.rockets))
+    cg = resolved.cg_m  # the aero reference point; the mass balance is the dry airframe
+    dry_kg, dry_cg, dry_inertia = dry_mass_properties(resolved)
+    ixx, iyy, izz, ixy, ixz, iyz = jsbsim_inertia(dry_inertia)
     contacts = contact_points(resolved)
     spring = weight_n / (CONTACT_SUPPORTING_POINTS * CONTACT_STATIC_DEFLECTION_M)
     damping = 2.0 * CONTACT_DAMPING_RATIO * math.sqrt(spring * sum(resolved.mass_kg) / 2.0 / CONTACT_SUPPORTING_POINTS)
@@ -741,32 +863,34 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
     controls = control_tables(resolved, aero_model)
     print(f"  control tables done ({time.monotonic() - stage:.0f} s)", flush=True)
     servos = servo_mix(resolved, controls)
+    speeds = aero_model.speeds_m_s
     forces = {"X": "CX", "Y": "CY", "Z": "CZ"}
     moments = {"ROLL": ("Cl", "metrics/bw-ft"), "PITCH": ("Cm", "metrics/cbarw-ft"), "YAW": ("Cn", "metrics/bw-ft")}
     dampers = {"ROLL": ("Clp", "metrics/bw-ft", "aero/bi2vel", "velocities/p-aero-rad_sec"),
                "PITCH": ("Cmq", "metrics/cbarw-ft", "aero/ci2vel", "velocities/q-aero-rad_sec"),
                "YAW": ("Cnr", "metrics/bw-ft", "aero/bi2vel", "velocities/r-aero-rad_sec")}
     axes_xml = "".join(f"""
-    <axis name="{axis}">{aero_axis_xml(name, tables[name], "<property>aero/qbar-area</property>")}{control_aero_xml(controls, name, "<property>aero/qbar-area</property>")}
+    <axis name="{axis}">{aero_axis_xml(name, tables[name], "<property>aero/qbar-area</property>", speeds)}{control_aero_xml(controls, name, "<property>aero/qbar-area</property>", speeds)}
     </axis>""" for axis, name in forces.items())
     for axis, (name, length) in moments.items():
         damper, damper_length, rate_scale, rate = dampers[axis]
         damping_xml = coefficient_xml(
             damper, f"{damper} (AeroBuildup, sideslip 0)",
             f"<property>aero/qbar-area</property> <property>{damper_length}</property> <property>{rate_scale}</property> <property>{rate}</property>",
-            table_xml(ALPHA_RAD_ROWS, AIRSPEED_FPS, rates[damper].T),
+            table_xml(ALPHA_RAD_ROWS, airspeed_fps(speeds), rates[damper].T),
         )
         axes_xml += f"""
-    <axis name="{axis}">{aero_axis_xml(name, tables[name], f"<property>aero/qbar-area</property> <property>{length}</property>")}{damping_xml}{control_aero_xml(controls, name, f"<property>aero/qbar-area</property> <property>{length}</property>")}
+    <axis name="{axis}">{aero_axis_xml(name, tables[name], f"<property>aero/qbar-area</property> <property>{length}</property>", speeds)}{damping_xml}{control_aero_xml(controls, name, f"<property>aero/qbar-area</property> <property>{length}</property>", speeds)}
     </axis>"""
     reference = resolved.reference
     location = f"<x> {cg[0]:.5f} </x> <y> {cg[1]:.5f} </y> <z> {cg[2]:.5f} </z>"
+    dry_location = f"<x> {dry_cg[0]:.5f} </x> <y> {dry_cg[1]:.5f} </y> <z> {dry_cg[2]:.5f} </z>"
     (aircraft_dir / f"{model_name}.xml").write_text(f"""<?xml version="1.0"?>
 <!-- quadrocketbuilder export of {airframe.name}; see libs/jsbsim.py for the model choices. -->
 <fdm_config name="{model_name}" version="2.0" release="ALPHA">
   <fileheader>
     <author>quadrocketbuilder</author>
-    <description>{airframe.name}: {"tailsitter, body x = nose = thrust axis" if airframe.tailsitter else "fixed-wing" if airframe.powered else "glider"}</description>
+    <description>{airframe.name}: {"tailsitter, body x = nose = thrust axis" if airframe.tailsitter else "fixed-wing" if resolved.motors else "rocket" if resolved.rockets else "glider"}</description>
   </fileheader>
   <metrics>
     <wingarea unit="M2"> {reference.area_m2:.6f} </wingarea>
@@ -783,12 +907,12 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
     <ixy unit="KG*M2"> {ixy:.6g} </ixy>
     <ixz unit="KG*M2"> {ixz:.6g} </ixz>
     <iyz unit="KG*M2"> {iyz:.6g} </iyz>
-    <emptywt unit="KG"> {sum(resolved.mass_kg) / 2.0:.5f} </emptywt>
-    <location name="CG" unit="M"> {location} </location>
+    <emptywt unit="KG"> {dry_kg:.5f} </emptywt>
+    <location name="CG" unit="M"> {dry_location} </location>
   </mass_balance>
   <ground_reactions>{contacts_xml}
   </ground_reactions>
-  <propulsion>{engines_xml}
+  <propulsion>{engines_xml}{tanks_xml}
   </propulsion>{control_fcs_xml(controls, servos.reversed)}
   <aerodynamics>{axes_xml}
   </aerodynamics>
@@ -857,4 +981,6 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
         servo_rules=servos.rules,
         forward_alpha_limit_deg=aero_model.forward_alpha_limit_deg,
         envelope_alpha_end_deg=aero_model.envelope_alpha_end_deg,
+        rockets=rocket_engines,
+        top_table_speed_m_s=float(speeds[-1]),
     )

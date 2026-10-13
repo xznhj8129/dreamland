@@ -37,18 +37,19 @@ export function WiringTab({ snapshot }: { snapshot: Snapshot }): ReactElement {
   const context = api.context
   const definition = api.definition
   const propulsion = isObject(definition.propulsion) ? definition.propulsion : null
-  const wiring = propulsion !== null && isObject(propulsion.wiring) ? propulsion.wiring : null
+  const electric = propulsion !== null && isObject(propulsion.electric) ? propulsion.electric : null
+  const wiring = electric !== null && isObject(electric.wiring) ? electric.wiring : null
   const batteryRun = wiring !== null && isObject(wiring.battery) ? wiring.battery : null
   const motorRuns = wiring !== null && Array.isArray(wiring.motors) ? wiring.motors.filter(isObject) : []
 
-  // 611-625: propulsion.wiring.motors follows the motor count on every snapshot change (an added motor copies the
+  // 611-625: propulsion.electric.wiring.motors follows the motor count on every snapshot change (an added motor copies the
   // last run), left alone while a mount names a missing surface. The server now ports this into apply_set/apply_op
   // before the recompute, so this is a no-op safety net; it sends at most one set when a snapshot arrives with the
   // runs out of step, and the server's own sync makes the result stable (no loop).
   useEffect(() => {
     if (propulsion === null || wiring === null) return
     const next = syncedMotorRuns(propulsion, definition, context, motorRuns)
-    if (next !== null) void api.set(['propulsion', 'wiring', 'motors'], next)
+    if (next !== null) void api.set(['propulsion', 'electric', 'wiring', 'motors'], next)
     // api is rebuilt per render; the definition and context identities drive this effect.
   }, [propulsion, wiring, definition, context])
 
@@ -60,10 +61,17 @@ export function WiringTab({ snapshot }: { snapshot: Snapshot }): ReactElement {
       </Card>
     )
   }
+  if (electric === null) {
+    return (
+      <Card title="Wiring">
+        <p className="form-hint">No electric system (Propulsion tab, Electric).</p>
+      </Card>
+    )
+  }
   if (wiring === null || batteryRun === null) {
     return (
       <Card title="Wiring">
-        <p className="form-hint">propulsion.wiring is missing (see Log).</p>
+        <p className="form-hint">propulsion.electric.wiring is missing (see Log).</p>
       </Card>
     )
   }
@@ -78,15 +86,15 @@ export function WiringTab({ snapshot }: { snapshot: Snapshot }): ReactElement {
   // 637: routes come from the resolved wires only when their motor count still matches the definition's runs.
   const motorRoutes = wires !== null && Array.isArray(wires.motors) ? wires.motors : []
   const rows = [
-    { label: 'battery -> ESC', path: ['propulsion', 'wiring', 'battery'] as Path, run: batteryRun, route: current && wires !== null ? route(wires.battery) : null },
+    { label: 'battery -> ESC', path: ['propulsion', 'electric', 'wiring', 'battery'] as Path, run: batteryRun, route: current && wires !== null ? route(wires.battery) : null },
     ...motorRuns.map((run, index) => ({
       label: `ESC -> ${names[index]}`,
-      path: ['propulsion', 'wiring', 'motors', index] as Path,
+      path: ['propulsion', 'electric', 'wiring', 'motors', index] as Path,
       run,
       route: current ? route(motorRoutes[index]) : null,
     })),
   ]
-  const battery = isObject(propulsion.battery) ? propulsion.battery : {}
+  const battery = isObject(electric.battery) ? electric.battery : {}
   const gauges = context.wire_gauges.map(String)
 
   return (

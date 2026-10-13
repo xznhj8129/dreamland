@@ -73,8 +73,8 @@ def _apply(definition: dict, before: tuple[float, ...], lengths: list[float]) ->
 
     volume_x = {volume["name"]: volume["x_m"] for volume in definition["volumes"]}
     placements = [*definition["parts"]]
-    if definition.get("propulsion") is not None:
-        placements.append(definition["propulsion"]["battery"])
+    if definition.get("propulsion") is not None and definition["propulsion"].get("electric") is not None:
+        placements.append(definition["propulsion"]["electric"]["battery"])
     for item in placements:
         if "volume" in item:
             center = volume_x[item["volume"]]

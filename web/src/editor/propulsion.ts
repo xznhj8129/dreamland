@@ -24,10 +24,10 @@ export function placedPartsOf(definition: Definition, category: string): string[
 }
 
 /**
- * editor_view.new_propulsion (597-609): NEW_MOTOR, NEW_PROP, the first library pack (in the first volume, else at
- * mid-fuselage), the first ESC part (empty until placed and picked), one nose tractor.
+ * editor_view.new_propulsion (597-609), electric part: NEW_MOTOR, NEW_PROP, the first library pack (in the first
+ * volume, else at mid-fuselage), the first ESC part (empty until placed and picked), one motor run per electric motor.
  */
-export function newPropulsion(definition: Definition, context: EditorContext): Record<string, unknown> {
+export function newElectric(definition: Definition, context: EditorContext, motorCount: number): Record<string, unknown> {
   const volumes = Array.isArray(definition.volumes) ? definition.volumes.filter(isObject) : []
   const fuselage = isObject(definition.fuselage) ? definition.fuselage : {}
   const length = typeof fuselage.length_m === 'number' ? fuselage.length_m : 0.0
@@ -39,9 +39,13 @@ export function newPropulsion(definition: Definition, context: EditorContext): R
     prop: context.new_prop,
     battery,
     esc: placedPartsOf(definition, 'esc')[0] ?? '',
-    mounts: [deepCopy(context.new_mount)],
-    wiring: { battery: deepCopy(context.new_battery_run), motors: [deepCopy(context.new_motor_run)] },
+    wiring: { battery: deepCopy(context.new_battery_run), motors: Array.from({ length: motorCount }, () => deepCopy(context.new_motor_run)) },
   }
+}
+
+/** editor_view.new_propulsion (597-609): one electric nose tractor and its electric system. */
+export function newPropulsion(definition: Definition, context: EditorContext): Record<string, unknown> {
+  return { mounts: [deepCopy(context.new_mount)], electric: newElectric(definition, context, 1) }
 }
 
 /**
@@ -58,22 +62,16 @@ export function batteryConnector(battery: Record<string, unknown>, context: Edit
 }
 
 /**
- * editor_view.sync_motor_runs (611-625): propulsion.wiring.motors follows the motor count (an added motor copies
- * the last run, a removed one loses its own). Returns the runs to store, or null to leave them alone: no change, or
- * a mount names a surface that does not exist (a definition error says so) or a layout the parser refuses.
+ * The electric motor count of the definition's electric mounts (libs/airframe.py motor_count: one per panel of a
+ * surface mount, else one), or null while a mount names a surface that does not exist or a layout the parser refuses.
  */
-export function syncedMotorRuns(
-  propulsion: Record<string, unknown>,
-  definition: Definition,
-  context: EditorContext,
-  runs: readonly Record<string, unknown>[],
-): Record<string, unknown>[] | null {
+export function electricMotorCount(propulsion: Record<string, unknown>, definition: Definition, context: EditorContext): number | null {
   const surfaces = Array.isArray(definition.surfaces) ? definition.surfaces.filter(isObject) : []
   const layouts: Record<string, string> = {}
   for (const surface of surfaces) {
     if (typeof surface.name === 'string' && typeof surface.layout === 'string') layouts[surface.name] = surface.layout
   }
-  const mounts = Array.isArray(propulsion.mounts) ? propulsion.mounts.filter(isObject) : []
+  const mounts = (Array.isArray(propulsion.mounts) ? propulsion.mounts.filter(isObject) : []).filter((mount) => mount.type === 'electric')
   if (mounts.some((mount) => mount.on === 'surface' && !(typeof mount.surface === 'string' && mount.surface in layouts))) return null
   let count = 0
   for (const mount of mounts) {
@@ -85,7 +83,22 @@ export function syncedMotorRuns(
       count += 1
     }
   }
-  if (count === runs.length) return null
+  return count
+}
+
+/**
+ * editor_view.sync_motor_runs (611-625): propulsion.electric.wiring.motors follows the electric motor count (an added
+ * motor copies the last run, a removed one loses its own). Returns the runs to store, or null to leave them alone: no
+ * change, or the count is unknown (electricMotorCount).
+ */
+export function syncedMotorRuns(
+  propulsion: Record<string, unknown>,
+  definition: Definition,
+  context: EditorContext,
+  runs: readonly Record<string, unknown>[],
+): Record<string, unknown>[] | null {
+  const count = electricMotorCount(propulsion, definition, context)
+  if (count === null || count === runs.length) return null
   const next = runs.map((run) => deepCopy(run))
   while (next.length < count) next.push(deepCopy(next[next.length - 1] ?? context.new_motor_run))
   next.length = count

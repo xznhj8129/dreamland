@@ -311,6 +311,20 @@ export function OptionalBlock({ label, present, onToggle, children }: OptionalBl
 }
 
 /** A top-level form card with a Delete button, editor_view.card (524-529). */
+/** Read-only values as a labelled list, styled like the report's metrics. */
+export function ValueList({ rows }: { rows: [label: string, value: string][] }): ReactElement {
+  return (
+    <dl className="report-metrics">
+      {rows.map(([label, value]) => (
+        <div key={label} className="report-metric">
+          <dt>{label}</dt>
+          <dd>{value}</dd>
+        </div>
+      ))}
+    </dl>
+  )
+}
+
 export function Card({ title, onDelete, children }: { title: string; onDelete?: () => void; children: ReactNode }): ReactElement {
   return (
     <section className="form-card">

@@ -12,13 +12,14 @@ import math
 from typing import Any
 
 from libs.airframe import (
-    AXES, BATTERY_PART_NAME, CONTROL_KINDS, CONTROL_ROLES, CUT_JOINTS, FIN_POSITIONS, INCIDENCE_MODES, JOINT_TYPES,
-    LAYOUT_PANEL_COUNTS, LAYOUTS, MOUNT_TARGETS, ORIENTATION_KEYS, PART_CATEGORIES, REINFORCEMENT_TYPES,
-    SERVO_OUTPUTS, SINGLE_PROP_SPINS, SURFACE_PROP_SPINS, SURFACE_ROOTS, THRUST_DIRECTIONS, VOLUME_SHAPES,
-    AirframeError, cell_format, motor_count, motor_repo,
+    AXES, BATTERY_PART_NAME, CONTROL_KINDS, CONTROL_ROLES, CUT_JOINTS, ELECTRIC_MOUNT_KEYS, FIN_POSITIONS, INCIDENCE_MODES,
+    JOINT_TYPES, LAYOUT_PANEL_COUNTS, LAYOUTS, MOUNT_TARGETS, MOUNT_TYPES, ORIENTATION_KEYS, PART_CATEGORIES,
+    REINFORCEMENT_TYPES, ROCKET_MOUNT_TARGETS, SERVO_OUTPUTS, SINGLE_PROP_SPINS, SURFACE_PROP_SPINS, SURFACE_ROOTS,
+    THRUST_DIRECTIONS, VOLUME_SHAPES, AirframeError, cell_format, motor_count, motor_repo,
 )
 from libs.geometry import loft_section_at
 from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS
+from libs.rocketmotors import rocket_motor, rocket_motor_names
 from libs.presets import (
     ROD_EXTENT_KEYS, ROD_PATTERN_KEYS, apply_preset, preset_carry_through, preset_names, preset_spars, read_presets,
     save_preset,
@@ -95,7 +96,7 @@ NEW_SPARS = {"material": "carbon_rod", "diameter_m": 0.0064, "count": 2, "spacin
 NEW_CARRY_THROUGH = {"stem_width_m": 0.01, "length_m": 0.02, "flare_radius_m": 0.02, "root_length_m": 0.04, "wall_fillet_m": 0.004}
 NEW_ROOT_BASE = {"length_m": 0.096, "width_m": 0.018, "height_m": 0.0, "forward_offset_m": 0.0, "leading_cut_m": 0.01, "trailing_cut_m": 0.06}
 # editor_view.add_mount 1115-1118
-NEW_MOUNT = {"on": "nose", "x_offset_m": 0.0, "direction": "tractor", "spin": SINGLE_PROP_SPINS[0], "thrust_axis_tilt_deg": 0.0}
+NEW_MOUNT = {"type": "electric", "on": "nose", "x_offset_m": 0.0, "direction": "tractor", "spin": SINGLE_PROP_SPINS[0], "thrust_axis_tilt_deg": 0.0}
 # editor_view.add_volume 1242-1249: name and x_m are set from the definition, then the `box` shape fields.
 NEW_VOLUME = {"name": "volume", "shape": "box", "x_m": 0.0, **VOLUME_SHAPE_FIELDS["box"]}
 # editor_view.add_part 1227-1234: name, the first library part with a mass and its place are set from the definition.
@@ -144,6 +145,20 @@ def motorlib_lists(parts_data: dict) -> dict[str, Any]:
         "connectors": sorted(name for name, connector in parts_data["connector"].items() if "contact_resistance_ohm" in connector),
         "wire_gauges": sorted(wire.gauge for wire in repo.wires),
     }
+
+
+def rocket_motor_list() -> dict[str, dict[str, Any]]:
+    """The motor database (data/rocket_motors/) for the Rocket tab's select, its data line and thrust curve plot."""
+    motors = {}
+    for name in rocket_motor_names():
+        motor = rocket_motor(name)
+        motors[name] = {
+            "designation": motor.designation, "manufacturer": motor.manufacturer, "diameter_m": motor.diameter_m, "length_m": motor.length_m,
+            "delays": motor.delays, "total_kg": motor.total_kg, "propellant_kg": motor.propellant_kg, "total_impulse_ns": motor.total_impulse_ns,
+            "average_thrust_n": motor.average_thrust_n, "peak_thrust_n": motor.peak_thrust_n, "burn_time_s": motor.burn_time_s,
+            "curve": [[t, thrust] for t, thrust in motor.curve],
+        }
+    return motors
 
 
 def context(state: AppState) -> dict[str, Any]:
@@ -197,6 +212,9 @@ def context(state: AppState) -> dict[str, Any]:
         "placement_keys": list(PLACEMENT_KEYS),
         "orientation_keys": list(ORIENTATION_KEYS),
         "new_mount": NEW_MOUNT,
+        "mount_types": list(MOUNT_TYPES),
+        "rocket_mount_targets": list(ROCKET_MOUNT_TARGETS),
+        "rocket_motors": rocket_motor_list(),
         # Propulsion and wiring (editor_view.build_propulsion_tab 944-1019, build_wiring_tab 627-682): the model
         # labels and the add templates, plus the global motorlib lists the combos read (motorlib_lists).
         "battery_model_labels": BATTERY_MODEL_LABELS,
@@ -486,21 +504,62 @@ def toggle_block(data: dict, key: str, template: dict, enabled: bool) -> None:
 
 def normalize_mount(definition: dict, mount: dict) -> None:
     """editor_view.normalize_mount (1100-1113): a surface mount carries surface, span_position_m and x_offset_m and
-    spins out|in; nose/tail mounts retain their x offset, direction (tractor/pusher) and spins cw|ccw."""
+    spins out|in; nose/tail mounts retain their x offset, direction (tractor/pusher) and spins cw|ccw. A rocket mount
+    has none of the electric fields (ELECTRIC_MOUNT_KEYS) and sits on the tail or a surface (a nose one moves to the tail)."""
     surfaces = definition["surfaces"]
+    rocket = mount.get("type") == "rocket"
     mount.setdefault("x_offset_m", 0.0)
+    mount.setdefault("thrust_axis_tilt_deg", 0.0)
+    if rocket:
+        for key in ELECTRIC_MOUNT_KEYS:
+            mount.pop(key, None)
+        if mount["on"] not in ROCKET_MOUNT_TARGETS:
+            mount["on"] = ROCKET_MOUNT_TARGETS[0]
     if mount["on"] == "surface":
         mount.setdefault("surface", surfaces[0]["name"] if surfaces else "")
         mount.setdefault("span_position_m", 0.0)
-        mount.setdefault("x_offset_m", 0.0)
-        if mount["spin"] not in SURFACE_PROP_SPINS:
-            mount["spin"] = SURFACE_PROP_SPINS[0]
+        if not rocket:
+            mount.setdefault("direction", "tractor")
+            if mount.get("spin") not in SURFACE_PROP_SPINS:
+                mount["spin"] = SURFACE_PROP_SPINS[0]
     else:
         for key in ("surface", "span_position_m"):
             mount.pop(key, None)
-        mount["direction"] = "tractor" if mount["on"] == "nose" else "pusher"
-        if mount["spin"] not in SINGLE_PROP_SPINS:
-            mount["spin"] = SINGLE_PROP_SPINS[0]
+        if not rocket:
+            mount["direction"] = "tractor" if mount["on"] == "nose" else "pusher"
+            if mount.get("spin") not in SINGLE_PROP_SPINS:
+                mount["spin"] = SINGLE_PROP_SPINS[0]
+
+
+def delete_mount(definition: dict, index: int) -> None:
+    """The rocket motor loaded into the mount goes with it; later mounts' loads follow their mount's new number."""
+    propulsion = definition.get("propulsion")
+    if not isinstance(propulsion, dict):
+        raise ValueError("the aircraft is not powered")
+    _indexed(propulsion["mounts"], index, "mount")
+    propulsion["mounts"].pop(index)
+    rocket = propulsion.get("rocket")
+    if isinstance(rocket, dict):
+        number = index + 1
+        rocket["motors"] = [load for load in rocket["motors"] if load.get("mount") != number]
+        for load in rocket["motors"]:
+            if type(load.get("mount")) is int and load["mount"] > number:
+                load["mount"] -= 1
+
+
+def add_rocket_motor(definition: dict) -> None:
+    """A database motor into the first rocket mount without one (mount 1 when there is no free rocket mount: the
+    loader says what is wrong until the owner picks a mount)."""
+    propulsion = definition.get("propulsion")
+    if not isinstance(propulsion, dict):
+        raise ValueError("the aircraft is not powered")
+    names = rocket_motor_names()
+    if not names:
+        raise ValueError("data/rocket_motors/ has no motors")
+    rocket = propulsion.setdefault("rocket", {"motors": []})
+    loaded = {load.get("mount") for load in rocket["motors"]}
+    free = [number for number, mount in enumerate(propulsion["mounts"], start=1) if mount.get("type") == "rocket" and number not in loaded]
+    rocket["motors"].append({"mount": free[0] if free else 1, "motor": names[0]})
 
 
 def add_mount(definition: dict) -> None:
@@ -510,20 +569,26 @@ def add_mount(definition: dict) -> None:
     definition["propulsion"]["mounts"].append(copy.deepcopy(NEW_MOUNT))
 
 
+def electric_block(definition: dict) -> dict | None:
+    propulsion = definition.get("propulsion")
+    electric = propulsion.get("electric") if isinstance(propulsion, dict) else None
+    return electric if isinstance(electric, dict) else None
+
+
 def sync_motor_runs(definition: dict) -> None:
     """editor_view.sync_motor_runs (611-625), run from Tk's changed() on every edit (389-391), before the
-    recompute: propulsion.wiring.motors follows the motor count, an added motor getting a copy of the last run and
+    recompute: propulsion.electric.wiring.motors follows the electric motor count, an added motor getting a copy of the last run and
     a removed one losing its own. Left alone while a mount names a surface that does not exist (the parser's
     definition error says so), exactly Tk's skip guard, so no run is invented for a missing surface."""
-    propulsion = definition.get("propulsion")
-    if propulsion is None:
+    electric = electric_block(definition)
+    if electric is None:
         return
     layouts = {surface["name"]: surface["layout"] for surface in definition["surfaces"]}
-    mounts = [(mount["on"], mount.get("surface")) for mount in propulsion["mounts"]]
+    mounts = [(mount["on"], mount.get("surface")) for mount in definition["propulsion"]["mounts"] if mount.get("type") == "electric"]
     if any(on == "surface" and surface not in layouts for on, surface in mounts):
         return
     count = motor_count(mounts, layouts)
-    runs = propulsion["wiring"]["motors"]
+    runs = electric["wiring"]["motors"]
     while len(runs) < count:
         runs.append(copy.deepcopy(runs[-1] if runs else NEW_MOTOR_RUN))
     del runs[count:]
@@ -571,8 +636,8 @@ def delete_volume(definition: dict, index: int) -> None:
     volume = _indexed(definition["volumes"], index, "volume")
     centre = (volume["x_m"], volume.get("y_m", 0.0), volume.get("z_m", 0.0))
     held = list(definition["parts"])
-    if "propulsion" in definition:
-        held.append(definition["propulsion"]["battery"])
+    if electric_block(definition) is not None:
+        held.append(electric_block(definition)["battery"])
     for item in held:
         if item.get("volume") != volume["name"]:
             continue
@@ -630,9 +695,9 @@ def rename_part(definition: dict, index: int, name: str) -> None:
     part = _indexed(definition["parts"], index, "part")
     old = part["name"]
     part["name"] = name
-    propulsion = definition.get("propulsion")
-    if propulsion is not None and propulsion["esc"] == old:
-        propulsion["esc"] = name
+    electric = electric_block(definition)
+    if electric is not None and electric["esc"] == old:
+        electric["esc"] = name
 
 
 def set_item_volume(state: AppState, item: dict, volume: str, placed_name: str) -> None:
@@ -760,19 +825,26 @@ def apply_op(state: AppState, body: dict[str, Any]) -> None:
     elif op == "mount.add":
         add_mount(definition)
     elif op == "mount.delete":
+        delete_mount(definition, body.get("index"))
+    elif op == "mount.type":
         propulsion = definition.get("propulsion")
         if not isinstance(propulsion, dict):
             raise ValueError("the aircraft is not powered")
-        _indexed(propulsion["mounts"], body.get("index"), "mount")
-        propulsion["mounts"].pop(body["index"])
+        mount = _indexed(propulsion["mounts"], body.get("index"), "mount")
+        mount_type = body.get("type")
+        if mount_type not in MOUNT_TYPES:
+            raise ValueError(f"mount type must be one of {MOUNT_TYPES}, got {mount_type!r}")
+        mount["type"] = mount_type
+        normalize_mount(definition, mount)
     elif op == "mount.on":
         propulsion = definition.get("propulsion")
         if not isinstance(propulsion, dict):
             raise ValueError("the aircraft is not powered")
         mount = _indexed(propulsion["mounts"], body.get("index"), "mount")
         on = body.get("on")
-        if on not in MOUNT_TARGETS:
-            raise ValueError(f"mount on must be one of {MOUNT_TARGETS}, got {on!r}")
+        targets = ROCKET_MOUNT_TARGETS if mount.get("type") == "rocket" else MOUNT_TARGETS
+        if on not in targets:
+            raise ValueError(f"mount on must be one of {targets}, got {on!r}")
         mount["on"] = on
         normalize_mount(definition, mount)
     elif op in ("mount.pod.toggle", "mount.holes.toggle"):
@@ -782,12 +854,31 @@ def apply_op(state: AppState, body: dict[str, Any]) -> None:
         mount = _indexed(propulsion["mounts"], body.get("index"), "mount")
         key, defaults = ("pod", NEW_POD) if op == "mount.pod.toggle" else ("holes", NEW_MOUNT_HOLES)
         toggle_block(mount, key, defaults, enabled=body.get("enabled") is True)
-    # The propulsion battery's place (build_battery_group 1003 calls add_placement 1190-1207 with BATTERY_PART_NAME).
-    elif op == "propulsion.battery.volume":
+    # The electric system: installed from the client's template (new_propulsion's electric part) or removed.
+    elif op == "electric.toggle":
         propulsion = definition.get("propulsion")
         if not isinstance(propulsion, dict):
             raise ValueError("the aircraft is not powered")
-        battery = propulsion.get("battery")
+        if body.get("enabled") is True:
+            if not isinstance(body.get("electric"), dict):
+                raise ValueError("electric.toggle on needs the electric block")
+            propulsion["electric"] = body["electric"]
+        else:
+            propulsion.pop("electric", None)
+    # Rocket motors: loaded into rocket mounts.
+    elif op == "rocket.add":
+        add_rocket_motor(definition)
+    elif op == "rocket.delete":
+        propulsion = definition.get("propulsion")
+        rocket = propulsion.get("rocket") if isinstance(propulsion, dict) else None
+        if not isinstance(rocket, dict):
+            raise ValueError("no rocket motors to delete")
+        _indexed(rocket["motors"], body.get("index"), "rocket motor")
+        rocket["motors"].pop(body["index"])
+    # The propulsion battery's place (build_battery_group 1003 calls add_placement 1190-1207 with BATTERY_PART_NAME).
+    elif op == "propulsion.battery.volume":
+        electric = electric_block(definition)
+        battery = electric.get("battery") if electric is not None else None
         if not isinstance(battery, dict):
             raise ValueError("the definition has no propulsion battery")
         set_item_volume(state, battery, body.get("volume"), BATTERY_PART_NAME)
@@ -927,8 +1018,8 @@ def apply_move(state: AppState, body: dict[str, Any], notify: bool = True) -> No
         if not _move_placement(part, dx, dy, dz, f"part {part.get('name', index)!r}"):
             return
     elif target == "battery":
-        propulsion = definition.get("propulsion")
-        battery = propulsion.get("battery") if isinstance(propulsion, dict) else None
+        electric = electric_block(definition)
+        battery = electric.get("battery") if electric is not None else None
         if not isinstance(battery, dict):
             raise ValueError("the definition has no propulsion battery")
         if not _move_placement(battery, dx, dy, dz, "battery"):

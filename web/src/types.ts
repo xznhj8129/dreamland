@@ -221,6 +221,19 @@ export interface Model3DControl {
   axis: [number, number, number]
 }
 
+/** webapp/model3d.py _rocket_mesh: what the flight scene needs to draw a rocket motor's flame. */
+export interface Model3DRocket {
+  /** N of the rocket<N>_thrust_n log column. */
+  number: number
+  /** Centre of the nozzle end, where the flame starts. */
+  nozzle: [number, number, number]
+  /** Unit thrust direction; the flame points the other way. */
+  thrust_dir: [number, number, number]
+  radius_m: number
+  /** The motor's peak thrust (RASP curve): the flame's full length. */
+  peak_thrust_n: number
+}
+
 /** webapp/model3d.py build_model3d: one component as a flat triangle mesh in metres, airframe frame (x forward). */
 export interface Model3DMesh {
   name: string
@@ -233,6 +246,8 @@ export interface Model3DMesh {
   opacity: number
   /** Present on kind "control": the hinge metadata the flight scene animates. */
   control?: Model3DControl
+  /** Present on a rocket motor casing (kind "motor"). */
+  rocket?: Model3DRocket
 }
 
 export interface Model3DMarker {
@@ -292,6 +307,23 @@ export interface LibraryDeleteBody {
 }
 
 /** GET /api/editor/context: global editor data (parts, presets and the Tk editor constants ported to webapp/editor.py). */
+/** One data/rocket_motors/ entry (webapp/editor.py rocket_motor_list), SI units. */
+export interface RocketMotorInfo {
+  designation: string
+  manufacturer: string
+  diameter_m: number
+  length_m: number
+  delays: string
+  total_kg: number
+  propellant_kg: number
+  total_impulse_ns: number
+  average_thrust_n: number
+  peak_thrust_n: number
+  burn_time_s: number
+  /** The RASP thrust curve as published: (s, N) points from ignition to burnout. */
+  curve: [number, number][]
+}
+
 export interface EditorContext {
   parts_data: Record<string, Record<string, Record<string, unknown>>>
   preset_names: string[]
@@ -325,6 +357,10 @@ export interface EditorContext {
   placement_keys: string[]
   orientation_keys: string[]
   new_mount: Record<string, unknown>
+  /** Motor mount types (electric | rocket), where a rocket mount may sit, and the rocket motor database by name. */
+  mount_types: string[]
+  rocket_mount_targets: string[]
+  rocket_motors: Record<string, RocketMotorInfo>
   /** Propulsion and wiring (webapp/editor.py context()): model labels, add templates and motorlib combo lists. */
   battery_model_labels: Record<string, string>
   new_motor: Record<string, unknown>

@@ -350,10 +350,15 @@ SurfacesTab [arrange:column]
 ```text
 MotorMountsTab [arrange:column]
 
-    - Add motor mount [ui:button]
-    * compact mount picker and selected mount inspector: on (nose | tail | surface), surface, span position, x offset, direction, spin, thrust axis
-      tilt, pod [ui:checkbox] with its fields, Delete
+    - Add motor mount [ui:button]   a new mount is electric, on the nose
+    * compact mount picker (number, motor type, on) and selected mount inspector: Motor type [ui:dropdown] (Electric motor |
+      Rocket motor), on (nose | tail | surface; a rocket mount: tail | surface), surface, span position, x offset, direction,
+      spin, thrust axis tilt, pod [ui:checkbox] with its fields, Delete
     a surface mount puts one motor on every panel of the surface
+    - Motor type rocket: no direction, spin, pod or mounting holes (dropped when the type changes; a nose mount moves to the
+      tail); X offset is the loaded motor's aft (nozzle) end from the tail face or surface root LE, positive aft; the motor
+      runs forward from there. The motor itself is loaded on the Propulsion tab (Rocket)
+    - deleting a mount takes the rocket motor loaded in it; later mounts' motors follow their mount's new number
     - Mounting holes [ui:checkbox]: single D1 hole or four radial slots from D1 to D2; slot width defaults to 3 mm
       center relief diameter/depth, bolt head diameter/seat depth; zero diameter disables relief/head cut
       bolt entry stops at the carrying section's inner cut; pink cut outlines in Simple and 3D; cuts in CAD exports
@@ -365,9 +370,22 @@ MotorMountsTab [arrange:column]
 ```text
 PropulsionTab [arrange:column]
 
-    * SelectionPanel
-    * BatteryPanel
-    * MotorInfoPanel   (only while the motor can turn the prop; otherwise the Log says why)
+    * [ui:tabs] Electric | Rocket   (opens on Rocket when every mount is a rocket mount)
+    Electric
+        - Electric system [ui:checkbox]   motor, prop, battery, ESC and wiring for every electric mount; ticking it adds
+          the default system (one motor run per electric motor), unticking removes it (electric mounts without it: a
+          definition error in the Log)
+        * SelectionPanel
+        * BatteryPanel
+        * MotorInfoPanel   (only while the motor can turn the prop; otherwise the Log says why)
+    Rocket
+        - Add rocket motor [ui:button]   the first database motor into the first rocket mount without one (mount 1 when
+          none is free: a definition error in the Log until a rocket mount is picked)
+        * one card per loaded motor: mount [ui:dropdown] (rocket mounts, "Mount N (on)"), motor [ui:search + dropdown]
+          (data/rocket_motors/), its data as a labelled list [ui:labelled values] (motor, size, loaded mass, propellant,
+          total impulse, average and peak thrust, burn time, delays),
+          a thrust (N) against time (s) plot of its published curve [ui:plot], Delete
+        a hint while there is no rocket mount (Motor type on the Motor mounts tab)
 ```
 
 ### BatteryPanel
@@ -389,7 +407,7 @@ BatteryPanel (title "Battery")
         - cells along x, y, z [ui:textbox]   their product must be S x P (otherwise a definition error in the Log)
         - lead AWG [ui:dropdown], lead length (mm) [ui:textbox]
     - collapsed Battery placement & orientation: volume and offsets, or its own x, y, z
-    - the resolved pack: label, size (each axis count x (cell + 2 mm)), mass, capacity
+    - the resolved pack as a labelled list [ui:labelled values]: label, size (each axis count x (cell + 2 mm)), mass, capacity
 ```
 
 ### SelectionPanel
@@ -446,6 +464,8 @@ Rules
 
 ```text
 WiringTab [arrange:column]
+
+    a hint instead while there is no electric system (Propulsion tab, Electric)
 
     * WireRunsPanel  (title "Wire runs (auto-routed: along the axes, wing motors inside their panel; drawn in the side view)")
         one labelled group per run: battery -> ESC, then ESC -> each motor (motor order)

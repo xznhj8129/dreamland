@@ -6,11 +6,11 @@ import type { PropulsionChart } from '../types'
 
 const HEIGHT = 260
 const FALLBACK_WIDTH = 520
-const AXIS_COLOR = '#67ff67'
-const GRID_COLOR = 'rgba(10, 95, 10, 0.55)'
+export const AXIS_COLOR = '#67ff67'
+export const GRID_COLOR = 'rgba(10, 95, 10, 0.55)'
 const HOVER_COLOR = '#67ff67'
 // The Tk plot's series colors (editor_view.build_motor_info 1075-1076).
-const SERIES_COLORS = ['#19ff19', '#33ccff', '#ffcc33']
+export const SERIES_COLORS = ['#19ff19', '#33ccff', '#ffcc33']
 
 /** A dashed line at the hover duty and its label, drawn by uPlot's draw hook (the Tk axvline, 1078-1079). */
 function hoverPlugin(chartRef: { current: PropulsionChart }): uPlot.Plugin {

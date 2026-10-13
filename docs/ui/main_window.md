@@ -28,7 +28,7 @@ Theme
 DreamlandWindow [fill]
 
     * TopBar [docked:top, arrange:row]
-        - Dreamland name, supplied logo and Virtual Aerospace Proving Ground tagline
+        - Dreamland name, supplied logo and Unmanned Aerospace Sandbox tagline
         - File menu
         - main-view buttons
 

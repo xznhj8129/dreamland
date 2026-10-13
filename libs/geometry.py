@@ -4,7 +4,8 @@ from libs.geometry import resolve_airframe
 resolved = resolve_airframe(airframe, parts_data)
 
 Derived model of an airframe/2 definition (PLAN.md section 3): body stations, lifting panels with explicit
-frame vectors, motors, props and pods, volumes, mass points, CG and aero reference values.
+frame vectors, motors, props and pods, rocket motors, volumes, mass points, CG and aero reference values. Mass and
+CG are at liftoff (rocket propellant loaded); dry_mass_properties leaves the propellant out.
 Every consumer (aero, drawing, CAD, JSBSim) reads this and does not re-derive geometry.
 
 Frame: x aft from the nose tip, y right, z up; metres and kilograms.
@@ -24,6 +25,7 @@ import aerosandbox as asb
 
 from libs.airframe import AXES, BOX_SHAPES, Airframe, AirframeError, CarryThrough, ControlSurface, MotorMountHoles, Mount, PlacedPart, Reinforcement, Surface, Volume
 from libs.pointed_shapes import sample_pointed_profile
+from libs.rocketmotors import RocketMotor
 
 END_PROFILE_SAMPLES = 14
 BODY_LOFT_SAMPLES = 32  # sampled cubic transitions for drawing, aero and CAD
@@ -176,9 +178,26 @@ class MotorPlacement:
 
 
 @dataclass(frozen=True)
+class RocketPlacement:
+    """A solid rocket motor loaded into a rocket mount: its casing runs forward from the nozzle end along the thrust
+    axis. A surface mount puts one in every panel's position."""
+    name: str  # "rocket <mount number> <tail | surface panel>"
+    mount: int  # mount number, 1-based
+    motor: RocketMotor
+    nozzle: Vec  # centre of the aft (nozzle) end, where the thrust acts
+    thrust_dir: Vec  # unit vector of thrust
+    center: Vec  # casing centre (the propellant's too: a grain along the casing)
+    mount_x_m: float  # surface root LE, or the tail face clamped to the body; assigns attached mass to a section
+    panel: Panel | None  # the surface panel it sits on; None on the tail
+
+
+ROCKET_PROPELLANT_KIND = "rocket propellant"  # MassPoint.kind of the propellant: it burns off in flight
+
+
+@dataclass(frozen=True)
 class MassPoint:
     name: str
-    kind: str  # structure, reinforcement, surface, volume, part, motor, prop
+    kind: str  # structure, reinforcement, surface, volume, part, motor, prop, rocket casing, ROCKET_PROPELLANT_KIND
     position: Vec
     mass_kg: tuple[float, float]  # (min, max)
     computed: bool  # True when derived from geometry rather than given
@@ -223,12 +242,13 @@ class ResolvedAirframe:
     body: Body
     surfaces: tuple[SurfaceSet, ...]
     motors: tuple[MotorPlacement, ...]
+    rockets: tuple[RocketPlacement, ...]
     controls: tuple[ControlPlacement, ...]
     spars: tuple[SparLine, ...]
     carry_through: tuple[CarryThroughArm, ...]
     mass_points: tuple[MassPoint, ...]
     sections: tuple[SectionMass, ...]
-    mass_kg: tuple[float, float]
+    mass_kg: tuple[float, float]  # at liftoff: rocket propellant loaded
     cg_m: Vec  # with every ranged mass at the middle of its range
     cg_x_range_m: tuple[float, float]  # forward-most and aft-most over all ranged-mass combinations
     inertia_kg_m2: Inertia  # about cg_m, ranged masses at the middle of their range
@@ -1223,10 +1243,11 @@ def route_length_m(route: tuple[Vec, ...]) -> float:
 
 
 def build_wires(airframe: Airframe, motors: tuple[MotorPlacement, ...]) -> WireRoutes | None:
-    if airframe.propulsion is None:
+    if airframe.propulsion is None or airframe.propulsion.electric is None:
         return None
+    electric = airframe.propulsion.electric
     parts = {part.name: part for part in airframe.parts}
-    battery, esc = airframe.propulsion.battery.placed.position_m, parts[airframe.propulsion.esc].position_m
+    battery, esc = electric.battery.placed.position_m, parts[electric.esc].position_m
     return WireRoutes(battery=right_angle_route(battery, esc), motors=tuple(motor_route(esc, motor) for motor in motors))
 
 
@@ -1245,12 +1266,14 @@ def motor_route(esc: Vec, motor: MotorPlacement) -> tuple[Vec, ...]:
 
 
 def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[MotorPlacement, ...]:
+    """The electric motors, in mount order (named by mount number); rocket mounts carry rocket motors instead (build_rockets)."""
     propulsion = airframe.propulsion
-    if propulsion is None:
+    if propulsion is None or propulsion.electric is None:
         return ()
-    bell_len = propulsion.bell_length_m
+    electric = propulsion.electric
+    bell_len = electric.bell_length_m
     placements = []  # (name, position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel)
-    for mount_index, mount in enumerate(propulsion.mounts):
+    for number, mount in propulsion.electric_mounts:
         if mount.on == "surface":
             surface_set = next(item for item in surfaces if item.name == mount.surface)
             positions = [
@@ -1279,18 +1302,87 @@ def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[
                 curve = sample_pointed_profile(mount.pod.profile, mount.pod.curve_length_m, pod_radius, POD_PROFILE_SAMPLES)
                 stations += [(flat_end - prop_side * (mount.pod.curve_length_m - x), r) for x, r in curve[:-1]]
                 pod_stations = tuple(sorted(stations))
-            placements.append((f"motor {mount_index + 1} {name}", position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel, mount.holes))
+            placements.append((f"motor {number} {name}", position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel, mount.holes))
     return tuple(
         MotorPlacement(
             name=name, position=position, thrust_dir=thrust_dir,
             prop_center=tuple(p - prop_side * (bell_len / 2.0 + PROP_SHAFT_LEN_M) * t for p, t in zip(position, thrust_dir)),
-            prop_radius_m=propulsion.prop_diameter_m / 2.0, bell_diameter_m=propulsion.bell_diameter_m,
+            prop_radius_m=electric.prop_diameter_m / 2.0, bell_diameter_m=electric.bell_diameter_m,
             bell_length_m=bell_len, pod_stations=pod_stations, spin=spin, mount_x_m=mount_x, panel=panel,
             mount_holes=holes, mount_face=(position[0] - prop_side * bell_len / 2.0, position[1], position[2]),
             mount_inward=(-prop_side, 0.0, 0.0),
         )
         for name, position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel, holes in placements
     )
+
+
+def build_rockets(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[RocketPlacement, ...]:
+    """The loaded rocket motors, in load order; the nozzle end sits at the mount's x_offset_m from the tail face or the
+    surface root LE (on a surface: at span_position_m along every panel)."""
+    propulsion = airframe.propulsion
+    if propulsion is None:
+        return ()
+    length = airframe.fuselage.length_m
+    placements = []
+    for load in propulsion.rocket:
+        mount = propulsion.mounts[load.mount - 1]
+        if mount.on == "surface":
+            surface_set = next(item for item in surfaces if item.name == mount.surface)
+            positions = [(f"{mount.surface} {panel.index + 1}", tuple(r + mount.span_position_m * d + (mount.x_offset_m if axis == 0 else 0.0)
+                                                                       for axis, (r, d) in enumerate(zip(panel.attach_le, panel.span_dir))), panel)
+                         for panel in surface_set.panels]
+            mount_x = surface_set.exposed_x_root_le_m
+        else:
+            positions = [("tail", (length + mount.x_offset_m, 0.0, 0.0), None)]
+            mount_x = min(length, max(0.0, length + mount.x_offset_m))
+        tilt = math.radians(mount.thrust_axis_tilt_deg)
+        thrust_dir = (-math.cos(tilt), 0.0, math.sin(tilt))
+        for name, nozzle, panel in positions:
+            center = tuple(n + load.motor.length_m / 2.0 * t for n, t in zip(nozzle, thrust_dir))
+            placements.append(RocketPlacement(name=f"rocket {load.mount} {name}", mount=load.mount, motor=load.motor, nozzle=nozzle, thrust_dir=thrust_dir,
+                                              center=center, mount_x_m=mount_x, panel=panel))
+    return tuple(placements)
+
+
+def rocket_mass_points(rockets: tuple[RocketPlacement, ...]) -> list[MassPoint]:
+    """Casing and propellant of each rocket motor at the casing centre, each a solid cylinder along x."""
+    points = []
+    for rocket in rockets:
+        inertia = cylinder_inertia(rocket.motor.diameter_m / 2.0, rocket.motor.length_m, "x")
+        points.append(MassPoint(f"{rocket.name} casing", "rocket casing", rocket.center, (rocket.motor.casing_kg,) * 2, False, None, inertia, rocket.mount_x_m))
+        points.append(MassPoint(f"{rocket.name} propellant", ROCKET_PROPELLANT_KIND, rocket.center, (rocket.motor.propellant_kg,) * 2, False, None, inertia, rocket.mount_x_m))
+    return points
+
+
+def rocket_checks(airframe: Airframe, body: Body, rockets: tuple[RocketPlacement, ...]) -> list[str]:
+    """A tail rocket motor's casing must fit the inner wall wherever it is inside the body (it may stick out aft)."""
+    wall = airframe.fuselage.section.wall_radial_m
+    problems = []
+    for rocket in (rocket for rocket in rockets if rocket.panel is None):
+        radius = rocket.motor.diameter_m / 2.0
+        ends = [rocket.nozzle[0], rocket.nozzle[0] + rocket.motor.length_m * rocket.thrust_dir[0]]
+        x0, x1 = max(0.0, min(ends)), min(body.length_m, max(ends))
+        for x in sorted({x0, x1, *(station.x_m for station in body.stations if x0 < station.x_m < x1)}):
+            centre = tuple(n + (x - rocket.nozzle[0]) / rocket.thrust_dir[0] * t for n, t in zip(rocket.nozzle, rocket.thrust_dir))
+            half_w, half_h = body_half_extents(body, x)
+            inner_w, inner_h = half_w - wall, half_h - wall
+            if inner_w <= 0.0 or inner_h <= 0.0:
+                problems.append(f"{rocket.name}: {rocket.motor.name} reaches x {x:.3f} m, outside the fuselage interior")
+                break
+            shape = body_section_at(body, x).shape
+            edges = [(centre[1] + radius * math.cos(a), centre[2] + radius * math.sin(a)) for a in (2.0 * math.pi * k / PERIMETER_SAMPLES for k in range(PERIMETER_SAMPLES))]
+            excess = max(math.hypot(y, z) - superellipse_radius(inner_w, inner_h, shape, math.atan2(z, y)) for y, z in edges)
+            if excess > 1e-9:
+                problems.append(f"{rocket.name}: {rocket.motor.name} ({rocket.motor.diameter_m * 1000:.1f} mm) reaches {excess * 1000.0:.2f} mm into the wall at x {x:.3f} m")
+                break
+    return problems
+
+
+def dry_mass_properties(resolved: "ResolvedAirframe") -> tuple[float, Vec, Inertia]:
+    """Mass, CG and inertia (about that CG) without the rocket propellant: at burnout, and what an FDM that burns the
+    propellant from its own tanks starts from. Ranged masses at the middle of their range."""
+    points = [point for point in resolved.mass_points if point.kind != ROCKET_PROPELLANT_KIND]
+    return combine_inertia([((point.mass_kg[0] + point.mass_kg[1]) / 2.0, point.position, point.inertia_per_kg) for point in points])
 
 
 def center_of_mass(points: tuple[MassPoint, ...], masses: list[float]) -> Vec:
@@ -1399,6 +1491,7 @@ def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirf
     body = build_body(airframe)
     surfaces = tuple(build_surface(surface, body) for surface in airframe.surfaces)
     motors = build_motors(airframe, surfaces)
+    rockets = build_rockets(airframe, surfaces)
 
     points = structure_mass_points(airframe, body, density)
     reinforcement = airframe.fuselage.reinforcement
@@ -1420,11 +1513,11 @@ def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirf
     ]
     for motor in motors:
         bell = cylinder_inertia(motor.bell_diameter_m / 2.0, motor.bell_length_m, "x")
-        points.append(MassPoint(motor.name, "motor", motor.position, (airframe.propulsion.motor_mass_kg,) * 2, False, None, bell, motor.mount_x_m))
-        points.append(MassPoint(f"prop {motor.name}", "prop", motor.prop_center, (airframe.propulsion.prop_mass_kg,) * 2, False, None, rotor_inertia(motor.prop_radius_m),
+        points.append(MassPoint(motor.name, "motor", motor.position, (airframe.propulsion.electric.motor_mass_kg,) * 2, False, None, bell, motor.mount_x_m))
+        points.append(MassPoint(f"prop {motor.name}", "prop", motor.prop_center, (airframe.propulsion.electric.prop_mass_kg,) * 2, False, None, rotor_inertia(motor.prop_radius_m),
                                 motor.mount_x_m))
     points, section_masses = apply_complete_masses(airframe, body, points)
-    points = tuple(points)
+    points = tuple(points) + tuple(rocket_mass_points(rockets))  # loaded per flight: never part of a weighed section
 
     ranged = [index for index, point in enumerate(points) if point.mass_kg[0] != point.mass_kg[1]]
     if len(ranged) > MAX_RANGED_MASSES:
@@ -1436,11 +1529,11 @@ def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirf
         cg_xs.append(center_of_mass(points, masses)[0])
 
     resolved = ResolvedAirframe(
-        airframe=airframe, body=body, surfaces=surfaces, motors=motors, controls=build_controls(surfaces), spars=spars, carry_through=carry_through, mass_points=points, sections=section_masses,
+        airframe=airframe, body=body, surfaces=surfaces, motors=motors, rockets=rockets, controls=build_controls(surfaces), spars=spars, carry_through=carry_through, mass_points=points, sections=section_masses,
         mass_kg=(sum(point.mass_kg[0] for point in points), sum(point.mass_kg[1] for point in points)),
         cg_m=center_of_mass(points, nominal), cg_x_range_m=(min(cg_xs), max(cg_xs)),
         inertia_kg_m2=combine_inertia([(mass, point.position, point.inertia_per_kg) for mass, point in zip(nominal, points)])[2],
         reference=build_reference(surfaces, body), wires=build_wires(airframe, motors),
     )
     return resolved, (volume_checks(airframe, body) + part_checks(airframe, body) + preset_checks(airframe) + socket_checks(airframe, body)
-                      + reinforcement_checks(airframe, body) + spar_checks(surfaces, spars))
+                      + reinforcement_checks(airframe, body) + spar_checks(surfaces, spars) + rocket_checks(airframe, body, rockets))

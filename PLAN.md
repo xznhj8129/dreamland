@@ -1,6 +1,10 @@
 # Plan: plane-first airframe model
 
-Status: draft spec, awaiting approval. Supersedes the Lego module-stack model as the core.
+## Design premise: plane first, then cut into sections
+
+The original workflow was Lego-style: print tube sections, couplers, nosecones and endcaps in FreeCAD, then assemble aircraft from those parts. That is backwards. The intended way is to design the aircraft as a whole (tube, nose, tail, wings, motors, battery, ballast) and then cut it into printable sections.
+
+The aircraft definition is now plane-first (schema `airframe/2`, section 1): the GUI, aero, drawing and CAD export read it. `aircraft/m62v2` and `aircraft/quadlancer62` are real aircraft, originally built the Lego way and re-entered plane-first. `aircraft/m62v1` is m62v2 without the horizontal main-wing section: a pure dart. The old module-stack model is retired.
 
 ## Decisions (owner, 2026-10-01)
 
@@ -22,6 +26,8 @@ Status: draft spec, awaiting approval. Supersedes the Lego module-stack model as
 - Old part sums are approximately accurate (m62v2 ~1.1 kg real).
 - 2026-10-03: Goal: a do-it-all design framework for new-generation drone designs: quadcopter, plane, quadplane, rocket boosted, any mix. JSBSim simulates all of it. Next propulsion type: rocket motors, with staging (OpenRocket logic).
 - 2026-10-04: Right pane split into Design (the airframe) and Build (parts, wiring, electronics), towards a full design export per aircraft. Wiring is per aircraft (Build > Wiring: each auto-routed run's gauge and connectors); data/specs.json was an early sketch, not authoritative. Parts need not sit in volumes (volumes are a CAD pointer).
+- 2026-10-12: Rocket motors are propulsion beside electric: a mount's motor type is electric or rocket; Propulsion has Electric and Rocket sub-tabs; a rocket motor is loaded into a chosen rocket mount (several mounts, e.g. staging later). Solid hobby motors from a RASP database first; liquid fuel later. MCU scripts ignite (controller.ignite()); the launch run flies to ground impact.
+- 2026-10-12: Scenarios may set default start conditions (START, e.g. launch: rail and launcher pitch); the SIM toolbar pre-selects them, the CLI and toolbar override them.
 - 2026-10-10: One flight framework: `run(flight)`, scripts in `scenarios/<controller>/`, commands imported from `controllers.inav` or `controllers.mcu`. Shared scheduler, simulation state, conditions and raw sensors. `experiment` is an example scenario. MCU scripts read sensors and write PWM; no backend autopilot or mixer.
 
 ## 1. Aircraft definition (saved file, schema "airframe/2")
@@ -30,9 +36,10 @@ Implemented in `libs/airframe.py` (`python -m libs.airframe aircraft/m62v2/aircr
 
 ```
 schema              "airframe/2"
-powered, vtol, tailsitter   true/false; tailsitter needs vtol, vtol needs powered. They drive the JSBSim/INAV export:
+powered, vtol, tailsitter   true/false; tailsitter needs vtol, vtol needs powered and an electric mount; powered = propulsion
+                    present (electric and/or rocket). They drive the JSBSim/INAV export:
                     tailsitter = hover + forward mixer profiles; not vtol = AIRPLANE profile, motors on throttle only;
-                    other VTOL types and unpowered airframes are not exported. Hover numbers only for vtol.
+                    other VTOL types are not exported. Hover numbers only for vtol.
 name, notes
 preset              optional: a data/presets/ preset name (tube62, tube75). Loading it fills section, joints (not coupler_mass_kg)
                     and the reinforcement pattern (not from_x_m/to_x_m); values are always written out in full, and the
@@ -44,7 +51,7 @@ print               material (data/parts/material.json), printer_bed_m [x, y, z]
 fuselage
   length_m
   section           width_m, height_m, shape (superellipse exponent; 2 = circle), wall_radial_m
-  nose, tail        profile (pointed_shapes name), length_m, params (exactly the profile's keys)
+  nose, tail        profile (pointed_shapes name), length_m, params (exactly the profile's keys); tail length_m 0 = flat base
   loft_stations[]   independent shape guides: x_m (ascending, unique, within 0..length_m), optional width_m, height_m,
                     shape; omitted profile keys inherit fuselage.section. Empty = constant default cross-section.
                     Cubic easing joins guides; nose/tail profiles taper the loft. Wall thickness stays global.
@@ -99,6 +106,8 @@ surfaces[]          name, x_root_le_m (must be on the body; chords may overhang 
                       servos (S1..S12, one per panel in panel order, may be shared: a panel opposite to the others on its servo is exported reversed, a Y-cable reverser)
                     control surfaces are numbered C1.. front to back, then clockwise from the top seen from behind
 propulsion          required when powered, absent when not
+  mounts[]          (below) type electric | rocket
+  electric          required when a mount is electric (may exist without one): motor, prop, battery, esc, wiring:
   motor             manufacturer, name (motorlib, libs/motorlib/data/motordatav2.csv; needs a stator size; mass from it)
   prop              motorlib propeller name (libs/motorlib/data/propellers.csv)
   battery           the pack, placed like a part (volume with x/y/z_offset_m, or its own x_m, y_m, z_m); model:
@@ -111,11 +120,17 @@ propulsion          required when powered, absent when not
                     its connector is the first plug of the battery run; its leads add to the shared resistance
   esc               name of a placed esc part; wires run battery -> ESC along the axes, ESC -> a surface motor inside its panel (along x to the root
                     mid-chord, out along the mid-chord to the motor's span station), ESC -> a nose/tail motor along the axes
-  wiring            battery (the battery -> ESC run), motors[] (ESC -> each motor, one per motor in motor order); a run:
+  wiring            battery (the battery -> ESC run), motors[] (ESC -> each electric motor, one per motor in motor order); a run:
                     gauge_awg (motorlib wire gauge), conductors (wires in the cable), plugs[] (data/parts/connector.json
                     names along the run, in order); each motor's run and the shared battery run set its resistance in
                     the motor model (one model per motor)
-  mounts[]          on (nose | tail | surface); for surface: surface, span_position_m (from panel root),
+  rocket            optional: motors[]: mount (mount number, 1-based, a rocket mount; at most one motor per mount; an empty
+                    rocket mount fires nothing), motor (data/rocket_motors/<name>.eng); a surface mount loads the motor at
+                    every panel
+  mounts[]          type electric | rocket. Rocket: on (tail | surface), surface, span_position_m, thrust_axis_tilt_deg,
+                    x_offset_m = the loaded motor's aft (nozzle) end from the tail face / surface root LE, positive aft
+                    (overhang allowed; the casing must fit the inner wall inside the body); no direction, spin, pod, holes.
+                    Electric: on (nose | tail | surface); for surface: surface, span_position_m (from panel root),
                     x_offset_m (all mounts; from surface root LE or nose/tail face, positive aft; moves motor and pod);
                     direction (tractor | pusher);
                     spin, seen from where the thrust points: surface out | in (2+ motors alternating cw/ccw round the
@@ -169,6 +184,7 @@ sections
 Body-rooted panels keep the true root edge on the body (follows nose/tail cones) and use an equivalent aero root at the mean body radius under the root chord. Axis-rooted panels start on the axis; Barrowman uses their exposed part.
 
 Migration: `python migrate_loft_stations.py aircraft/<project>` moves each existing section midpoint and its overrides to `fuselage.loft_stations`, including inherited profiles, and moves `fuselage.joints` to `sections.joints`; cuts and geometry stay unchanged.
+`python migrate_propulsion.py aircraft/<project>` (2026-10-12) moves `propulsion.{motor, prop, battery, esc, wiring}` to `propulsion.electric` and types every mount electric.
 
 Converted examples: `aircraft/m62v2/` and `aircraft/quadlancer62/` reproduce the old totals (1.1408 / 1.3732 kg, plus props 1.1608 / 1.4292 kg). The old modules are sections (cuts at the module boundaries, module mass as the section's weighed empty mass), couplers 21.36 g per joint, the battery is the only volume. m62v2 tail fins are axis-rooted, 55 mm span (delta: straight trailing edge, joined at the centre).
 
@@ -177,6 +193,8 @@ Converted examples: `aircraft/m62v2/` and `aircraft/quadlancer62/` reproduce the
 - `data/parts/`, tables (one file each): batteries (`battery.json`; mass required, > 0; connector: the battery's own plug, first on the battery run), props (mass; linear between listed diameters, outside them the nearest scaled by diameter^3), materials, connectors (contact_resistance_ohm), mounting patterns (`mounting.json`: holes_mm, screw, outline_mm).
 - `data/parts/<role>/<name>.json`, one file per product, roles fc, esc, camera, companion, vtx, receiver, gps, servo: generic (true = typical stand-in), mass (g), dimensions l, w, h (mm), mount (mounting.json pattern or null), wiring_origin_mm [x, y, z] (from the box centre, part axes), notes; esc also curr, min_s, max_s. Checked when placed.
 - Motors and props: motorlib (`libs/motorlib`, copied from `dronebuildcalc`), used as published.
+- `rocket_motors/<Manufacturer>_<Designation>.eng`: solid rocket motors, one RASP file each (thrustcurve.org's format, read
+  by OpenRocket and RockSim), used as published (`libs/rocketmotors.py`). First entry: AeroTech F42T.
 - `presets/<name>.json`: size presets (section, joints, reinforcement pattern, spars in the aircraft's own form, limits checked
   against the aircraft, CAD data), fasteners, openings, printer bed, wiring. Presets are created and saved from the
   GUI's Fuselage tab.

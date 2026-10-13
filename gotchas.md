@@ -22,3 +22,8 @@
 - The GUI never forces an order of operations, never adds things the owner did not ask for, and never refuses an edit with a guard: an incomplete definition is a definition error in the Log tab. Errors go to the Log tab, never a window or a text blurb in a panel (ticking powered on testglide silently unticked because no battery part existed).
 - Old CAD/FCStd files and earlier repos are mixed-and-matched experiments, not a source of values. Never mine them for dimensions; required geometry goes into the schema and the owner gives the numbers.
 - Ask questions as an explicit numbered list at the end, only for what is not yet decided; never re-ask what the owner has answered.
+- JSBSim's default rotational integration (rectangular Euler) diverges on a stiff, lightly damped mode at the bench's 1 ms step (minirocket near 290 m/s: 4000 deg/s); check a wild result by halving the step before blaming the aero. libs/simrun.py flies every vehicle on AB2.
+- JSBSim's solid rocket burns propellant at thrust / Isp: a thrust-table row at 0 N never ignites (start) or never burns out (end). Use step-mean thrust rows (libs/jsbsim.py write_rocket_engine_file).
+- The fuselage is a lofted body (superellipse loft stations, nose/tail profiles), not a tube. Never describe airframes as tubes or tube modules in docs or README; tube62/tube75 are only preset names.
+- `git commit -- <paths>` commits the working-tree content of those paths, not the staged index: it re-adds files that were only removed with `git rm --cached`. To commit part of the index, build the tree in a temporary GIT_INDEX_FILE.
+- Never show several values as one 'label value, label value, ...' line in the UI: use a labelled list (fields.tsx ValueList) or a table.

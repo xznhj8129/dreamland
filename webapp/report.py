@@ -11,6 +11,7 @@ from libs.geometry import (
     GRAMS_FORCE_PER_NEWTON,
     STANDARD_GRAVITY_M_S2,
     ResolvedAirframe,
+    dry_mass_properties,
 )
 from libs.propulsion import MotorPoints, PropulsionSummary, summary_lines
 from libs.report import VERDICT_LEVELS
@@ -465,11 +466,46 @@ def resistance_spread(
 def propulsion_sections(
     resolved: ResolvedAirframe, propulsion: PropulsionSummary | None
 ) -> list[ReportSection]:
-    definition = resolved.airframe.propulsion
-    if definition is None:
+    if resolved.airframe.propulsion is None:
         return [ReportSection("Propulsion", notes=[ReportLine("Unpowered airframe.")])]
+    return (electric_sections(resolved, propulsion) if resolved.motors else []) + (rocket_sections(resolved) if resolved.rockets else [])
+
+
+def rocket_sections(resolved: ResolvedAirframe) -> list[ReportSection]:
+    """The loaded rocket motors (data/rocket_motors/, as published) and the liftoff and burnout mass and CG."""
+    dry_kg, dry_cg, _ = dry_mass_properties(resolved)
+    liftoff_kg = sum(resolved.mass_kg) / 2.0
+    weight_n = liftoff_kg * STANDARD_GRAVITY_M_S2
+    average = sum(rocket.motor.average_thrust_n for rocket in resolved.rockets)
+    peak = sum(rocket.motor.peak_thrust_n for rocket in resolved.rockets)
+    return [
+        ReportSection(
+            "Rocket motors",
+            [
+                ReportMetric("Liftoff", f"{liftoff_kg * 1000:.1f} g · CG {resolved.cg_m[0] * 1000:.1f} mm"),
+                ReportMetric("Burnout", f"{dry_kg * 1000:.1f} g · CG {dry_cg[0] * 1000:.1f} mm"),
+                ReportMetric("Thrust / weight", f"{average / weight_n:.1f} average · {peak / weight_n:.1f} peak"),
+            ],
+            [ReportLine("Thrust curves as published (data/rocket_motors/); burnout = propellant burnt.")],
+            ReportTable(
+                ["Motor", "Model", "Impulse", "Average", "Peak", "Burn", "Mass", "Propellant"],
+                [
+                    ReportRow([rocket.name, f"{rocket.motor.manufacturer} {rocket.motor.designation}", f"{rocket.motor.total_impulse_ns:.1f} Ns",
+                               f"{rocket.motor.average_thrust_n:.1f} N", f"{rocket.motor.peak_thrust_n:.1f} N", f"{rocket.motor.burn_time_s:.2f} s",
+                               f"{rocket.motor.total_kg * 1000:.1f} g", f"{rocket.motor.propellant_kg * 1000:.1f} g"])
+                    for rocket in resolved.rockets
+                ],
+            ),
+        )
+    ]
+
+
+def electric_sections(
+    resolved: ResolvedAirframe, propulsion: PropulsionSummary | None
+) -> list[ReportSection]:
+    electric = resolved.airframe.propulsion.electric
     motor_label = (
-        f"{definition.motor.manufacturer} {definition.motor.name}"
+        f"{electric.motor.manufacturer} {electric.motor.name}"
         if propulsion is None
         else propulsion.models[0].label
     )
@@ -478,7 +514,7 @@ def propulsion_sections(
             "Motors & propellers",
             [
                 ReportMetric("Motors", f"{len(resolved.motors)} × {motor_label}"),
-                ReportMetric("Propeller", definition.prop),
+                ReportMetric("Propeller", electric.prop),
             ],
             [ReportLine("Spin is seen from where the thrust points.")],
             ReportTable(

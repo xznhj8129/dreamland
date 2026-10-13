@@ -7,6 +7,7 @@ import { useFormApi } from './session'
 import { ComponentPicker, useComponentIndex, useSelection } from './selection'
 
 const MOUNT_PATTERN_LABELS = { single: 'Single central hole', radial_slots: 'Four radial slots' }
+const MOUNT_TYPE_LABELS = { electric: 'Electric motor', rocket: 'Rocket motor' }
 
 /** editor_view.build_mounts_tab (1021-1042), normalize_mount (1100-1113), add_mount (1115-1118). */
 export function MountsTab(): ReactElement {
@@ -45,7 +46,7 @@ export function MountsTab(): ReactElement {
         </div>
         {notice !== '' && <div className="field-error">{notice}</div>}
       </Card>
-      <ComponentPicker kind="mount" items={mounts.map((item, index) => ({ name: `Mount ${index + 1}`, detail: String(item.on) }))} />
+      <ComponentPicker kind="mount" items={mounts.map((item, index) => ({ name: `Mount ${index + 1}`, detail: `${String(item.type)}, ${String(item.on)}` }))} />
       {mounts.map((mount, index) => (
         <div key={index} hidden={index !== selected}><MountCard index={index} mount={mount} surfaceNames={surfaceNames} onOp={run} /></div>
       ))}
@@ -60,12 +61,14 @@ interface MountCardProps {
   onOp: (body: Record<string, unknown>) => Promise<void>
 }
 
-/** editor_view.build_mounts_tab 1029-1042: mount N card, on, surface placement, direction, spin, pod. */
+/** editor_view.build_mounts_tab 1029-1042: mount N card, motor type, on, surface placement, direction, spin, pod.
+ * A rocket mount sits on the tail or a surface and has no direction, spin, pod or holes. */
 function MountCard({ index, mount, surfaceNames, onOp }: MountCardProps): ReactElement {
   const api = useFormApi()
   const context = api.context
   const path = ['propulsion', 'mounts', index]
   const on = typeof mount.on === 'string' ? mount.on : ''
+  const rocket = mount.type === 'rocket'
   const pod = isObject(mount.pod) ? mount.pod : null
   const holes = isObject(mount.holes) ? mount.holes : null
   // 1039: a surface mount's motors spin out|in, a nose or tail mount's cw|ccw.
@@ -74,9 +77,18 @@ function MountCard({ index, mount, surfaceNames, onOp }: MountCardProps): ReactE
   return (
     <Card title={`mount ${index + 1}`} onDelete={() => void onOp({ op: 'mount.delete', index })}>
       <ChoiceField
+        label="Motor type"
+        path={[...path, 'type']}
+        value={mount.type}
+        options={context.mount_types}
+        optionLabels={MOUNT_TYPE_LABELS}
+        // Picking the type normalizes the mount: a rocket mount drops the electric-only fields.
+        onValue={(value) => void onOp({ op: 'mount.type', index, type: value })}
+      />
+      <ChoiceField
         path={[...path, 'on']}
         value={mount.on}
-        options={context.choices.on ?? []}
+        options={rocket ? context.rocket_mount_targets : context.choices.on ?? []}
         // 1031: picking on normalizes the mount's surface fields and direction/spin.
         onValue={(value) => void onOp({ op: 'mount.on', index, on: value })}
       />
@@ -86,6 +98,11 @@ function MountCard({ index, mount, surfaceNames, onOp }: MountCardProps): ReactE
           <EntryField path={[...path, 'span_position_m']} unitKey="span_position_m" />
         </>
       )}
+      {rocket ? <>
+        <EntryField path={[...path, 'x_offset_m']} unitKey="x_offset_m" label="Motor aft end (mm, positive aft)" />
+        <p className="form-hint">Where the loaded motor's nozzle end sits, from the {on === 'surface' ? 'surface root leading edge' : 'tail face'}; the motor runs forward from there. Load a motor on the Propulsion tab (Rocket).</p>
+        <EntryField path={[...path, 'thrust_axis_tilt_deg']} unitKey="thrust_axis_tilt_deg" />
+      </> : <>
       <EntryField path={[...path, 'x_offset_m']} unitKey="x_offset_m" label="X offset (mm, positive aft)" />
       {on !== 'surface' && <p className="form-hint">Moves the motor and pod together from the {on} mounting face.</p>}
       <ChoiceField path={[...path, 'direction']} value={mount.direction} options={context.choices.direction ?? []} />
@@ -110,6 +127,7 @@ function MountCard({ index, mount, surfaceNames, onOp }: MountCardProps): ReactE
       <OptionalBlock label="pod" present={pod !== null} onToggle={(checked) => void onOp({ op: 'mount.pod.toggle', index, enabled: checked })}>
         {pod !== null && <Fields data={pod} path={[...path, 'pod']} context={context} />}
       </OptionalBlock>
+      </>}
     </Card>
   )
 }

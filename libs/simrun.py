@@ -49,6 +49,7 @@ START_OPTIONS = {  # option: help and the starts that use it
     "launch-height": StartOption("launcher height above ground, m (default: 1.5 catapult, 1.0 rail)", launcher_only=True),
 }
 STARTS = ("air", "ground", "catapult", "rail")
+DEFAULT_START = "air"
 # The launch starts use the bench's own plane recipe (inav-jsbsim-bench examples/launch.py): the Rascal's catapult,
 # and its rail. The LaunchRail dataclass default (85 deg) is a vertical rocket rail, wrong for a fixed wing.
 CATAPULT = Catapult()  # examples/launch.py:37
@@ -56,8 +57,15 @@ RAIL = LaunchRail(pitch_deg=20.0, length_m=3.0, height_m=1.0)  # examples/launch
 START_ALT_M = 150.0  # forward-flight scenarios started in the air, held level here
 FT = 0.3048
 KNOT_M_S = 0.514444
+LBF_N = 4.4482216152605
+SLUG_KG = 14.59390294
 STANCE_CLEARANCE_M = 0.0005
 HOVER_MIXER_PROFILE = 0  # INAV mixer profile 1
+
+# JSBSim's default rotational integration (rectangular Euler) diverges on a stiff, lightly damped pitch mode at the
+# bench's 1 ms step: the minirocket near 290 m/s (about 47 Hz, damping ratio ~0.015) blew up to 4000 deg/s, while
+# 0.5 ms, 0.25 ms and 0.1 ms steps and Adams-Bashforth 2 at 1 ms all agree on a steady flight. Every vehicle flies AB2.
+JSBSIM_INTEGRATORS = {"simulation/integrator/rate/rotational": 3, "simulation/integrator/position/rotational": 3}  # 3 = Adams-Bashforth 2
 
 GROUND_AIRBORNE_M = 2.0  # once higher than this (tailsitters start standing on the ground) ...
 GROUND_MIN_AGL_M = 0.5  # ... the run ends at or below this altitude above ground
@@ -139,8 +147,9 @@ def start_reasons(airframe) -> dict[str, str | None]:
 
 def add_start_arguments(parser) -> None:
     """--start and the START_OPTIONS, for any runner."""
-    parser.add_argument("--start", choices=list(STARTS), default="air",
-                        help="air (default, held in the air), ground (standing on its tail, VTOL), catapult or rail (including tailsitters)")
+    parser.add_argument("--start", choices=list(STARTS), default=None,
+                        help="air (held in the air), ground (standing on its tail, VTOL), catapult or rail (including tailsitters); "
+                             "default: the scenario's START, else air")
     for option, spec in START_OPTIONS.items():
         if spec.air_only:
             suffix = "; air start only"
@@ -151,6 +160,17 @@ def add_start_arguments(parser) -> None:
         else:
             suffix = ""
         parser.add_argument(f"--{option}", type=float, default=None, help=spec.help + suffix)
+
+
+def apply_start_defaults(args, defaults: dict) -> None:
+    """Fill what the command line left out from a scenario's START: --start, else DEFAULT_START, and each option
+    START names that applies to that start. Options given on the command line always win."""
+    if args.start is None:
+        args.start = defaults.get("start", DEFAULT_START)
+    for option, value in defaults.items():
+        attribute = option.replace("-", "_")
+        if option != "start" and getattr(args, attribute) is None and START_OPTIONS[option].applies_to(args.start):
+            setattr(args, attribute, float(value))
 
 
 def resolve_start(parser, args, start: str, default_alt_m: float, default_speed_m_s: float) -> StartState:
@@ -191,19 +211,19 @@ def build_vehicle(export, profile: str, start: str, state: StartState, tailsitte
         return Vehicle(
             model=export.model_name, profile=profile, motors=export.motor_properties, servos=export.servo_properties,
             airborne=True, alt_m=export.stance_height_m + STANCE_CLEARANCE_M, speed_kts=0.0,
-            init={"ic/theta-deg": 90.0}, model_dir=str(export.model_dir), tailsitter=True, hover_mixer_profile=HOVER_MIXER_PROFILE,
+            init={"ic/theta-deg": 90.0, **JSBSIM_INTEGRATORS}, model_dir=str(export.model_dir), running_engines=export.electric_engines, tailsitter=True, hover_mixer_profile=HOVER_MIXER_PROFILE,
         )
     launcher = state.launcher
     if launcher is not None:
         return Vehicle(
             model=export.model_name, profile=profile, motors=export.motor_properties, servos=export.servo_properties,
-            airborne=True, alt_m=launcher.height_m, speed_kts=0.0, init={}, model_dir=str(export.model_dir),
+            airborne=True, alt_m=launcher.height_m, speed_kts=0.0, init=dict(JSBSIM_INTEGRATORS), model_dir=str(export.model_dir), running_engines=export.electric_engines,
             tailsitter=tailsitter, hover_mixer_profile=HOVER_MIXER_PROFILE,
         )
     return Vehicle(
         model=export.model_name, profile=profile, motors=export.motor_properties, servos=export.servo_properties,
-        airborne=True, alt_m=state.alt_m, speed_kts=state.speed_m_s / KNOT_M_S, init={"ic/theta-deg": state.pitch_deg, "ic/phi-deg": state.roll_deg},
-        model_dir=str(export.model_dir), tailsitter=tailsitter, hover_mixer_profile=HOVER_MIXER_PROFILE,
+        airborne=True, alt_m=state.alt_m, speed_kts=state.speed_m_s / KNOT_M_S, init={"ic/theta-deg": state.pitch_deg, "ic/phi-deg": state.roll_deg, **JSBSIM_INTEGRATORS},
+        model_dir=str(export.model_dir), running_engines=export.electric_engines, tailsitter=tailsitter, hover_mixer_profile=HOVER_MIXER_PROFILE,
     )
 
 
@@ -239,6 +259,14 @@ def electrical_columns(fdm, export, motor_count: int) -> dict[str, float]:
     for index, (volts, amps) in enumerate(motors):
         row |= {f"motor{index + 1}_v": volts, f"motor{index + 1}_a": amps, f"motor{index + 1}_rpm": fdm[f"propulsion/engine[{index}]/propeller-rpm"]}
     return row
+
+
+def rocket_columns(fdm, export) -> dict[str, float]:
+    """Each rocket motor's thrust, their total, the vehicle's mass (propellant burning off) and its acceleration along
+    the body x axis (specific force, g; 1 at rest nose up)."""
+    thrusts = [fdm[rocket.thrust_property] * LBF_N for rocket in export.rockets]
+    row = {f"rocket{index + 1}_thrust_n": thrust for index, thrust in enumerate(thrusts)}
+    return row | {"rocket_thrust_n": sum(thrusts), "mass_kg": fdm["inertia/mass-slugs"] * SLUG_KG, "accel_x_g": fdm["accelerations/Nx"]}
 
 
 def plot_flight_path(log_path: Path, png_path: Path, title: str) -> None:

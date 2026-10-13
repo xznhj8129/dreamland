@@ -4,7 +4,7 @@ Run: /home/anon/miniconda3/envs/drone/bin/python webapp/test_editor_sync.py
 
 The ops run on a throwaway copy of aircraft/example, in process, against AppState exactly as webapp/server.py
 calls them. Every accepted edit must leave definition_valid true with no new "Definition error" (or unexpected
-"Error") entry in the Log, and propulsion.wiring.motors must match the motor count the parser requires.
+"Error") entry in the Log, and propulsion.electric.wiring.motors must match the electric motor count the parser requires.
 """
 
 from __future__ import annotations
@@ -43,7 +43,7 @@ def make_state(output: Path) -> AppState:
 def expected_motors(definition: dict) -> int:
     """libs.airframe.motor_count over the definition's mounts and surface layouts."""
     layouts = {surface["name"]: surface["layout"] for surface in definition["surfaces"]}
-    mounts = [(mount["on"], mount.get("surface")) for mount in definition["propulsion"]["mounts"]]
+    mounts = [(mount["on"], mount.get("surface")) for mount in definition["propulsion"]["mounts"] if mount["type"] == "electric"]
     return motor_count(mounts, layouts)
 
 
@@ -67,7 +67,7 @@ def run_set(state: AppState, path: list, value: object) -> None:
 
 
 def check_motor_sync(state: AppState) -> None:
-    runs = state.definition["propulsion"]["wiring"]["motors"]
+    runs = state.definition["propulsion"]["electric"]["wiring"]["motors"]
     assert len(runs) == expected_motors(state.definition) == len(state.resolved.motors) == 1
 
     run_op(state, {"op": "mount.add"})
@@ -100,7 +100,7 @@ def check_motor_sync(state: AppState) -> None:
 
 def check_apply_set_syncs(state: AppState) -> None:
     """A set on any field syncs the runs before the recompute, as Tk's changed() does on every edit."""
-    runs = state.definition["propulsion"]["wiring"]["motors"]
+    runs = state.definition["propulsion"]["electric"]["wiring"]["motors"]
     del runs[1:]  # the mismatch the old client-side sync left behind between snapshot and recompute
     run_set(state, ["fuselage", "length_m"], state.definition["fuselage"]["length_m"])
     assert len(runs) == expected_motors(state.definition) == 2, "apply_set did not sync the runs before the recompute"
@@ -125,10 +125,10 @@ def check_missing_surface_guard(state: AppState) -> None:
     """Port of Tk's skip guard: a mount naming a missing surface leaves the runs untouched, invents none."""
     definition = copy.deepcopy(state.definition)
     definition["propulsion"]["mounts"][0] = {
-        "on": "surface", "surface": "ghost", "span_position_m": 0.0, "x_offset_m": 0.0,
+        "type": "electric", "on": "surface", "surface": "ghost", "span_position_m": 0.0, "x_offset_m": 0.0,
         "spin": "in", "thrust_axis_tilt_deg": 0.0,
     }
-    runs = definition["propulsion"]["wiring"]["motors"]
+    runs = definition["propulsion"]["electric"]["wiring"]["motors"]
     before = copy.deepcopy(runs)
     editor.sync_motor_runs(definition)
     assert runs == before, "sync_motor_runs invented runs for a missing surface"
@@ -140,10 +140,10 @@ def check_missing_surface_guard(state: AppState) -> None:
 
 def check_resizing(state: AppState) -> None:
     """Exercise the same queued editor mutations against real parsed/resolved aircraft geometry."""
-    run_set(state, ["propulsion", "battery", "x_offset_m"], 0.02)
+    run_set(state, ["propulsion", "electric", "battery", "x_offset_m"], 0.02)
     original = copy.deepcopy(state.definition)
     length = original["fuselage"]["length_m"]
-    battery_x = state.resolved.airframe.propulsion.battery.placed.position_m[0]
+    battery_x = state.resolved.airframe.propulsion.electric.battery.placed.position_m[0]
     run_set(state, ["fuselage", "length_m"], length * 1.5)
     enlarged = state.definition
     for kind, key in (("parts", "x_m"), ("volumes", "x_m"), ("surfaces", "x_root_le_m")):
@@ -151,7 +151,7 @@ def check_resizing(state: AppState) -> None:
             assert math.isclose(new[key], old[key] * 1.5)
     assert enlarged["surfaces"][0]["chord_root_m"] == original["surfaces"][0]["chord_root_m"]
     assert enlarged["volumes"][0]["size_m"] == original["volumes"][0]["size_m"]
-    assert math.isclose(state.resolved.airframe.propulsion.battery.placed.position_m[0], battery_x * 1.5)
+    assert math.isclose(state.resolved.airframe.propulsion.electric.battery.placed.position_m[0], battery_x * 1.5)
     run_set(state, ["fuselage", "length_m"], length)
 
     run_set(state, ["sections", "per_section", 0, "fixed_length"], True)
@@ -331,6 +331,34 @@ def check_surface_sections(state: AppState) -> None:
     print("ok   surface print sections: cuts add/remove, boundary edits keep cuts and span independent, crossing refused visibly, round trip and fuselage cuts preserved")
 
 
+def check_rocket_mounts(state: AppState) -> None:
+    """Motor type, rocket loads and the electric system through the same ops the browser sends."""
+    propulsion = state.definition["propulsion"]
+    liftoff_kg = sum(state.resolved.mass_kg) / 2.0
+    run_op(state, {"op": "mount.add"})
+    run_op(state, {"op": "mount.type", "index": 1, "type": "rocket"})
+    rocket_mount = propulsion["mounts"][1]
+    assert rocket_mount["on"] == "tail" and not {"direction", "spin", "pod", "holes"} & rocket_mount.keys(), rocket_mount
+    assert len(propulsion["electric"]["wiring"]["motors"]) == len(state.resolved.motors) == 1, "a rocket mount kept an electric run"
+    run_op(state, {"op": "rocket.add"})
+    assert propulsion["rocket"]["motors"] == [{"mount": 2, "motor": "AeroTech_F42T"}], propulsion["rocket"]
+    assert [rocket.name for rocket in state.resolved.rockets] == ["rocket 2 tail"]
+    assert math.isclose(sum(state.resolved.mass_kg) / 2.0 - liftoff_kg, 0.076), "the loaded motor's mass is missing"
+    run_op(state, {"op": "mount.delete", "index": 0})
+    assert propulsion["rocket"]["motors"] == [{"mount": 1, "motor": "AeroTech_F42T"}], "the load did not follow its mount's new number"
+    assert state.resolved.motors == () and propulsion["electric"]["wiring"]["motors"] == []
+    electric = copy.deepcopy(propulsion["electric"])
+    run_op(state, {"op": "electric.toggle", "enabled": False})
+    run_op(state, {"op": "rocket.delete", "index": 0})
+    assert state.resolved.rockets == ()
+    before = len(state.log)
+    editor.apply_op(state, {"session_id": state.session_id, "op": "mount.type", "index": 0, "type": "electric"})
+    assert not state.definition_valid and state.log[before].title == "Definition error" and "electric" in state.log[before].text, "electric mount without the electric system"
+    run_op(state, {"op": "electric.toggle", "enabled": True, "electric": electric})
+    assert len(state.resolved.motors) == len(propulsion["electric"]["wiring"]["motors"]) == 1
+    print("ok   mount.type / rocket.add / rocket.delete / electric.toggle; a mount delete renumbers the rocket loads")
+
+
 def main() -> None:
     output = EXAMPLE / "cad" / "editor-validation"
     state = make_state(output)
@@ -344,6 +372,7 @@ def main() -> None:
     check_local_end_radius(state)
     check_section_insertion(state)
     check_surface_sections(make_state(output / "surface-sections"))
+    check_rocket_mounts(make_state(output / "rocket-mounts"))
     print("editor sync suite OK")
 
 

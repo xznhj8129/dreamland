@@ -1,0 +1,6 @@
+# quadrocketbuilder export of minirocket: fixed-wing, motors on throttle; servo mix from the
+# control roles, signs from each control's computed moments.
+set throttle_idle = 8
+mixer_profile 1
+set platform_type = AIRPLANE
+mmix reset

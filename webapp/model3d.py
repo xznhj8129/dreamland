@@ -40,6 +40,7 @@ VOLUME_COLOR = "#ffcc33"
 PART_COLOR = "#ff9966"
 MOTOR_COLOR = "#8a9099"
 PROP_COLOR = "#66d9ff"
+ROCKET_COLOR = "#ff8a3d"  # rocket motor casings, as libs/graphics.py ROCKET_COLOR
 ROD_COLOR = "#ff66aa"  # rods and spars, as libs/graphics.py ROD_COLOR
 VOLUME_OPACITY = 0.25
 PART_OPACITY = 0.85
@@ -84,14 +85,17 @@ def build_model3d(resolved: ResolvedAirframe, aero: Any | None) -> dict[str, Any
         part_names.add(part.name)
         _try_mesh(meshes, lambda part=part: _mesh(part.name, "part", *_part_mesh(part), PART_COLOR, PART_OPACITY))
     propulsion = resolved.airframe.propulsion
-    if propulsion is not None and BATTERY_PART_NAME not in part_names:  # the parser keeps it in parts; be explicit anyway
-        battery = propulsion.battery.placed
+    if propulsion is not None and propulsion.electric is not None and BATTERY_PART_NAME not in part_names:  # the parser keeps it in parts; be explicit anyway
+        battery = propulsion.electric.battery.placed
         _try_mesh(meshes, lambda battery=battery: _mesh(BATTERY_PART_NAME, "part", *_part_mesh(battery), PART_COLOR, PART_OPACITY))
     for motor in resolved.motors:
         _try_mesh(meshes, lambda motor=motor: _mesh(motor.name, "motor", *_motor_mesh(motor), MOTOR_COLOR))
         if motor.pod_stations:
             _try_mesh(meshes, lambda motor=motor: _mesh(f"pod {motor.name}", "pod", *_pod_mesh(motor), BODY_COLOR))
         _try_mesh(meshes, lambda motor=motor: _mesh(f"prop {motor.name}", "prop", *_prop_mesh(motor), PROP_COLOR, PROP_OPACITY))
+    for index, rocket in enumerate(resolved.rockets):  # the casing from the nozzle end forward along the thrust axis
+        front = tuple(n + rocket.motor.length_m * t for n, t in zip(rocket.nozzle, rocket.thrust_dir))
+        _try_mesh(meshes, lambda index=index, rocket=rocket, front=front: _rocket_mesh(index, rocket, front))
     reinforcement = resolved.airframe.fuselage.reinforcement
     if reinforcement is not None:
         pattern = reinforcement.pattern
@@ -434,6 +438,20 @@ def _panel_meshes(panel, color: str, definition, placement) -> list[dict[str, An
         }
         meshes.append(mesh)
     return meshes
+
+
+def _rocket_mesh(index: int, rocket, front) -> dict[str, Any]:
+    """The casing, plus what the flight scene needs for its flame: the rocket<N>_thrust_n log column (resolved rocket
+    order, libs.simrun.rocket_columns), the nozzle, the thrust direction and the motor's peak thrust."""
+    mesh = _mesh(rocket.name, "motor", *_cylinder(rocket.nozzle, front, rocket.motor.diameter_m / 2.0), ROCKET_COLOR)
+    mesh["rocket"] = {
+        "number": index + 1,
+        "nozzle": [float(value) for value in rocket.nozzle],
+        "thrust_dir": [float(value) for value in rocket.thrust_dir],
+        "radius_m": float(rocket.motor.diameter_m / 2.0),
+        "peak_thrust_n": float(rocket.motor.peak_thrust_n),
+    }
+    return mesh
 
 
 def _volume_mesh(resolved: ResolvedAirframe, volume) -> tuple[list, list]:

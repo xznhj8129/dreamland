@@ -3,6 +3,10 @@ import type { Model3DPayload } from './types'
 
 /** Marker sphere radius as a fraction of the model's largest dimension. */
 const MARKER_RADIUS_FRACTION = 0.02
+/** A rocket flame at the motor's peak thrust; it scales linearly down to nothing at 0 N. */
+export const FLAME_MAX_LENGTH_M = 1
+const FLAME_COLOR = '#ff2a1a'
+const FLAME_SEGMENTS = 16
 
 /** One control surface's hinge pivot: rotating `pivot` about `axis` deflects it. */
 export interface ControlPivot {
@@ -16,12 +20,23 @@ export interface ControlPivot {
   axis: THREE.Vector3
 }
 
+/** One rocket motor's flame: a cone from the nozzle, pointing against the thrust, one metre long along local y. */
+export interface RocketFlame {
+  /** Child of the returned group; scale.y is the flame length in metres. */
+  flame: THREE.Mesh
+  /** N of the rocket<N>_thrust_n log column. */
+  number: number
+  peakThrustN: number
+}
+
 /** The airframe's scene buckets, as webapp/model3d.py build_model3d groups the meshes. */
 export interface AirframeGroups {
   /** Body/panel/prop/parts/volumes/spars/rods AND the control pivots. */
   group: THREE.Group
   /** One per control mesh; empty when none. */
   controls: ControlPivot[]
+  /** One per rocket motor when built with `flames`; hidden until a thrust is applied. */
+  flames: RocketFlame[]
   markerGroup: THREE.Group
   guideGroup: THREE.Group
   sectionGroup: THREE.Group
@@ -66,11 +81,12 @@ export function isModel3DPayload(value: unknown): value is Model3DPayload {
  *
  * `kinds` restricts the built meshes (markers are always built); undefined builds every kind. A control mesh with
  * metadata gets its geometry translated to be hinge-relative and is wrapped in a pivot group at the hinge point,
- * so rotating the pivot about the hinge axis deflects the surface. Everything else matches the payload one-to-one.
+ * so rotating the pivot about the hinge axis deflects the surface. With `flames`, each rocket motor also gets a
+ * hidden flame cone at its nozzle. Everything else matches the payload one-to-one.
  */
 export function buildAirframe(
   payload: Model3DPayload,
-  options: { transparentSkin: boolean; kinds?: ReadonlySet<string> },
+  options: { transparentSkin: boolean; kinds?: ReadonlySet<string>; flames?: boolean },
 ): AirframeGroups {
   const group = new THREE.Group()
   const markerGroup = new THREE.Group()
@@ -78,6 +94,7 @@ export function buildAirframe(
   const sectionGroup = new THREE.Group()
   const featureGroup = new THREE.Group()
   const controls: ControlPivot[] = []
+  const flames: RocketFlame[] = []
   const minimum = new THREE.Vector3(payload.bounds.min[0], payload.bounds.min[1], payload.bounds.min[2])
   const maximum = new THREE.Vector3(payload.bounds.max[0], payload.bounds.max[1], payload.bounds.max[2])
   const size = new THREE.Vector3().subVectors(maximum, minimum)
@@ -147,6 +164,19 @@ export function buildAirframe(
     } else {
       group.add(object)
     }
+    const rocket = mesh.rocket
+    if (options.flames === true && rocket !== undefined) {
+      // Base on the nozzle, apex one metre out along local +y, turned to point against the thrust.
+      const cone = new THREE.ConeGeometry(rocket.radius_m, 1, FLAME_SEGMENTS)
+      cone.translate(0, 0.5, 0)
+      const flame = new THREE.Mesh(cone, new THREE.MeshBasicMaterial({ color: FLAME_COLOR }))
+      flame.position.set(rocket.nozzle[0], rocket.nozzle[1], rocket.nozzle[2])
+      const exhaust = new THREE.Vector3(-rocket.thrust_dir[0], -rocket.thrust_dir[1], -rocket.thrust_dir[2])
+      flame.quaternion.setFromUnitVectors(new THREE.Vector3(0, 1, 0), exhaust)
+      flame.visible = false
+      group.add(flame)
+      flames.push({ flame, number: rocket.number, peakThrustN: rocket.peak_thrust_n })
+    }
   }
   for (const marker of payload.markers) {
     const sphere = new THREE.Mesh(
@@ -156,5 +186,5 @@ export function buildAirframe(
     sphere.position.set(marker.position[0], marker.position[1], marker.position[2])
     markerGroup.add(sphere)
   }
-  return { group, controls, markerGroup, guideGroup, sectionGroup, featureGroup }
+  return { group, controls, flames, markerGroup, guideGroup, sectionGroup, featureGroup }
 }

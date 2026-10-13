@@ -92,7 +92,7 @@ def check_handles(state: AppState) -> None:
     assert ("battery", 0) not in present, "a battery in a volume must not have its own handle"
     print("ok   bound part and bound battery have no handles")
 
-    battery = state.definition["propulsion"]["battery"]
+    battery = state.definition["propulsion"]["electric"]["battery"]
     battery.pop("volume", None)
     battery["x_m"], battery["y_m"], battery["z_m"] = 0.2, 0.0, 0.0
     state.recompute()
@@ -148,9 +148,9 @@ def check_moves(state: AppState) -> None:
     before = definition["parts"][0]["x_m"]
     editor.apply_move(state, move_body(state, "part", 0, {"x": 0.01}))
     assert definition["parts"][0]["x_m"] == editor._quantize(before + 0.01)
-    battery_y = definition["propulsion"]["battery"]["y_m"]
+    battery_y = definition["propulsion"]["electric"]["battery"]["y_m"]
     editor.apply_move(state, move_body(state, "battery", 0, {"y": 0.01}))
-    assert definition["propulsion"]["battery"]["y_m"] == editor._quantize(battery_y + 0.01)
+    assert definition["propulsion"]["electric"]["battery"]["y_m"] == editor._quantize(battery_y + 0.01)
     for bad in (move_body(state, "part", 1, {"x": 0.01}),  # part 1 sits in a volume since check_handles
                 move_body(state, "cut", 999, {"x": 0.01}), move_body(state, "spars", 1, {"x": 0.01})):
         try:

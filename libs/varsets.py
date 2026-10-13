@@ -133,16 +133,18 @@ def surface_varset(surface: Surface) -> dict:
 
 
 def propulsion_varset(airframe: Airframe) -> dict:
-    propulsion = airframe.propulsion
+    electric = airframe.propulsion.electric
     return {
-        "Motor": {"Manufacturer": text(propulsion.motor.manufacturer), "Name": text(propulsion.motor.name),
-                  "BellDiameter": length(propulsion.bell_diameter_m), "BellLength": length(propulsion.bell_length_m)},
-        "Prop": {"Name": text(propulsion.prop), "Diameter": length(propulsion.prop_diameter_m)},
+        "Motor": {"Manufacturer": text(electric.motor.manufacturer), "Name": text(electric.motor.name),
+                  "BellDiameter": length(electric.bell_diameter_m), "BellLength": length(electric.bell_length_m)},
+        "Prop": {"Name": text(electric.prop), "Diameter": length(electric.prop_diameter_m)},
     }
 
 
 def mount_varset(mount: Mount) -> dict:
-    groups = {"Mount": {"On": text(mount.on), "XOffset": distance(mount.x_offset_m), "Direction": text(mount.direction), "Spin": text(mount.spin), "ThrustTilt": angle(mount.thrust_axis_tilt_deg)}}
+    groups = {"Mount": {"Type": text(mount.type), "On": text(mount.on), "XOffset": distance(mount.x_offset_m), "ThrustTilt": angle(mount.thrust_axis_tilt_deg)}}
+    if mount.type == "electric":
+        groups["Mount"] |= {"Direction": text(mount.direction), "Spin": text(mount.spin)}
     if mount.on == "surface":
         groups["Mount"] |= {"Surface": text(mount.surface), "SpanPosition": length(mount.span_position_m)}
     if mount.pod is not None:
@@ -162,7 +164,8 @@ def build_varsets(airframe: Airframe) -> dict[str, dict]:
     varsets = {AIRFRAME_VARSET: airframe_varset(airframe)}
     varsets |= {surface_varset_label(surface): surface_varset(surface) for surface in airframe.surfaces}
     if airframe.propulsion is not None:
-        varsets[PROPULSION_VARSET] = propulsion_varset(airframe)
+        if airframe.propulsion.electric is not None:
+            varsets[PROPULSION_VARSET] = propulsion_varset(airframe)
         varsets |= {mount_varset_label(index): mount_varset(mount) for index, mount in enumerate(airframe.propulsion.mounts)}
     return varsets
 

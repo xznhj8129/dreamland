@@ -2,16 +2,15 @@ User added TODOs (do not remove/change unless done)
 
 - changing xyz positions entry (which specifically, some must stay mm) from abs mm to relative frac to allow scaling without one-by-one mm adjustment
 
-- "[Auto][Override]" Button pairs should be a single boolean [Auto] button everywhere
-
-- CAD: export progress bar per section
-
 - SIM:
     * MSP/Mavlink commands (maybe complicated, not right now)
     * SIM priority: flexibility and realism; editor stability estimate versus JSBSim flight response.
     * Performance flash card: efficiency, stall speed, sustained turn rate, acceleration/speed per axis, range, maximum altitude.
     * Optimization tab: optimize for X within user ranges on part values; big outlines and features first.
         
+- INAV:
+        * Current default configs bad to configure
+
 - Hatches (for now simple rounded rectangle polar cut with width, length, gap; fasteners and hinges deferred)
 
 - Wiring
@@ -77,3 +76,12 @@ Agent added TODOs, freeform, remove done ones
         - README class hierarchy (Complex / System / Subsystem / Module / Submodule / Component / Subcomponent) and 2R04B1 assembly tree.
 
 - Add a requirements file (deps aerosandbox, neuralfoil, cadquery only in conda env "drone").
+
+- Rockets (solid motors done 2026-10-12: data/rocket_motors, rocket mounts, JSBSim burn, MCU ignite, mcu/launch):
+        - Motor database: more RASP files from thrustcurve.org (only AeroTech F42T so far).
+        - Recovery: ejection at the motor's delay, parachute (drag area, deploy, descent rate); minirocket's chute bay ballast stands in.
+        - Staging: ignite a mount on another's burnout; separate stages.
+        - INAV: no way to ignite a rocket motor from INAV yet (output or mode).
+        - Aero past 300 m/s (~Mach 0.9): transonic/supersonic; tables hold the 300 m/s values beyond.
+        - Liquid-fuel motors (later; up to space).
+- libs/test_print_features.py --check mounts asserts mount holes; no project in aircraft/ has any (fails on every project).

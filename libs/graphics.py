@@ -39,6 +39,8 @@ ROD_CENTRE_DOT_RADIUS_PX = 1.5  # fixed-pixel centre mark at each rod end: a thi
 ROD_DASH = (8, 4)
 CUT_OVERHANG_PX = 14
 CONTROL_COLOR = "#cc66ff"
+ROCKET_COLOR = "#ff8a3d"
+ROCKET_DASH = (5, 3)  # the casing sits inside the body
 CONTROL_LABEL_OFFSET_PX = 10
 MARKER_RADIUS_PX = 5
 MARKER_COLORS = {"cg": "blue", "np": "red", "lift": "green"}
@@ -209,7 +211,8 @@ def draw_marker_guide(canvas: Any, positions: dict) -> None:
               ("Wires: battery - ESC - motors", WIRE_COLOR), ("Section cuts (drag along x); * = computed mass", CUT_COLOR),
               ("Loft guides (drag along x)", LOFT_COLOR),
               ("Fastener holes, head access and shaft relief (cut outlines)", FEATURE_COLOR),
-              ("Rods; spars (drag along the chord; dashed = stops) and carry-through", ROD_COLOR)]
+              ("Rods; spars (drag along the chord; dashed = stops) and carry-through", ROD_COLOR),
+              ("Rocket motor casings (thick edge = nozzle end)", ROCKET_COLOR)]
     for index, (text, color) in enumerate(guide):
         canvas.create_text(12, 12 + index * 16, anchor="nw", text=text, fill=color, font=("TkDefaultFont", 9))
 
@@ -230,6 +233,11 @@ def measure_longitudinal_view(resolved: ResolvedAirframe, roll_deg: float, width
     for motor in resolved.motors:
         half_span = max(half_span, abs(longitudinal_transverse(motor.position[1], motor.position[2], roll_rad)) + motor.prop_radius_m)
         xs = [motor.position[0] - motor.bell_length_m, motor.prop_center[0]] + [x for x, _ in motor.pod_stations]
+        min_x = min(min_x, *xs)
+        max_x = max(max_x, *xs)
+    for rocket in resolved.rockets:
+        half_span = max(half_span, abs(longitudinal_transverse(rocket.nozzle[1], rocket.nozzle[2], roll_rad)) + rocket.motor.diameter_m / 2.0)
+        xs = [rocket.nozzle[0], rocket.nozzle[0] + rocket.motor.length_m * rocket.thrust_dir[0]]
         min_x = min(min_x, *xs)
         max_x = max(max_x, *xs)
     half_span = max(half_span, 0.1)
@@ -262,6 +270,9 @@ def measure_front_view(resolved: ResolvedAirframe, width: float, height: float) 
     for motor in resolved.motors:
         extent_y = max(extent_y, abs(motor.position[1]) + motor.prop_radius_m)
         extent_z = max(extent_z, abs(motor.position[2]) + motor.prop_radius_m)
+    for rocket in resolved.rockets:
+        extent_y = max(extent_y, abs(rocket.nozzle[1]) + rocket.motor.diameter_m / 2.0)
+        extent_z = max(extent_z, abs(rocket.nozzle[2]) + rocket.motor.diameter_m / 2.0)
     scale = min((width - 2.0 * pad_x) / (2.2 * extent_y), (height - 2.0 * pad_y) / (2.2 * extent_z))
     return {
         "mode": "Front",
@@ -425,6 +436,15 @@ def draw_longitudinal_view(canvas: Any, resolved: ResolvedAirframe, aero, roll_d
             canvas.create_line([value for x, y, z in ends for value in (x_to_screen(x), transverse_to_screen(longitudinal_transverse(y, z, roll_rad)))],
                                fill="red", width=1, dash=(6, 4))
 
+    for rocket in resolved.rockets:  # the casing outline along its thrust axis, the nozzle end marked
+        ends = [rocket.nozzle, tuple(n + rocket.motor.length_m * t for n, t in zip(rocket.nozzle, rocket.thrust_dir))]
+        (x0, t0), (x1, t1) = ((x_to_screen(x), transverse_to_screen(longitudinal_transverse(y, z, roll_rad))) for x, y, z in ends)
+        length_px = math.hypot(x1 - x0, t1 - t0)
+        across = (-(t1 - t0) / length_px * rocket.motor.diameter_m * scale / 2.0, (x1 - x0) / length_px * rocket.motor.diameter_m * scale / 2.0)
+        corners = [(x0 + across[0], t0 + across[1]), (x1 + across[0], t1 + across[1]), (x1 - across[0], t1 - across[1]), (x0 - across[0], t0 - across[1])]
+        canvas.create_polygon([value for point in corners for value in point], outline=ROCKET_COLOR, fill="", width=2, dash=ROCKET_DASH)
+        canvas.create_line(*corners[0], *corners[3], fill=ROCKET_COLOR, width=3)
+        canvas.create_text((x0 + x1) / 2.0, (t0 + t1) / 2.0, text=rocket.motor.designation, fill=ROCKET_COLOR, font=("TkDefaultFont", 8))
     draw_print_features(canvas, resolved, lambda point: (x_to_screen(point[0]),
                         transverse_to_screen(longitudinal_transverse(point[1], point[2], roll_rad))))
     for key, x_value in marker_positions(resolved, aero).items():
@@ -514,6 +534,9 @@ def draw_front_view(canvas: Any, resolved: ResolvedAirframe, aero, ui_draw: str,
         for radius, color, fill in ((pod_radius, ui_draw, ui_bg), (motor.bell_diameter_m / 2.0, ui_draw, ui_bg), (PROP_SHAFT_DIAM_M / 2.0, ui_draw, ui_bg), (motor.prop_radius_m, "red", "")):
             if radius > 0.0:
                 canvas.create_oval(x_screen - radius * scale, y_screen - radius * scale, x_screen + radius * scale, y_screen + radius * scale, outline=color, fill=fill, width=2)
+    for rocket in resolved.rockets:
+        x_screen, y_screen, radius = center_x + rocket.nozzle[1] * scale, center_y - rocket.nozzle[2] * scale, rocket.motor.diameter_m / 2.0 * scale
+        canvas.create_oval(x_screen - radius, y_screen - radius, x_screen + radius, y_screen + radius, outline=ROCKET_COLOR, fill="", width=2, dash=ROCKET_DASH)
     for spar in resolved.spars:
         canvas.create_line(center_x + spar.start[1] * scale, center_y - spar.start[2] * scale, center_x + spar.end[1] * scale, center_y - spar.end[2] * scale,
                            fill=ROD_COLOR, width=SPAR_WIDTH_PX, dash=() if spar.through else SPAR_STOP_DASH)

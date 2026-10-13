@@ -419,7 +419,8 @@ def _handles(state: AppState, view: ViewState, metrics: dict[str, Any], canvas: 
             continue
         handles += _part_handles(view, parts[index], "part", index, project)
     propulsion = definition.get("propulsion")
-    battery_data = propulsion.get("battery") if isinstance(propulsion, dict) else None
+    electric = propulsion.get("electric") if isinstance(propulsion, dict) else None
+    battery_data = electric.get("battery") if isinstance(electric, dict) else None
     if isinstance(battery_data, dict) and "volume" not in battery_data and "x_m" in battery_data:
         battery = next((part for part in parts if part.name == BATTERY_PART_NAME), None)
         if battery is not None:

@@ -38,9 +38,9 @@ def chart_payload(summary) -> dict[str, Any]:
 
 def pack_payload(state: AppState) -> dict[str, Any] | None:
     """The resolved pack summary (editor_view.build_battery_group 1000-1005): label, size, mass and capacity."""
-    if state.propulsion is None or state.resolved is None or state.resolved.airframe.propulsion is None:
+    if state.propulsion is None or state.resolved is None or state.resolved.airframe.propulsion is None or state.resolved.airframe.propulsion.electric is None:
         return None
-    pack = state.resolved.airframe.propulsion.battery
+    pack = state.resolved.airframe.propulsion.electric.battery
     return {
         "label": pack.label,
         "size_mm": None if pack.placed.size_m is None else [float(value) * 1000.0 for value in pack.placed.size_m],

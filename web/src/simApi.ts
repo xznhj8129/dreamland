@@ -60,6 +60,8 @@ export interface ScenarioOutline {
   parameters: Record<string, unknown>
   phases: Record<string, string>
   telemetry: { fields: string[]; rate_hz: number } | null
+  /** START: the scenario's default start ("start") and start conditions, keyed like SimOptions.start_options. */
+  start: Record<string, string | number>
 }
 
 export async function simResource(controller: string, kind: string, name: string, source?: string, create = false): Promise<SimResource> {

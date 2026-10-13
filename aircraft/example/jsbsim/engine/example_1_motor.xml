@@ -1,10 +1,10 @@
 <?xml version="1.0"?>
-<!-- quadrocketbuilder: Brother Hobby Tornado T5 3115 PRO 900 (900 KV), APC SF 9x6, 6S: motorlib's full-throttle static point (14903 RPM,
-     65.9 A) at 22.2 V nominal; resistance = wiring 75.4 mOhm (this motor's)
+<!-- quadrocketbuilder: Brother Hobby Tornado T5 3115 PRO 900 (900 KV), APC SF 9x6, 6S: motorlib's full-throttle static point (14857 RPM,
+     65.5 A) at 22.2 V nominal; resistance = wiring 76.8 mOhm (this motor's)
      (see libs/propulsion.py) + loaded winding; maxvolts = nominal pack voltage. -->
 <brushless_dc_motor name="Brother Hobby Tornado T5 3115 PRO 900 (900 KV)">
   <velocityconstant> 900.0 </velocityconstant>
-  <coilresistance> 0.08561 </coilresistance>
+  <coilresistance> 0.08697 </coilresistance>
   <noloadcurrent> 2.1167 </noloadcurrent>
   <maxvolts> 22.200 </maxvolts>
 </brushless_dc_motor>

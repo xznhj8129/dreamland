@@ -2,7 +2,7 @@ import { useEffect, useMemo, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
-import { buildAirframe, disposeAirframe, isModel3DPayload } from '../airframeMesh'
+import { FLAME_MAX_LENGTH_M, buildAirframe, disposeAirframe, isModel3DPayload } from '../airframeMesh'
 import type { AirframeGroups } from '../airframeMesh'
 import type { Model3DPayload, Snapshot } from '../types'
 import { aircraftQuaternion, controlDeflectionDeg } from '../flightPose'
@@ -62,6 +62,8 @@ interface FlightFrame {
   yaw: number
   /** Servo output in us, indexed by the servo<N> column number; null when that cell is absent or not finite. */
   servos: (number | null)[]
+  /** Rocket motor thrust in N, indexed by the rocket<N>_thrust_n column number; null when absent or not finite. */
+  thrusts: (number | null)[]
 }
 
 /** The compact valid frames, plus per frame whether it follows the previous one without a broken row between. */
@@ -102,9 +104,12 @@ function readFrames(header: string[] | null, rows: LogRows): FrameSet {
   const indices = REQUIRED_COLUMNS.map((name) => header.indexOf(name))
   if (indices.some((index) => index < 0)) return empty
   const servoColumns = new Map<number, number>()
+  const thrustColumns = new Map<number, number>()
   header.forEach((name, index) => {
-    const match = /^servo(\d+)$/.exec(name)
-    if (match !== null) servoColumns.set(Number(match[1]), index)
+    const servo = /^servo(\d+)$/.exec(name)
+    if (servo !== null) servoColumns.set(Number(servo[1]), index)
+    const thrust = /^rocket(\d+)_thrust_n$/.exec(name)
+    if (thrust !== null) thrustColumns.set(Number(thrust[1]), index)
   })
   const frames: FlightFrame[] = []
   const linked: boolean[] = []
@@ -128,7 +133,12 @@ function readFrames(header: string[] | null, rows: LogRows): FrameSet {
       const value = row[column]
       servos[servo] = isFiniteNumber(value) ? value : null
     }
-    frames.push({ t, east, north, agl, roll, pitch, yaw, servos })
+    const thrusts: (number | null)[] = []
+    for (const [rocket, column] of thrustColumns) {
+      const value = row[column]
+      thrusts[rocket] = isFiniteNumber(value) ? value : null
+    }
+    frames.push({ t, east, north, agl, roll, pitch, yaw, servos, thrusts })
     linked.push(previousValid)
     previousValid = true
   }
@@ -412,7 +422,9 @@ export function FlightScene({ snapshot, header, rows, runId, visible }: {
     }
 
     /** Place the airframe at one pose and let the current camera mode follow it. */
-    const applyPose = (quaternion: THREE.Quaternion, east: number, north: number, agl: number, servos: (number | null)[]): void => {
+    const applyPose = (
+      quaternion: THREE.Quaternion, east: number, north: number, agl: number, servos: (number | null)[], thrusts: (number | null)[],
+    ): void => {
       const previous = point
       const current = new THREE.Vector3(east, north, agl)
       point = current
@@ -426,6 +438,11 @@ export function FlightScene({ snapshot, header, rows, runId, visible }: {
         for (const control of airframe.controls) {
           const us = servos[control.servo] ?? Number.NaN
           control.pivot.quaternion.setFromAxisAngle(control.axis, controlDeflectionDeg(us, control.minDeg, control.maxDeg) * DEG2RAD)
+        }
+        for (const { flame, number, peakThrustN } of airframe.flames) {
+          const length = FLAME_MAX_LENGTH_M * THREE.MathUtils.clamp((thrusts[number] ?? 0) / peakThrustN, 0, 1)
+          flame.visible = length > 0
+          flame.scale.set(1, length, 1)
         }
       }
       if (mode === 'orbit') {
@@ -447,21 +464,21 @@ export function FlightScene({ snapshot, header, rows, runId, visible }: {
     }
 
     const applyFrame = (frame: FlightFrame): void => {
-      applyPose(aircraftQuaternion(frame.roll, frame.pitch, frame.yaw), frame.east, frame.north, frame.agl, frame.servos)
+      applyPose(aircraftQuaternion(frame.roll, frame.pitch, frame.yaw), frame.east, frame.north, frame.agl, frame.servos, frame.thrusts)
     }
 
-    /** The servo outputs between two frames; a missing cell holds the other end, both missing stays neutral. */
-    const lerpServos = (a: FlightFrame, b: FlightFrame, fraction: number): (number | null)[] => {
-      const count = Math.max(a.servos.length, b.servos.length)
-      const servos: (number | null)[] = []
-      for (let servo = 0; servo < count; servo++) {
-        const from = a.servos[servo] ?? null
-        const to = b.servos[servo] ?? null
-        if (from === null) servos[servo] = to
-        else if (to === null) servos[servo] = from
-        else servos[servo] = from + (to - from) * fraction
+    /** Servo outputs or thrusts between two frames; a missing cell holds the other end, both missing stays null. */
+    const lerpChannels = (a: (number | null)[], b: (number | null)[], fraction: number): (number | null)[] => {
+      const count = Math.max(a.length, b.length)
+      const values: (number | null)[] = []
+      for (let channel = 0; channel < count; channel++) {
+        const from = a[channel] ?? null
+        const to = b[channel] ?? null
+        if (from === null) values[channel] = to
+        else if (to === null) values[channel] = from
+        else values[channel] = from + (to - from) * fraction
       }
-      return servos
+      return values
     }
 
     /** Replay: interpolate between the bracketing frames; across a gap the aircraft holds the last valid frame. */
@@ -500,7 +517,8 @@ export function FlightScene({ snapshot, header, rows, runId, visible }: {
         previous.east + (next.east - previous.east) * fraction,
         previous.north + (next.north - previous.north) * fraction,
         previous.agl + (next.agl - previous.agl) * fraction,
-        lerpServos(previous, next, fraction),
+        lerpChannels(previous.servos, next.servos, fraction),
+        lerpChannels(previous.thrusts, next.thrusts, fraction),
       )
     }
 
@@ -561,7 +579,7 @@ export function FlightScene({ snapshot, header, rows, runId, visible }: {
         dirty = true
         return
       }
-      const groups = buildAirframe(payload, { transparentSkin: false, kinds: FLIGHT_KINDS })
+      const groups = buildAirframe(payload, { transparentSkin: false, kinds: FLIGHT_KINDS, flames: true })
       cg.set(payload.cg[0], payload.cg[1], payload.cg[2])
       modelSize = Math.max(payload.bounds.max[0] - payload.bounds.min[0], payload.bounds.max[1] - payload.bounds.min[1],
         payload.bounds.max[2] - payload.bounds.min[2], 1e-3)

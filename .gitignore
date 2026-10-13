@@ -1,10 +1,42 @@
+# Python
 __pycache__/
-.codex
-exports/
 *.pyc
-aircraft/*/logs/*
+.ruff_cache/
+.pytest_cache/
+
+# Web front-end
 web/node_modules/
 web/dist/
+*.tsbuildinfo
+
+# CAD output, anywhere
 *.step
+*.stp
 *.stl
+
+# Aircraft projects: only the bundled ones are tracked
+aircraft/*
+!aircraft/example/
+!aircraft/minirocket/
+
+# Generated per-project output
+aircraft/*/cad/
+aircraft/*/logs/
+
+# Top-level output
+exports/
 logs/
+
+# Editor, agent and sandbox files
+.claude/
+.codex
+.idea
+.vscode
+.mcp.json
+.bashrc
+.bash_profile
+.profile
+.zshrc
+.zprofile
+.gitconfig
+.ripgreprc

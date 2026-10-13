@@ -13,7 +13,8 @@ export function VolumesTab(): ReactElement {
   const definition = api.definition
   const volumes = Array.isArray(definition.volumes) ? definition.volumes.filter(isObject) : []
   const parts = Array.isArray(definition.parts) ? definition.parts.filter(isObject) : []
-  const battery = isObject(definition.propulsion) && isObject(definition.propulsion.battery) ? definition.propulsion.battery : null
+  const electric = isObject(definition.propulsion) && isObject(definition.propulsion.electric) ? definition.propulsion.electric : null
+  const battery = electric !== null && isObject(electric.battery) ? electric.battery : null
   const [notice, setNotice] = useState('')
   const selected = useComponentIndex('volume', volumes.length)
   const { select } = useSelection()

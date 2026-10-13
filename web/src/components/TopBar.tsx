@@ -68,7 +68,7 @@ export function TopBar({ view, onView, project, aircraftName, dirty }: TopBarPro
         <img className="app-logo" src="/dreamland-logo.jpg" alt="" width="40" height="40" />
         <span className="brand-copy">
           <span className="app-name">Dreamland</span>
-          <span className="brand-tagline">Virtual Aerospace Proving Ground</span>
+          <span className="brand-tagline">Unmanned Aerospace Sandbox</span>
         </span>
       </div>
       <div className="menu-root">

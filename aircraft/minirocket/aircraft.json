@@ -1,0 +1,122 @@
+{
+    "schema": "airframe/2",
+    "powered": true,
+    "vtol": false,
+    "tailsitter": false,
+    "name": "minirocket",
+    "notes": "Simplest model rocket: minimum-diameter 32 mm tube on a 29 mm AeroTech F42T, tangent ogive nose, 4 fins; the chute bay ballast stands in for the coming parachute",
+    "operating_point": {
+        "aoa_deg": 2.0,
+        "airspeed_m_s": 100.0,
+        "altitude_m": 0.0
+    },
+    "print": {
+        "material": "elegoo_pla_plus",
+        "bulk_density_kg_m3": 318.3,
+        "printer_bed_m": [
+            0.24,
+            0.24,
+            0.25
+        ]
+    },
+    "fuselage": {
+        "length_m": 0.3,
+        "section": {
+            "width_m": 0.032,
+            "height_m": 0.032,
+            "shape": 2.0,
+            "wall_radial_m": 0.0015
+        },
+        "nose": {
+            "profile": "tangent_ogive",
+            "length_m": 0.096,
+            "params": {}
+        },
+        "tail": {
+            "profile": "conic",
+            "length_m": 0.0,
+            "params": {}
+        },
+        "loft_stations": [],
+        "channels": []
+    },
+    "surfaces": [
+        {
+            "name": "fins",
+            "x_root_le_m": 0.24,
+            "layout": "+",
+            "fin_position": "top",
+            "dihedral_deg": 0.0,
+            "vertical_offset": 0.0,
+            "root": "body",
+            "span_m": 0.045,
+            "chord_root_m": 0.06,
+            "chord_tip_m": 0.025,
+            "sweep_le_deg": 37.87,
+            "incidence_deg": 0.0,
+            "incidence_mode": "symmetric",
+            "airfoil": "naca0006",
+            "sections": {
+                "cuts_m": []
+            }
+        }
+    ],
+    "propulsion": {
+        "mounts": [
+            {
+                "type": "rocket",
+                "on": "tail",
+                "x_offset_m": 0.0,
+                "thrust_axis_tilt_deg": 0.0
+            }
+        ],
+        "rocket": {
+            "motors": [
+                {
+                    "mount": 1,
+                    "motor": "AeroTech_F42T"
+                }
+            ]
+        }
+    },
+    "volumes": [
+        {
+            "name": "chute bay",
+            "shape": "cylinder",
+            "x_m": 0.12,
+            "diameter_m": 0.02,
+            "length_m": 0.04,
+            "axis": "x",
+            "mass_kg": 0.025
+        }
+    ],
+    "parts": [],
+    "sections": {
+        "cuts_m": [
+            0.096
+        ],
+        "per_section": [
+            {
+                "solid": false
+            },
+            {
+                "solid": false
+            }
+        ],
+        "cut_joints": [
+            "none"
+        ],
+        "joints": {
+            "type": "radial_screws",
+            "count": 8,
+            "screw": "M3",
+            "insertion_depth_m": 0.01,
+            "coupler_wall_m": 0.0045,
+            "fit_clearance_m": 0.0003,
+            "socket_wall_m": 0.00125,
+            "hole_edge_dist_m": 0.006,
+            "hole_diameter_m": 0.003,
+            "hole_angle_offset_deg": 22.5
+        }
+    }
+}

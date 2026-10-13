@@ -239,7 +239,7 @@ class AppState:
         self.resolved = resolved
         self.problems = problems
         self.propulsion = None
-        if airframe.propulsion is not None:
+        if resolved.motors:
             try:
                 self.propulsion = propulsion_summary(resolved, self.parts_data)
             except MotorStalled as error:

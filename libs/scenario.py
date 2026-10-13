@@ -8,6 +8,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from libs.flightlog import TelemetryRecorder, TelemetrySpec, flight_snapshot, telemetry_path
+from libs.simrun import START_OPTIONS, STARTS
 
 CONTROL_PERIOD_S = 0.02
 DEFAULT_LIMIT_S = 600.0
@@ -23,6 +24,7 @@ class ScenarioSpec:
     telemetry: TelemetrySpec | None
     phases: dict[str, str]
     log_fields: tuple[str, ...]
+    start: dict  # START: default start ("start") and start options, as the CLI names them; the CLI and toolbar override
 
     @classmethod
     def from_source(cls, source, controller):
@@ -38,12 +40,10 @@ class ScenarioSpec:
                         raise ValueError(f"The {controller} script imports controller {item.name}")
             if isinstance(node, ast.Assign):
                 for target in node.targets:
-                    if isinstance(target, ast.Name) and target.id in ("PARAMETERS", "TELEMETRY", "LOG_FIELDS"):
+                    if isinstance(target, ast.Name) and target.id in ("PARAMETERS", "TELEMETRY", "LOG_FIELDS", "START"):
                         if target.id in values:
                             raise ValueError(f"Define {target.id} once")
                         values[target.id] = ast.literal_eval(node.value)
-                    if isinstance(target, ast.Name) and target.id == "START":
-                        raise ValueError("Initial conditions belong in the SIM toolbar or CLI; remove START")
                     if isinstance(target, ast.Name) and target.id in ("EXPERIMENT", "ENGINES"):
                         raise ValueError("Use PARAMETERS/TELEMETRY and the controller's script directory")
         parameters = values.get("PARAMETERS", {})
@@ -69,11 +69,32 @@ class ScenarioSpec:
             raise ValueError("LOG_FIELDS must list the recorded column names")
         if len(set(log_fields)) != len(log_fields):
             raise ValueError("LOG_FIELDS must be unique")
-        return cls(ast.get_docstring(tree) or ast.get_docstring(functions["run"]) or "", parameters, telemetry, phases, tuple(log_fields))
+        start = read_start(values.get("START", {}))
+        return cls(ast.get_docstring(tree) or ast.get_docstring(functions["run"]) or "", parameters, telemetry, phases, tuple(log_fields), start)
 
     def payload(self):
-        return {"description": self.description, "parameters": self.parameters, "phases": self.phases,
+        return {"description": self.description, "parameters": self.parameters, "phases": self.phases, "start": self.start,
                 "telemetry": None if self.telemetry is None else {"fields": self.telemetry.fields, "rate_hz": self.telemetry.rate_hz}}
+
+
+def read_start(start):
+    """A scenario's START: optional "start" (one of STARTS) and START_OPTIONS values (finite numbers), each one that
+    applies to that start."""
+    if not isinstance(start, dict):
+        raise ValueError("START must be a dictionary of start conditions")
+    unknown = start.keys() - {"start", *START_OPTIONS}
+    if unknown:
+        raise ValueError(f"START: unknown {sorted(unknown)}; use start and {list(START_OPTIONS)}")
+    if "start" in start and start["start"] not in STARTS:
+        raise ValueError(f"START: start must be one of {STARTS}")
+    for option, value in start.items():
+        if option == "start":
+            continue
+        if isinstance(value, bool) or not isinstance(value, (int, float)) or not math.isfinite(value):
+            raise ValueError(f"START: {option} must be a finite number")
+        if "start" in start and not START_OPTIONS[option].applies_to(start["start"]):
+            raise ValueError(f"START: {option} does not apply to a {start['start']} start")
+    return dict(start)
 
 
 def scenario_names(directory, controller):

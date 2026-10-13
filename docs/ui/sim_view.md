@@ -47,6 +47,8 @@ SITLRunPanel [arrange:column]
             top-speed    powered: full-throttle level speed
             controls     any: roll, pitch and yaw stick steps, each checked to move the commanded way
             glide        any: motors off from 1000 m, airspeeds fast to slow until the ground; smallest sink rate, best glide
+            launch       MCU, rocket motors: ignite, leave the launcher, no control; rail exit, burnout, top speed and apogee,
+                         then the ballistic fall to the ground (no recovery yet). START: rail, launcher pitch 85
 
     - Start [ui:dropdown, readonly]
         air      held level at 150 m and the operating airspeed unless toolbar or CLI values specify otherwise
@@ -105,7 +107,11 @@ Run
     - shared scenarios are readonly templates; Save copy creates an editable project override
     - Python scenarios define run(flight); they own arming, modes, launch, control and stop conditions
     - the toolbar owns initial conditions; fields are directly editable and displayed values are passed to the run
-    - changing scenarios preserves the toolbar settings; run output shows the actual start conditions
+    - a scenario may declare START = {"start": ..., <start option>: number, ...} (keys as the CLI names them): opening
+      the scenario pre-selects those in the toolbar (once per scenario and START; edits after that stand); its outline
+      lists them; a START start the aircraft cannot use shows in the status line; a bad START (unknown key, a value
+      that is not a finite number, an option that does not apply to its start) refuses the scenario
+    - changing scenarios otherwise preserves the toolbar settings; run output shows the actual start conditions
     - New scenario copies the selected controller's example (INAV experiment, MCU stability) into scenarios/<controller>/<name>.py
     - one run(flight) sequence; import the selected controllers module for commands
     - optional PARAMETERS and TELEMETRY (fields and rate_hz, maximum 50) apply to every scenario
@@ -113,7 +119,7 @@ Run
     - flight.sensors, truth, state, raw, initial, elapsed, wait, measure and stop have the same API for every controller; print() is freeform status, measure() records a point in the Measurements file
     - LOG_FIELDS declares extra numeric CSV columns written with flight.log(name, value)
     - selected telemetry runs alongside every phase on simulator ticks; CSV includes simulated time and phase
-    - telemetry fields: truth (agl_m, roll/pitch/yaw, vn/ve/vd), airspeed_m_s, aoa_deg, sideslip_deg, p/q/r_deg_s, motor1..., servo0..., battery_w/a/v when powered; raw sensor columns are shared; the full INAV CSV also records FC telemetry
+    - telemetry fields: truth (agl_m, roll/pitch/yaw, vn/ve/vd), airspeed_m_s, aoa_deg, sideslip_deg, p/q/r_deg_s, motor1..., servo0..., battery_w/a/v with electric motors, the rocket columns with rocket motors; raw sensor columns are shared; the full INAV CSV also records FC telemetry
     - Scenario sidebar shows the template/saved scenario outline and parameters; Save refreshes it
     - failed conditions, ground impact and Abort retain partial logs and skip the completion manoeuvre
     - experiment template climbs, settles, then hands over to INAV (NAV POSHOLD, then NAV RTH and landing); customize ground/VTOL launch and transitions explicitly
@@ -123,7 +129,10 @@ Run
     - MCU transport: configured tick rate, 50 Hz wait callbacks; cached exports, cold control-table exports may take minutes
     - efficiency default sweep stays within the aero speed grid; out-of-grid top-speed points are marked
     - run output reports the geometry-dependent lifting-line AoA limit and AeroBuildup blend; efficiency marks measurements outside that limit
-    - MCU: esc[index] and servo[index] PWM in us, or outputs(motors_us, servos_us); arm enables outputs, release handles the simulated launcher
+    - MCU: esc[index] and servo[index] PWM in us, or outputs(motors_us, servos_us); arm enables outputs, release handles the simulated launcher;
+      ignite(*mount_numbers) fires the igniters of the loaded rocket motors (none given: all), each burns to the end
+    - rocket motors: the flight log adds rocketN_thrust_n, rocket_thrust_n, mass_kg (propellant burning off) and accel_x_g;
+      run output gives the airspeed the aero tables are solved up to (rocket airframes: 300 m/s), held beyond
     - MCU scripts read shared raw sensors and contain their own control logic; the backend has no autopilot or mixer
     - controller commands own launch and transitions; controller directory determines which scripts are offered
     - Performance separates the editor static estimate from measured JSBSim motion; range/endurance extrapolate measured power
@@ -176,7 +185,9 @@ FlightScene [fill]
       before any data, and grows to fit the path; height runs from 0 (the ground) up (a path below the ground is clipped)
     - the resolved airframe flies the path: external geometry only (fuselage, wing skins, control surfaces,
       propulsion), placed at each frame's position and attitude; each control surface follows its logged servo<N>
-      output through the surface's deflection limits
+      output through the surface's deflection limits; each rocket motor shows a red flame cone from its nozzle,
+      against the thrust, 0-1 m long in proportion to its logged rocket<N>_thrust_n over the motor's peak thrust
+      (hidden at 0 N)
     - a row missing any position or attitude field (t, east_m, north_m, agl_m, roll, pitch, yaw) is a gap: the
       path line breaks there and the aircraft holds the last valid frame
     - a matte ground plane, a grid over the box footprint and a sky gradient surround the path; the ground edge

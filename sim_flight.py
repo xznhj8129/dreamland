@@ -18,7 +18,7 @@ from libs.jsbsim import reuse_or_export
 from libs.project import open_project
 from libs.scenario import CONTROLLERS, DEFAULT_LIMIT_S, Flight, ScenarioSpec, ScenarioStopped, load_scenario, scenario_path
 from libs.sensors import Hardware
-from libs.simrun import GroundHit, START_ALT_M, add_start_arguments, resolve_start, start_line, start_reasons, write_plots
+from libs.simrun import GroundHit, START_ALT_M, add_start_arguments, apply_start_defaults, resolve_start, start_line, start_reasons, write_plots
 
 
 def main():
@@ -46,6 +46,7 @@ def main():
     path = scenario_path(project.scenarios_dir, args.controller, args.scenario)
     source = path.read_text()
     spec = ScenarioSpec.from_source(source, args.controller)
+    apply_start_defaults(args, spec.start)
     parts = load_parts_data()
     resolved, _ = resolve_airframe(load_airframe(project.build_path, parts), parts)
     airframe = resolved.airframe
@@ -56,7 +57,7 @@ def main():
     export, reused = reuse_or_export(resolved, parts, project.jsbsim_dir, project.name, args.pack_voltage)
     print(f"{airframe.name}: {len(export.motor_properties)} motors, {len(export.servo_properties)} servo outputs; model {'reused' if reused else 'exported'}")
     print(f"Flight aero: lifting line through ±{export.forward_alpha_limit_deg:.2f} deg AoA; "
-          f"fades to AeroBuildup by ±{export.envelope_alpha_end_deg:.2f} deg")
+          f"fades to AeroBuildup by ±{export.envelope_alpha_end_deg:.2f} deg; tables solved up to {export.top_table_speed_m_s:g} m/s (held beyond)")
     print(start_line(args.start, state))
     print(f"Controller: {args.controller}; scenario: {path.relative_to(project.root) if path.is_relative_to(project.root) else path.relative_to(Path(__file__).resolve().parent)}")
     print(f"Clock: {args.clock}, {args.rate:g} Hz")

@@ -26,13 +26,16 @@ Primary files:
 - `aero_check.py`: aero cross-check
 - `libs/jsbsim.py`: JSBSim aircraft export (AeroBuildup aero tables, control surfaces) and INAV mixer profiles and servo mix
 - `libs/propulsion.py`: motor + prop model on motorlib, wiring resistance from the design, throttle as ESC duty
+- `libs/rocketmotors.py`: solid rocket motors from `data/rocket_motors/` (RASP .eng): thrust curve, impulse, masses
+- `migrate_propulsion.py`: moves the electric system into `propulsion.electric` and types the mounts (2026-10-12)
 - `sim_flight.py`: one scenario runner for all controllers; scripts define `run(flight)`
-- `controllers/`: controller commands and transport (`inav.py`, `mcu.py`); scripts import the selected module
+- `controllers/`: controller commands and transport (`inav.py`, `mcu.py`: PWM, rocket igniters, launcher release); scripts import the selected module
 - `libs/scenario.py`: shared scheduler, simulation state, conditions, measurements and selected telemetry
 - `libs/sensors.py`: shared simulated SPI IMU (first fc part's position and axes), baro, mag, GPS, pitot and rangefinder in raw hardware units; PWM outputs in us
 - `libs/simrun.py`: shared by both runners: start conditions, vehicle build, ground rule, electrical model, plots
 - `airfoil_analysis_example.py`: simple non-GUI example of the airfoil comparison
 - `aircraft/<project>/`: one aircraft project (bundled example: `aircraft/example`): `aircraft.json` (airframe/2 definition), `inav/` (real FC diffs, SITL diffs; `generated/`: the diff written for each generated or real-FC run), `sitl/` (eeprom.bin, sitl.log; firmware is the shared `controllers.inav.DEFAULT_SITL_PATH`), `jsbsim/` (export), `logs/` (SITL and script flight logs and plots), `cad/` (exports; drawings `cutaway`, `threeview`, `xray` .svg/.png; `sections/`: printable parts, `varsets/`: FreeCAD varsets), `scenarios/<controller>/` (flight scripts; overrides of `data/scenarios/<controller>/`)
+- `data/rocket_motors/`: solid rocket motor database, one RASP `.eng` per motor (thrustcurve.org data, as published)
 - `data/parts/`: part library: tables `<category>.json` (battery, prop, material, connector, mounting patterns) and role parts, one file each, `<role>/<name>.json` (fc, esc, camera, companion, vtx, receiver, gps, servo)
 - `data/airfoils.json`: imported airfoil coordinates
 - `data/inav/`: INAV settings templates (`sitl.txt` bench hardware, `plane.txt`, `tailsitter.txt` switches and modes) for generated SITL diffs
@@ -45,7 +48,7 @@ Primary files:
 - If a field is required, put it in the airframe/2 schema (`libs/airframe.py`, `PLAN.md` section 1) or the part library `data/parts/` and then use it directly.
 - If required data is missing, let it fail visibly.
 - Keep UI behavior documented in `docs/ui/` (one file per view). Update the matching doc when visible UI behavior changes.
-- Keep README about design philosophy and analysis staging, not widget details.
+- Keep README about what Dreamland is, its features and vision. Commands and project layout go in `docs/usage.md`; result reading, calculation stages and limits in `docs/analysis.md`; widget details in `docs/ui/`.
 - Keep analysis usable headless: `libs/` and the analysis entry points must work without the web server or a browser.
 - INAV always flies a diff file the owner can read and edit. Never compose FC settings from strings in code: templates live in `data/inav/`, the composed diff is written to the project's `inav/generated/`.
 - Keep drawing code in `libs/graphics.py`, not mixed into the server or front-end.

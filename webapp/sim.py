@@ -148,7 +148,7 @@ def options(state: AppState) -> dict[str, Any]:
 def _plan(state: AppState, body: dict[str, Any]) -> tuple[list[str], str, str, Path]:
     from libs.scenario import CONTROLLERS, DEFAULT_LIMIT_S, ScenarioSpec, scenario_names, scenario_path
     from libs.flightlog import flight_log_path
-    from libs.simrun import START_OPTIONS, start_reasons
+    from libs.simrun import DEFAULT_START, START_OPTIONS, start_reasons
     if state.resolved is None:
         raise _Refused("No valid airframe; fix the definition first.")
     project, airframe = state.project, state.resolved.airframe
@@ -160,10 +160,10 @@ def _plan(state: AppState, body: dict[str, Any]) -> tuple[list[str], str, str, P
     path = scenario_path(project.scenarios_dir, controller, scenario)
     try:
         source = path.read_text()
-        ScenarioSpec.from_source(source, controller)
+        scenario_spec = ScenarioSpec.from_source(source, controller)
     except (ValueError, SyntaxError, OSError) as problem:
         raise _Refused(str(problem)) from problem
-    start = body.get("start", "air")
+    start = body.get("start", scenario_spec.start.get("start", DEFAULT_START))
     starts = [name for name, reason in start_reasons(airframe).items() if reason is None]
     if start not in starts:
         raise _Refused(f"start must be one of {starts}")

@@ -62,7 +62,7 @@ def main() -> None:
         aero = None
     print(f"Source: {project.build_path}")
     propulsion = None
-    if airframe.propulsion is not None:
+    if resolved.motors:
         try:
             propulsion = propulsion_summary(resolved, parts_data)
         except MotorStalled as error:
