@@ -171,7 +171,7 @@ OrthographicView [fill, switchable, pannable, zoomable]
         - draw spars as pink lines (the rod colour), inner end to tip: solid = through spar, dashed = stops where it meets another
         - draw the carry-through as dashed pink outlines (each arm's side profile)
         - mouse drag on a spar -> move that set's spars along the root chord (x offset)
-        - draw top-left colored point guide: blue CG, red Neutral point, green Lift @ AoA, volumes, parts, wires, cuts
+        - draw top-left colored point guide: blue CG, red Neutral point, green Lift @ AoA, each with its x from the nose
         - draw pods, motors, shafts, props, CG, CP, CL
         - pink projected cut outlines: joint screws, motor bolts, head access and shaft relief
 
@@ -182,7 +182,7 @@ OrthographicView [fill, switchable, pannable, zoomable]
         - draw volumes as dashed outlines, parts as solid outlines (a cross without library size)
         - draw wires as yellow dotted lines
         - draw spars as pink lines (solid = through, dashed = stops) and the carry-through as dashed pink outlines
-        - draw top-left colored point guide: blue CG, red Neutral point, green Lift @ AoA, volumes, parts, wires, cuts
+        - draw top-left colored point guide: blue CG, red Neutral point, green Lift @ AoA, each with its x from the nose
         - draw motor / pod / prop cross-sections
         - pink projected cut outlines: joint screws, motor bolts, head access and shaft relief
 ```

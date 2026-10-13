@@ -41,7 +41,8 @@ SolidGeometryExportPanel
     - Export drawings draws, each as .svg and .png in cad/:
         cutaway: the side cutaway (near half removed, cut faces hatched, far half in hidden-line
           view, parts numbered with a key)
-        threeview: side, top and front views as seen from outside, name and a 100 mm scale bar
+        threeview: side, top and front views as seen from outside, an opaque iso view from above, ahead and to the left in
+        the fourth corner, name and a 100 mm scale bar under it
         xray: from above, ahead and to the left, the printed skin see-through (grey, far side
           faint), the parts, rods, spars and motors inside drawn over it, parts labelled
       the status line gives the paths

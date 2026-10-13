@@ -203,6 +203,12 @@ def start_line(start: str, state: StartState) -> str:
             + f", heading {state.heading_deg:g}, {state.lat_deg:.6f} {state.lon_deg:.6f}, wind {state.wind_m_s:g} m/s from {state.wind_from_deg:g}")
 
 
+def electric_engines(export) -> tuple[int, ...]:
+    """JSBSim engine numbers of the electric motors (the first engines, export.motors' order): the only ones started
+    at load, since starting an engine runs it at full throttle and that would light a solid rocket."""
+    return tuple(range(len(export.motors)))
+
+
 def build_vehicle(export, profile: str, start: str, state: StartState, tailsitter: bool) -> Vehicle:
     """The JSBSim vehicle at its start: standing on the tail contacts, nose up (ground), held in the air as the
     StartState says, or on its launcher (the Plant sets the rail's pitch and rest speed). profile is the INAV CLI
@@ -211,19 +217,19 @@ def build_vehicle(export, profile: str, start: str, state: StartState, tailsitte
         return Vehicle(
             model=export.model_name, profile=profile, motors=export.motor_properties, servos=export.servo_properties,
             airborne=True, alt_m=export.stance_height_m + STANCE_CLEARANCE_M, speed_kts=0.0,
-            init={"ic/theta-deg": 90.0, **JSBSIM_INTEGRATORS}, model_dir=str(export.model_dir), running_engines=export.electric_engines, tailsitter=True, hover_mixer_profile=HOVER_MIXER_PROFILE,
+            init={"ic/theta-deg": 90.0, **JSBSIM_INTEGRATORS}, model_dir=str(export.model_dir), running_engines=electric_engines(export), tailsitter=True, hover_mixer_profile=HOVER_MIXER_PROFILE,
         )
     launcher = state.launcher
     if launcher is not None:
         return Vehicle(
             model=export.model_name, profile=profile, motors=export.motor_properties, servos=export.servo_properties,
-            airborne=True, alt_m=launcher.height_m, speed_kts=0.0, init=dict(JSBSIM_INTEGRATORS), model_dir=str(export.model_dir), running_engines=export.electric_engines,
+            airborne=True, alt_m=launcher.height_m, speed_kts=0.0, init=dict(JSBSIM_INTEGRATORS), model_dir=str(export.model_dir), running_engines=electric_engines(export),
             tailsitter=tailsitter, hover_mixer_profile=HOVER_MIXER_PROFILE,
         )
     return Vehicle(
         model=export.model_name, profile=profile, motors=export.motor_properties, servos=export.servo_properties,
         airborne=True, alt_m=state.alt_m, speed_kts=state.speed_m_s / KNOT_M_S, init={"ic/theta-deg": state.pitch_deg, "ic/phi-deg": state.roll_deg, **JSBSIM_INTEGRATORS},
-        model_dir=str(export.model_dir), running_engines=export.electric_engines, tailsitter=tailsitter, hover_mixer_profile=HOVER_MIXER_PROFILE,
+        model_dir=str(export.model_dir), running_engines=electric_engines(export), tailsitter=tailsitter, hover_mixer_profile=HOVER_MIXER_PROFILE,
     )
 
 

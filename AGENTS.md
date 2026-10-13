@@ -27,7 +27,6 @@ Primary files:
 - `libs/jsbsim.py`: JSBSim aircraft export (AeroBuildup aero tables, control surfaces) and INAV mixer profiles and servo mix
 - `libs/propulsion.py`: motor + prop model on motorlib, wiring resistance from the design, throttle as ESC duty
 - `libs/rocketmotors.py`: solid rocket motors from `data/rocket_motors/` (RASP .eng): thrust curve, impulse, masses
-- `migrate_propulsion.py`: moves the electric system into `propulsion.electric` and types the mounts (2026-10-12)
 - `sim_flight.py`: one scenario runner for all controllers; scripts define `run(flight)`
 - `controllers/`: controller commands and transport (`inav.py`, `mcu.py`: PWM, rocket igniters, launcher release); scripts import the selected module
 - `libs/scenario.py`: shared scheduler, simulation state, conditions, measurements and selected telemetry

@@ -27,3 +27,4 @@
 - The fuselage is a lofted body (superellipse loft stations, nose/tail profiles), not a tube. Never describe airframes as tubes or tube modules in docs or README; tube62/tube75 are only preset names.
 - `git commit -- <paths>` commits the working-tree content of those paths, not the staged index: it re-adds files that were only removed with `git rm --cached`. To commit part of the index, build the tree in a temporary GIT_INDEX_FILE.
 - Never show several values as one 'label value, label value, ...' line in the UI: use a labelled list (fields.tsx ValueList) or a table.
+- Never run a full JSBSim export (minutes) for a throwaway or fixture copy, and never two at once. If a build is needed, build the real aircraft project and leave its export in place.

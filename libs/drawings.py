@@ -8,7 +8,8 @@ all with hidden-line removal (OpenCascade polygonal HLR on a fine mesh: exact HL
 axes); facet seams between nearly tangent faces are drawn as smooth surface.
 - cutaway: from the side, the near half (y < 0) cut away, every part's faces on the centreline plane hatched; parts
   numbered front to back, with a key.
-- threeview: side, top and front of the whole aircraft as it looks from outside, with a scale bar.
+- threeview: side, top and front of the whole aircraft as it looks from outside, with a scale bar, and an opaque iso
+  view from above, ahead and to the left in the fourth corner.
 - xray: from above, ahead and to the left, the printed skin as if transparent (its far side faint), and what is inside
   it (parts, rods and spars, motors) drawn over it, parts labelled.
 """
@@ -37,8 +38,8 @@ VIEW_AXES = {  # (towards the viewer, drawing right) in body axes (x aft, y righ
     "TOP": ((0.0, 0.0, 1.0), (1.0, 0.0, 0.0)),
     "FRONT": ((-1.0, 0.0, 0.0), (0.0, -1.0, 0.0)),
 }
-XRAY_TOWARD_VIEWER = (-1.0, -1.0, 1.0)  # above, ahead and to the left
-VIEW_GAP_MM = 60.0  # between the three views
+ISO_TOWARD_VIEWER = (-1.0, -1.0, 1.0)  # above, ahead and to the left: the x-ray and the three-view's iso view
+VIEW_GAP_MM = 60.0  # between the three-view's views
 SCALE_BAR_MM = 100.0
 SKIN_COLOR = "0.5"
 SKIN_HIDDEN_COLOR = "0.8"
@@ -110,6 +111,14 @@ def _projected_lines(shape, toward, right, hidden: bool = False) -> tuple[list, 
                 for edge in cq.Shape.cast(compound).Edges() if edge.Length() > MIN_EDGE_MM]
 
     return lines(hlr.VCompound(), hlr.OutLineVCompound()), lines(hlr.HCompound(), hlr.OutLineHCompound()) if hidden else []
+
+
+def _iso_axes() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """(toward the viewer, drawing right, drawing up) of the iso view, body z drawn upwards."""
+    toward = np.array(ISO_TOWARD_VIEWER) / np.linalg.norm(ISO_TOWARD_VIEWER)
+    right = np.cross((0.0, 0.0, 1.0), toward)
+    right /= np.linalg.norm(right)
+    return toward, right, np.cross(toward, right)
 
 
 def _draw_lines(ax, lines: list, color, width: float, offset=(0.0, 0.0)) -> None:
@@ -227,18 +236,25 @@ def _cutaway(resolved: ResolvedAirframe, parts: list, directory) -> list[Path]:
 
 
 def _three_view(resolved: ResolvedAirframe, parts: list, directory) -> list[Path]:
-    """Side view, the top view under it and the front view to its right, each as seen from outside."""
+    """Side view, the top view under it, the front view to its right and the opaque iso view under that, each as seen
+    from outside; the name and the scale bar under the iso view."""
     from matplotlib.figure import Figure
 
     whole = _compound(shape for _name, shape, _kind in parts)
     views = {name: _projected_lines(whole, toward, right)[0] for name, (toward, right) in VIEW_AXES.items()}
+    iso_toward, iso_right, _iso_up = _iso_axes()
+    views["ISO"] = _projected_lines(whole, tuple(iso_toward), tuple(iso_right))[0]
     side_x0, side_x1, side_y0, side_y1 = _bounds(views["SIDE"])
     top_x0, top_x1, top_y0, top_y1 = _bounds(views["TOP"])
     front_x0, front_x1, front_y0, front_y1 = _bounds(views["FRONT"])
-    shifts = {"SIDE": (0.0, 0.0), "TOP": (0.0, side_y0 - VIEW_GAP_MM - top_y1), "FRONT": (side_x1 + VIEW_GAP_MM - front_x0, 0.0)}
-    x_min, x_max = min(side_x0, top_x0), side_x1 + VIEW_GAP_MM + (front_x1 - front_x0)
-    y_min, y_max = shifts["TOP"][1] + top_y0, max(side_y1, front_y1)
+    iso_x0, iso_x1, iso_y0, iso_y1 = _bounds(views["ISO"])
+    right_x = side_x1 + VIEW_GAP_MM  # left edge of the right-hand column
+    lower_y = side_y0 - VIEW_GAP_MM  # top edge of the lower row
+    shifts = {"SIDE": (0.0, 0.0), "TOP": (0.0, lower_y - top_y1), "FRONT": (right_x - front_x0, 0.0), "ISO": (right_x - iso_x0, lower_y - iso_y1)}
     margin = LABEL_OFFSET_MM
+    corner_x, corner_y = right_x, shifts["ISO"][1] + iso_y0 - 1.5 * margin  # under the iso view's label
+    x_min, x_max = min(side_x0, top_x0), right_x + max(front_x1 - front_x0, iso_x1 - iso_x0)
+    y_min, y_max = min(shifts["TOP"][1] + top_y0, corner_y - 3.0 * margin), max(side_y1, front_y1)
     height_in = FIGURE_WIDTH_IN * (y_max - y_min + 2.0 * margin) / (x_max - x_min + 2.0 * margin)
 
     figure = Figure(figsize=(FIGURE_WIDTH_IN, max(height_in, 4.0)), facecolor="white")
@@ -248,7 +264,6 @@ def _three_view(resolved: ResolvedAirframe, parts: list, directory) -> list[Path
         _draw_lines(ax, lines, "black", LINE_WIDTH, (dx, dy))
         x0, x1, y0, _y1 = _bounds(lines)
         ax.text((x0 + x1) / 2.0 + dx, y0 + dy - margin / 2.0, name, ha="center", va="top", fontsize=11, fontstyle="italic")
-    corner_x, corner_y = shifts["FRONT"][0] + front_x0, shifts["TOP"][1] + top_y1  # under the front view, beside the top view
     ax.text(corner_x, corner_y, resolved.airframe.name, fontsize=14, va="top")
     _scale_bar(ax, corner_x, corner_y - 2.0 * margin)
     ax.set_xlim(x_min - margin, x_max + margin)
@@ -262,10 +277,7 @@ def _xray(resolved: ResolvedAirframe, parts: list, directory) -> list[Path]:
     """From above, ahead and to the left: the printed skin see-through, what is inside it drawn over it."""
     from matplotlib.figure import Figure
 
-    toward = np.array(XRAY_TOWARD_VIEWER) / np.linalg.norm(XRAY_TOWARD_VIEWER)
-    right = np.cross((0.0, 0.0, 1.0), toward)
-    right /= np.linalg.norm(right)
-    up = np.cross(toward, right)
+    toward, right, up = _iso_axes()
     skin = _compound(shape for _name, shape, kind in parts if kind in ("section", "coupler"))
     inside = [(name, shape, kind) for name, shape, kind in parts if kind in ("motor", "component")]
     inside += [(name, solid, "rod") for name, solid in build_rod_solids(resolved)]

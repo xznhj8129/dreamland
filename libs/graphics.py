@@ -207,12 +207,6 @@ def draw_marker_guide(canvas: Any, positions: dict) -> None:
     """Legend; the CG, neutral point and lift centre with their x from the nose (marker_positions)."""
     guide = [(f"{MARKER_LABELS[key]}  x {positions[key] * 1000.0:.1f} mm" if not math.isnan(positions[key]) else f"{MARKER_LABELS[key]}  (aero pending)", color)
              for key, color in MARKER_COLORS.items()]
-    guide += [("Volumes (drag along x)", VOLUME_COLOR), ("Parts (move with their volume, if in one)", PART_COLOR),
-              ("Wires: battery - ESC - motors", WIRE_COLOR), ("Section cuts (drag along x); * = computed mass", CUT_COLOR),
-              ("Loft guides (drag along x)", LOFT_COLOR),
-              ("Fastener holes, head access and shaft relief (cut outlines)", FEATURE_COLOR),
-              ("Rods; spars (drag along the chord; dashed = stops) and carry-through", ROD_COLOR),
-              ("Rocket motor casings (thick edge = nozzle end)", ROCKET_COLOR)]
     for index, (text, color) in enumerate(guide):
         canvas.create_text(12, 12 + index * 16, anchor="nw", text=text, fill=color, font=("TkDefaultFont", 9))
 

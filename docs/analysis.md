@@ -40,7 +40,7 @@ Other views:
 
 - **Aero Analysis.** 2D airfoil comparison (NeuralFoil).
 - **VLM.** AeroSandbox vortex-lattice sweep and 3D view, solved once per AoA (airspeed and altitude only scale the forces). Wings only: VLM ignores the fuselage, so wings mounted on the tube read about half their real lift there; use it for trends and pictures, not absolute numbers.
-- **CAD.** STEP/STL export of the outer shape; the printable parts (each section with what is attached in it, hollowed, with joint, rod and spar holes; the couplers); blueprint drawings of those parts: a side cutaway (cut faces hatched), a three-view (side, top, front) and an x-ray view from above, ahead and to the left (skin see-through, parts, rods and spars inside); FreeCAD varsets.
+- **CAD.** STEP/STL export of the outer shape; the printable parts (each section with what is attached in it, hollowed, with joint, rod and spar holes; the couplers); blueprint drawings of those parts: a side cutaway (cut faces hatched), a three-view (side, top, front and an opaque iso view from above, ahead and to the left) and an x-ray view from above, ahead and to the left (skin see-through, parts, rods and spars inside); FreeCAD varsets.
 
 ## How far to trust it
 

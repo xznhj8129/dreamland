@@ -163,12 +163,6 @@ class JSBSimExport:
     rockets: tuple[RocketEngine, ...]  # in resolved rocket order, after the electric motors' engines
     top_table_speed_m_s: float  # the fastest solved airspeed; JSBSim holds the tables' end values beyond it
 
-    @property
-    def electric_engines(self) -> tuple[int, ...]:
-        """JSBSim engine numbers of the electric motors, the first engines; the only ones started at load, since
-        starting an engine runs it at full throttle and that would light a solid rocket."""
-        return tuple(range(len(self.motors)))
-
 
 @dataclass(frozen=True)
 class ControlTable:

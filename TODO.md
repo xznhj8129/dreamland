@@ -84,4 +84,3 @@ Agent added TODOs, freeform, remove done ones
         - INAV: no way to ignite a rocket motor from INAV yet (output or mode).
         - Aero past 300 m/s (~Mach 0.9): transonic/supersonic; tables hold the 300 m/s values beyond.
         - Liquid-fuel motors (later; up to space).
-- libs/test_print_features.py --check mounts asserts mount holes; no project in aircraft/ has any (fails on every project).

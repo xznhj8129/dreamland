@@ -2,13 +2,14 @@
 
 Run: /home/anon/miniconda3/envs/drone/bin/python webapp/test_sim.py
 
-Works on a persistent fixture under aircraft/example/cad/sim-validation (the real project's logs/ are never touched): the exact argv (including both
+Flies the real aircraft/example project, so its runs land in its logs/ and an export-code change rebuilds its own model
+once. The suite's own files (two INAV diffs, an mcu launch_check scenario) are written for the run and removed after,
+never over existing ones. Checks: the exact argv (including both
 launch starts and their log suffixes), the launcher start-condition defaults, flags and refusals, the options payload,
 one finished script run with incremental stdout/log deltas and offset resume, catapult and rail script runs checked
 for launch mechanics only (the catapult with overridden launcher values), a nan/inf
 log cell that must reach the JSON as null, a refused bad condition, a refused second start while a run is live, a SIGINT
-abort (exit code 130) and the server-exit shutdown path. The first run exports the JSBSim model into the persistent fixture, so
-the suite takes about a minute.
+abort (exit code 130) and the server-exit shutdown path.
 """
 
 from __future__ import annotations
@@ -19,7 +20,6 @@ import contextlib
 import io
 import json
 import os
-import shutil
 import sys
 import time
 from pathlib import Path
@@ -37,17 +37,32 @@ from webapp.server import create_app  # noqa: E402
 from webapp.state import AppState  # noqa: E402
 
 EXAMPLE = ROOT / "aircraft" / "example"
-RUN_TIMEOUT_S = 600.0  # the first run exports the shared lifting-line and control tables
+RUN_TIMEOUT_S = 600.0  # a run after an export-code change first rebuilds the example's model
+SITL_DIFF, REAL_DIFF = "test-sitl.txt", "test-real.txt"  # the suite's INAV diffs, removed after the run
+LAUNCH_CHECK = "launch_check"  # the suite's mcu launch-mechanics scenario, removed after the run
 POLL_S = 0.25
 
 
-def make_state(output: Path) -> AppState:
-    """Persistent simulation fixture; preserve exported models and logs between checks."""
-    root = output / "example"
-    shutil.copytree(EXAMPLE, root, dirs_exist_ok=True, ignore=shutil.ignore_patterns("cad", "logs", "jsbsim"))
-    (root / "inav" / "bench-sitl.txt").write_text("set nav_fw_cruise_thr 1400\n")
-    (root / "inav" / "bench-real.txt").write_text("# INAV/MATEKF405 7.0.0\nset nav_fw_cruise_thr 1500\n")
-    state = AppState(Project(root=root))
+def suite_files() -> dict[Path, str]:
+    """The files the suite adds to the example for its run; none may exist already."""
+    return {
+        EXAMPLE / "inav" / SITL_DIFF: "set nav_fw_cruise_thr 1400\n",
+        EXAMPLE / "inav" / REAL_DIFF: "# INAV/MATEKF405 7.0.0\nset nav_fw_cruise_thr 1500\n",
+        EXAMPLE / "scenarios" / "mcu" / f"{LAUNCH_CHECK}.py": (
+            "from controllers import mcu as controller\n\n"
+            "def run(flight):\n"
+            "    controller.esc[:] = [2000] * len(controller.esc)\n"
+            "    controller.arm()\n"
+            "    controller.release()\n"
+            "    while True:\n"
+            "        flight.wait(0.01)\n"
+        ),
+    }
+
+
+def make_state() -> AppState:
+    """The real example project, aero off."""
+    state = AppState(Project(root=EXAMPLE))
     original = state.recompute
     state.recompute = lambda run_aero=True: original(run_aero=False)
     state.recompute()
@@ -80,12 +95,12 @@ def check_argv(state: AppState) -> None:
 
     command, status, shown, log_path = sim._plan(state, {
         "controller": "inav", "scenario": "efficiency", "start": "air",
-        "conditions": {"alt": "100", "wind_from": "270"}, "inav_config": "bench-sitl.txt",
+        "conditions": {"alt": "100", "wind_from": "270"}, "inav_config": SITL_DIFF,
     })
     assert command == [
         sys.executable, "-u", str(ROOT / "sim_flight.py"), str(state.project.root), "efficiency",
         "--controller", "inav", "--start", "air", "--clock", "realtime", "--rate", "200", "--duration", "600",
-        "--alt", "100", "--wind-from", "270", "--inav-config", str(state.project.inav_dir / "bench-sitl.txt"),
+        "--alt", "100", "--wind-from", "270", "--inav-config", str(state.project.inav_dir / SITL_DIFF),
     ], command
     assert status == "Running inav: efficiency..." and log_path == state.project.logs_dir / "inav_efficiency_air.csv"
     print("ok   argv: both controllers use sim_flight.py and common scheduling arguments")
@@ -139,8 +154,10 @@ def check_launch_plan(state: AppState) -> None:
         assert message in stderr.getvalue(), stderr.getvalue()
 
     # the runner itself refuses an air-only option for a launch start, naming the launcher, before anything flies
+    log = state.project.logs_dir / "inav_controls_catapult.csv"
+    before = log.stat().st_mtime_ns if log.exists() else None
     refused(["--alt", "100"], "catapult", "--alt: a launcher start sits on the rail, at rest")
-    assert not (state.project.logs_dir / "inav_controls_catapult.csv").exists(), "a refused start must not fly"
+    assert (log.stat().st_mtime_ns if log.exists() else None) == before, "a refused start must not fly"
 
     # the supplied overrides land on the resolved launcher, and the start line prints them
     catapult = resolve(["--launch-pitch", "12", "--launch-length", "2.5", "--launch-speed", "20", "--launch-height", "1.8"], "catapult")
@@ -170,10 +187,10 @@ async def check_options(client: TestClient) -> None:
     assert payload["controllers"] == ["inav", "mcu"], payload["controllers"]
     configs = {item["file"]: item["label"] for item in payload["inav_configs"]}
     assert "generated" not in configs, "generated is the default, not an offered file"
-    assert configs["bench-sitl.txt"] == "SITL diff: bench-sitl.txt", configs
-    assert configs["bench-real.txt"] == "real FC diff: bench-real.txt", configs
+    assert configs[SITL_DIFF] == f"SITL diff: {SITL_DIFF}", configs
+    assert configs[REAL_DIFF] == f"real FC diff: {REAL_DIFF}", configs
     assert {"efficiency", "top-speed", "controls", "glide", "experiment"} <= set(payload["scenarios"]["inav"]), payload["scenarios"]
-    assert {"launch", "level", "stability"} == set(payload["scenarios"]["mcu"]), payload["scenarios"]
+    assert {"launch", "level", "stability", LAUNCH_CHECK} <= set(payload["scenarios"]["mcu"]), payload["scenarios"]
     assert payload["starts"] == ["air", "catapult", "rail"], payload["starts"]
     options_list = payload["start_options"]
     assert [item["key"] for item in options_list] == [
@@ -210,7 +227,7 @@ async def check_bad_condition(client: TestClient) -> None:
         {"controller": "mcu", "clock": "stepped", "scenario": "level", "start": "ground"},  # the example cannot take off yet
         {"controller": "mcu", "clock": "stepped", "scenario": "level", "conditions": {"bogus": "1"}},
         {"controller": "mcu", "clock": "stepped", "scenario": "level", "duration": "abc"},
-        {"controller": "inav", "scenario": "efficiency", "inav_config": "../bench-sitl.txt"},
+        {"controller": "inav", "scenario": "efficiency", "inav_config": f"../{SITL_DIFF}"},
     ):
         response = await client.post("/api/sim/run", json=bad)
         assert response.status == 400, (bad, response.status)
@@ -299,20 +316,11 @@ async def check_launch_runs(client: TestClient, state: AppState) -> None:
     """Real script runs from both launchers, launch mechanics only (the dumb full-PWM, neutral-servo script
     makes no attempt to fly): the catapult fires at the hold, and either launcher is left behind (speed and height
     gained). No stability or flight assertion."""
-    (state.project.scenarios_dir / "mcu" / "launch.py").write_text(
-        "from controllers import mcu as controller\n\n"
-        "def run(flight):\n"
-        "    controller.esc[:] = [2000] * len(controller.esc)\n"
-        "    controller.arm()\n"
-        "    controller.release()\n"
-        "    while True:\n"
-        "        flight.wait(0.01)\n"
-    )
     for start in ("catapult", "rail"):
         # the catapult run overrides its launcher (the start line must print the resolved values); the rail keeps the default
         conditions = {"launch-pitch": "12", "launch-length": "2.5", "launch-speed": "18", "launch-height": "1.8"} if start == "catapult" else {}
         final, lines, header, rows = await run_to_end(client, {
-            "controller": "mcu", "clock": "stepped", "scenario": "launch", "start": start, "conditions": conditions, "duration": "5",
+            "controller": "mcu", "clock": "stepped", "scenario": LAUNCH_CHECK, "start": start, "conditions": conditions, "duration": "5",
         })
         assert final["status"] == "Finished (exit code 0)", (start, final["status"], lines[-5:])
         if start == "catapult":
@@ -431,11 +439,10 @@ async def check_shutdown(client: TestClient) -> None:
 
 
 def check_start_ownership(state: AppState) -> None:
-    """Initial conditions belong to the SIM toolbar/CLI: scenarios carry no START, and a run with no start plans air.
+    """Start conditions: a scenario's optional START supplies defaults; the toolbar and CLI override them.
 
-    acro_climb used to declare a catapult start; that declaration is gone, so planning it without a start falls back
-    to air. Explicit toolbar start values are passed through to sim_flight.py unchanged. A script that still declares
-    START is rejected visibly, so its settings cannot be silently ignored.
+    acro_climb declares no START, so planning it without a start falls back to air. Explicit toolbar start values are
+    passed through to sim_flight.py unchanged. A START fills only what the CLI leaves out; a bad START is refused.
     """
     from libs.scenario import ScenarioSpec
 
@@ -522,14 +529,24 @@ async def check_routes(state: AppState) -> None:
 
 
 def main() -> None:
-    state = make_state(ROOT / "aircraft" / "example" / "cad" / "sim-validation")
-    check_argv(state)
-    check_launch_plan(state)
-    check_start_ownership(state)
+    files = suite_files()
+    existing = [str(path) for path in files if path.exists()]
+    if existing:
+        raise SystemExit(f"the suite would overwrite {existing}; move them first")
     try:
-        asyncio.run(check_routes(state))
+        for path, text in files.items():
+            path.write_text(text)
+        state = make_state()
+        check_argv(state)
+        check_launch_plan(state)
+        check_start_ownership(state)
+        try:
+            asyncio.run(check_routes(state))
+        finally:
+            sim.shutdown()
     finally:
-        sim.shutdown()
+        for path in files:
+            path.unlink(missing_ok=True)
     print("sim suite OK")
 
 

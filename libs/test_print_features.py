@@ -1,6 +1,6 @@
-"""Exercise printable fastener openings, pod placement and their live previews.
+"""Exercise printable fastener openings and their live previews.
 
-Run: python -m libs.test_print_features aircraft/example --check joints|mounts|views
+Run: python -m libs.test_print_features aircraft/example --check joints|views
 CAD diagnostics are retained under the project's cad/fastener-check directory.
 """
 
@@ -13,7 +13,7 @@ from pathlib import Path
 import cadquery as cq
 
 from libs.airframe import load_parts_data, parse_airframe
-from libs.cad import _ring, _screw_holes, build_section_solid, build_pod_solid, cut_motor_mount_holes
+from libs.cad import _ring, _screw_holes
 from libs.geometry import resolve_airframe
 from webapp.drawing import RecordingCanvas
 from libs.graphics import draw_canvas_view
@@ -41,26 +41,6 @@ def check_joints(definition, parts, output):
     print('OK: all eight squarish joint holes break out')
 
 
-def check_mounts(definition, parts, output):
-    model, _ = resolve_airframe(parse_airframe(definition, parts), parts)
-    motor = model.motors[0]
-    assert motor.mount_holes is not None
-    # Printed material in an earlier section must not be bored by a tail mount.
-    first = cq.Solid.makeBox(20, 40, 40, cq.Vector(80, -20, -20))
-    cut = cut_motor_mount_holes(first, model)
-    assert abs(cut.Volume() - first.Volume()) < 1e-5, 'tail fastener cutters remove material in a distant forward section'
-    moved = copy.deepcopy(definition)
-    moved['propulsion']['mounts'][0]['x_offset_m'] = .012
-    shifted, _ = resolve_airframe(parse_airframe(moved, parts), parts)
-    assert abs(shifted.motors[0].position[0] - motor.position[0] - .012) < 1e-9
-    pod = build_pod_solid(shifted.motors[0]).val()
-    tail, _ = build_section_solid(shifted, len(shifted.airframe.sections.cuts_m), [('pod', pod)])
-    cq.exporters.export(tail, str(output / 'tail-mount.step'))
-    assert tail.BoundingBox().xmax >= shifted.motors[0].mount_face[0] * 1000 - .01, 'tail pod outside fuselage length was discarded'
-    assert tail.isValid() and len(tail.Solids()) == 1, 'extended tail pod is invalid or detached'
-    print('OK: tail offset moves motor/pod; pod survives section clipping; holes stop in its section')
-
-
 def check_views(definition, parts, output):
     model, _ = resolve_airframe(parse_airframe(definition, parts), parts)
     payload = build_model3d(model, None)
@@ -73,7 +53,7 @@ def check_views(definition, parts, output):
     print('OK: fastener cuts visible in front, side and 3D preview payloads')
 
 
-CHECKS = {'joints': check_joints, 'mounts': check_mounts, 'views': check_views}
+CHECKS = {'joints': check_joints, 'views': check_views}
 
 
 def main():

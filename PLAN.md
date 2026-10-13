@@ -183,9 +183,6 @@ sections
 
 Body-rooted panels keep the true root edge on the body (follows nose/tail cones) and use an equivalent aero root at the mean body radius under the root chord. Axis-rooted panels start on the axis; Barrowman uses their exposed part.
 
-Migration: `python migrate_loft_stations.py aircraft/<project>` moves each existing section midpoint and its overrides to `fuselage.loft_stations`, including inherited profiles, and moves `fuselage.joints` to `sections.joints`; cuts and geometry stay unchanged.
-`python migrate_propulsion.py aircraft/<project>` (2026-10-12) moves `propulsion.{motor, prop, battery, esc, wiring}` to `propulsion.electric` and types every mount electric.
-
 Converted examples: `aircraft/m62v2/` and `aircraft/quadlancer62/` reproduce the old totals (1.1408 / 1.3732 kg, plus props 1.1608 / 1.4292 kg). The old modules are sections (cuts at the module boundaries, module mass as the section's weighed empty mass), couplers 21.36 g per joint, the battery is the only volume. m62v2 tail fins are axis-rooted, 55 mm span (delta: straight trailing edge, joined at the centre).
 
 ## 2. Libraries (data/)
