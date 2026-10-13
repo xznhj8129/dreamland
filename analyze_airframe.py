@@ -7,10 +7,13 @@ python analyze_airframe.py aircraft/m62v2 --export-step out.step --step-mode fus
 python analyze_airframe.py aircraft/m62v2 --export-sections --sections-format stl  # printable sections/couplers into cad/sections/ (STEP default)
 python analyze_airframe.py aircraft/m62v2 --export-varsets     # FreeCAD varsets into the project's cad/varsets/
 python analyze_airframe.py aircraft/m62v2 --export-drawings    # blueprint drawings: cad/cutaway, threeview, xray (.svg and .png)
+python analyze_airframe.py aircraft/m62v2 --compute-geometry   # build every solid, measure the exact printed mass (cad/exact_mass.json)
 
 Plane-first analysis of an aircraft project's airframe/2 build file: geometry, mass and CG (with ranges), volume checks,
 aerodynamics and static stability, optional STEP/STL export of the whole airframe or of its printable parts, blueprint drawings (cutaway, three-view, x-ray), FreeCAD varsets. --aoa/--airspeed/--altitude override the file's operating
-point.
+point. The printed structure's mass is the exact one measured on the built solids when cad/exact_mass.json belongs to
+this design (--compute-geometry writes it), else the analytic estimate. The solids are built once per run and shared
+by every export asked for.
 """
 
 import argparse
@@ -21,6 +24,7 @@ from pathlib import Path
 from libs.aero import NoLiftingSurfacesError, OperatingPointError, analyze_aero
 from libs.airframe import load_airframe, load_parts_data
 from libs.cad import export_sections, export_step, export_stl
+from libs.computed_geometry import compute_geometry, measured, resolve_project, save_measured
 from libs.drawings import export_drawings
 from libs.geometry import resolve_airframe
 from libs.motorlib import MotorStalled
@@ -45,6 +49,7 @@ def main() -> None:
     parser.add_argument("--export-drawings", action="store_true", help="Draw the blueprint cutaway, three-view and x-ray into the project's cad/ (.svg and .png)")
     parser.add_argument("--export-varsets", action="store_true", help="Write the FreeCAD varsets (one JSON each) into the project's cad/varsets/")
     parser.add_argument("--export-prop-discs", action="store_true", help="Include thin propeller discs in CAD exports (actuator-disc CFD)")
+    parser.add_argument("--compute-geometry", action="store_true", help="Build every solid and measure the exact printed mass into the project's cad/exact_mass.json")
     args = parser.parse_args()
 
     parts_data = load_parts_data()
@@ -54,7 +59,11 @@ def main() -> None:
     if overrides:
         airframe = dataclasses.replace(airframe, operating_point=dataclasses.replace(airframe.operating_point, **overrides))
 
-    resolved, problems = resolve_airframe(airframe, parts_data)
+    resolved, problems, _exact = resolve_project(airframe, parts_data, project.cad_dir)
+    if args.compute_geometry:
+        exact = compute_geometry(resolved, parts_data, progress=lambda label, done, total: print(f"Compute geometry: {label} ({done}/{total})", flush=True))
+        print(f"Exact mass written: {save_measured(project.cad_dir, measured(resolved, parts_data, exact))}")
+        resolved, problems = resolve_airframe(airframe, parts_data, exact)
     try:
         aero = analyze_aero(resolved)
     except (OperatingPointError, NoLiftingSurfacesError) as error:

@@ -23,7 +23,10 @@ from dataclasses import dataclass
 
 import aerosandbox as asb
 
-from libs.airframe import AXES, BOX_SHAPES, Airframe, AirframeError, CarryThrough, ControlSurface, MotorMountHoles, Mount, PlacedPart, Reinforcement, Surface, Volume
+from libs.airframe import (
+    AXES, BOX_SHAPES, Airframe, AirframeError, AccessEntry, CarryThrough, ControlSurface, MotorMountHoles, Mount, PlacedPart,
+    Reinforcement, Surface, Volume, orientation_rows,
+)
 from libs.pointed_shapes import sample_pointed_profile
 from libs.rocketmotors import RocketMotor
 
@@ -57,6 +60,40 @@ def cross(a: Vec, b: Vec) -> Vec:
 def unit(a: Vec) -> Vec:
     length = math.sqrt(dot(a, a))
     return (a[0] / length, a[1] / length, a[2] / length)
+
+
+def _rotate_about_axis(point: Vec, axis: Vec, angle_rad: float, position: Vec) -> Vec:
+    """position turned angle_rad about the line through point along the unit axis (Rodrigues)."""
+    relative = tuple(value - base for value, base in zip(position, point))
+    cosine, sine = math.cos(angle_rad), math.sin(angle_rad)
+    turned = cross(axis, relative)
+    along = dot(axis, relative)
+    return tuple(base + cosine * value + sine * side + (1.0 - cosine) * along * direction
+                 for base, value, side, direction in zip(point, relative, turned, axis))
+
+
+def resolve_access(access: tuple[AccessEntry, ...]) -> tuple["AccessInstance", ...]:
+    """One instance per access entry: the seed frame from its centre and orientation (Rz Ry Rx), then, with a radial
+    block, count - 1 copies evenly spaced a full circle about the axis line, position and local axes turned together."""
+    axis_vectors = {"x": (1.0, 0.0, 0.0), "y": (0.0, 1.0, 0.0), "z": (0.0, 0.0, 1.0)}
+    instances = []
+    for index, entry in enumerate(access):
+        rows = orientation_rows(*entry.orientation_deg)
+        axes = tuple(tuple(row[column] for row in rows) for column in range(3))
+        if entry.radial is None:
+            instances.append(AccessInstance(index=index, copy=0, count=1, instance_id=entry.name,
+                                            center=entry.position_m, axes=axes, entry=entry))
+            continue
+        radial = entry.radial
+        axis = axis_vectors[radial.axis]
+        for copy in range(radial.count):
+            angle = 2.0 * math.pi * copy / radial.count
+            center = _rotate_about_axis(radial.position_m, axis, angle, entry.position_m)
+            turned = tuple(_rotate_about_axis((0.0, 0.0, 0.0), axis, angle, direction) for direction in axes)  # a direction rotates about the origin
+            instance_id = entry.name if radial.count == 1 else f"{entry.name} {copy + 1}/{radial.count}"
+            instances.append(AccessInstance(index=index, copy=copy, count=radial.count, instance_id=instance_id,
+                                            center=center, axes=turned, entry=entry))
+    return tuple(instances)
 
 
 @dataclass(frozen=True)
@@ -195,6 +232,25 @@ ROCKET_PROPELLANT_KIND = "rocket propellant"  # MassPoint.kind of the propellant
 
 
 @dataclass(frozen=True)
+class AccessInstance:
+    """One placed Access seed or radial copy, resolved once for every consumer. center is the profile centre and
+    axes the local X (length), Y (width) and Z (cut direction) unit vectors in the aircraft frame. index is the
+    original airframe.access index; copy 0 is the seed and 1.. its radial copies (count includes the seed);
+    instance_id is deterministic (the entry name alone, or "<name> <copy + 1>/<count>" with a pattern)."""
+    index: int
+    copy: int
+    count: int
+    instance_id: str
+    center: Vec
+    axes: tuple[Vec, Vec, Vec]
+    entry: AccessEntry
+
+    @property
+    def cut_direction(self) -> Vec:
+        return self.axes[2]
+
+
+@dataclass(frozen=True)
 class MassPoint:
     name: str
     kind: str  # structure, reinforcement, surface, volume, part, motor, prop, rocket casing, ROCKET_PROPELLANT_KIND
@@ -204,6 +260,26 @@ class MassPoint:
     estimate_kg: float | None  # mass estimated from geometry and print settings, shown next to a weighed value; None = no estimate
     inertia_per_kg: Inertia  # about the point's own centroid, from its shape
     attached_x_m: float | None = None  # where it is attached to the fuselage (surface set: where it meets the body, its exposed root LE; motor and prop: their mount), which places it in a fuselage section; None = its own x
+    exact: bool = False  # estimate_kg, centroid and inertia measured on the built CAD solids (ExactStructure), not the analytic estimate
+
+
+@dataclass(frozen=True)
+class ExactPiece:
+    """Printed material measured on the built CAD solids: its mass, centroid and inertia about it per kg."""
+    mass_kg: float
+    position: Vec
+    inertia_per_kg: Inertia
+
+
+@dataclass(frozen=True)
+class ExactStructure:
+    """The printed structure measured on the built CAD solids (libs.computed_geometry), by the estimate each piece
+    replaces: per fuselage section (its own material with its carry-through and hatch pieces), per surface set (its
+    roots in the sections, detached segments and controls), per coupler (by cut index). resolve_airframe applies it
+    to the design it was built from; weighed masses stay authoritative."""
+    sections: tuple[ExactPiece, ...]
+    surfaces: dict[str, ExactPiece]
+    couplers: dict[int, ExactPiece]
 
 
 @dataclass(frozen=True)
@@ -237,9 +313,15 @@ class WireRoutes:
 
 
 @dataclass(frozen=True)
-class ResolvedAirframe:
+class AccessGeometry:
+    """Resolved physical body and access frames, available before mass calculation."""
     airframe: Airframe
     body: Body
+    access: tuple[AccessInstance, ...]
+
+
+@dataclass(frozen=True)
+class ResolvedAirframe(AccessGeometry):
     surfaces: tuple[SurfaceSet, ...]
     motors: tuple[MotorPlacement, ...]
     rockets: tuple[RocketPlacement, ...]
@@ -964,14 +1046,19 @@ def rotor_inertia(radius_m: float) -> Inertia:
     return (spin, spin / 2.0, spin / 2.0, 0.0, 0.0, 0.0)
 
 
-def surface_mass_point(surface_set: SurfaceSet, density_kg_m3: float | None) -> MassPoint:
-    """Mass at the volume centroid of the panels; estimate = solid airfoil volume x printed bulk density."""
+def surface_mass_point(surface_set: SurfaceSet, density_kg_m3: float | None, exact: ExactPiece | None = None) -> MassPoint:
+    """Mass at the volume centroid of the panels; estimate = solid airfoil volume x printed bulk density. With exact,
+    the built solids give the mass, centroid and inertia (a weighed mass_kg still replaces the mass)."""
+    definition = surface_set.definition
+    if exact is not None:
+        mass = definition.mass_kg if definition.mass_kg is not None else exact.mass_kg
+        return MassPoint(f"surface {surface_set.name}", "surface", exact.position, (mass, mass), definition.mass_kg is None, exact.mass_kg,
+                         exact.inertia_per_kg, surface_set.exposed_x_root_le_m, exact=True)
     strips = [  # weight ~ local airfoil volume (chord^2 x width); each strip is a thin rod along its chord
         (chord * chord * width, mid, (0.0, chord * chord / 12.0, chord * chord / 12.0, 0.0, 0.0, 0.0))
         for panel in surface_set.panels for chord, width, mid in panel_strips(panel)
     ]
     weight, centroid, inertia = combine_inertia(strips)
-    definition = surface_set.definition
     estimate = None
     if density_kg_m3 is not None:
         unit_section_area = float(asb.Airfoil(definition.airfoil).area())
@@ -1057,9 +1144,12 @@ def solid_between(body: Body, x0: float, x1: float, volumes: tuple[Volume, ...],
     return mass, centroid, per_unit(inertia, mass)
 
 
-def structure_mass_points(airframe: Airframe, body: Body, density_kg_m3: float) -> list[MassPoint]:
+def structure_mass_points(airframe: Airframe, body: Body, density_kg_m3: float, exact: ExactStructure | None = None) -> list[MassPoint]:
     """One mass point per fuselage section, in section order, then one per coupler. A section is a hollow shell or
-    solid less its volumes; a weighed empty mass keeps the computed centroid and inertia shape."""
+    solid less its volumes; a weighed empty mass keeps the computed centroid and inertia shape. With exact, the built
+    solids give each section's and coupler's mass, centroid and inertia (a weighed mass still replaces the mass)."""
+    if exact is not None:
+        return _exact_structure_points(airframe, body, exact)
     sections = airframe.sections
     wall = airframe.fuselage.section.wall_radial_m
     bulk_density = airframe.print.bulk_density_kg_m3
@@ -1083,6 +1173,23 @@ def structure_mass_points(airframe: Airframe, body: Body, density_kg_m3: float) 
                 continue
             half_w, half_h = body_half_extents(body, cut)
             points.append(MassPoint(f"coupler {index + 1}", "structure", (cut, 0.0, 0.0), (coupler_mass, coupler_mass), False, None, ring_inertia(half_w - wall, half_h - wall)))
+    return points
+
+
+def _exact_structure_points(airframe: Airframe, body: Body, exact: ExactStructure) -> list[MassPoint]:
+    sections = airframe.sections
+    bounds = [0.0, *sections.cuts_m, body.length_m]
+    points = []
+    for index, (x0, x1) in enumerate(zip(bounds, bounds[1:])):
+        row, piece = sections.per_section[index], exact.sections[index]
+        mass = piece.mass_kg if row.empty_mass_kg is None else row.empty_mass_kg
+        points.append(MassPoint(f"section {index + 1} ({x0 * 1000:.0f}-{x1 * 1000:.0f} mm)", "structure", piece.position, (mass, mass),
+                                row.empty_mass_kg is None, piece.mass_kg, piece.inertia_per_kg, exact=True))
+    coupler_mass = sections.joints.coupler_mass_kg
+    for index, piece in sorted(exact.couplers.items()):
+        mass = piece.mass_kg if coupler_mass is None else coupler_mass
+        points.append(MassPoint(f"coupler {index + 1}", "structure", piece.position, (mass, mass), coupler_mass is None, piece.mass_kg,
+                                piece.inertia_per_kg, exact=True))
     return points
 
 
@@ -1484,24 +1591,29 @@ def part_checks(airframe: Airframe, body: Body) -> list[str]:
     return problems
 
 
-def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirframe, list[str]]:
+def resolve_airframe(airframe: Airframe, parts_data: dict, exact: ExactStructure | None = None) -> tuple[ResolvedAirframe, list[str]]:
     """Returns the resolved model and a list of layout problems (volumes outside the body or overlapping, parts not
-    fitting their volume, the fuselage outside its preset's limits)."""
+    fitting their volume, the fuselage outside its preset's limits). exact (optional) is the printed structure
+    measured on this design's built CAD solids (libs.computed_geometry): it replaces the analytic section, coupler,
+    carry-through and surface estimates."""
     density = parts_data["material"][airframe.print.material]["density_kg_m3"]
     body = build_body(airframe)
     surfaces = tuple(build_surface(surface, body) for surface in airframe.surfaces)
     motors = build_motors(airframe, surfaces)
     rockets = build_rockets(airframe, surfaces)
 
-    points = structure_mass_points(airframe, body, density)
+    access_geometry = AccessGeometry(airframe, body, resolve_access(airframe.access))
+    points = structure_mass_points(airframe, body, density, exact)
     reinforcement = airframe.fuselage.reinforcement
     if reinforcement is not None:
         points += reinforcement_mass_points(reinforcement, airframe.sections.cuts_m, parts_data["material"][reinforcement.pattern.material]["density_kg_m3"])
-    points += [surface_mass_point(surface_set, airframe.print.bulk_density_kg_m3) for surface_set in surfaces]
+    points += [surface_mass_point(surface_set, airframe.print.bulk_density_kg_m3, None if exact is None else exact.surfaces[surface_set.name])
+               for surface_set in surfaces]
     spars = build_spars(surfaces, airframe.sections.joints.fit_clearance_m)
     points += spar_mass_points(surfaces, spars, parts_data)
     carry_through = build_carry_through(surfaces, body, airframe.fuselage.section.wall_radial_m)
-    points += carry_through_mass_points(surfaces, carry_through, airframe)
+    if exact is None:  # the built sections carry it: ExactStructure counts it in its section
+        points += carry_through_mass_points(surfaces, carry_through, airframe)
     wall = airframe.fuselage.section.wall_radial_m
     points += [
         MassPoint(f"volume {volume.name}", "volume", (volume.x_m, volume.y_m, volume.z_m), volume.mass_kg, False, None, volume_inertia(volume, body, wall))
@@ -1529,7 +1641,8 @@ def resolve_airframe(airframe: Airframe, parts_data: dict) -> tuple[ResolvedAirf
         cg_xs.append(center_of_mass(points, masses)[0])
 
     resolved = ResolvedAirframe(
-        airframe=airframe, body=body, surfaces=surfaces, motors=motors, rockets=rockets, controls=build_controls(surfaces), spars=spars, carry_through=carry_through, mass_points=points, sections=section_masses,
+        airframe=airframe, body=body, surfaces=surfaces, motors=motors, rockets=rockets, controls=build_controls(surfaces), spars=spars, carry_through=carry_through,
+        access=access_geometry.access, mass_points=points, sections=section_masses,
         mass_kg=(sum(point.mass_kg[0] for point in points), sum(point.mass_kg[1] for point in points)),
         cg_m=center_of_mass(points, nominal), cg_x_range_m=(min(cg_xs), max(cg_xs)),
         inertia_kg_m2=combine_inertia([(mass, point.position, point.inertia_per_kg) for mass, point in zip(nominal, points)])[2],

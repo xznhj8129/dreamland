@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ReactElement } from 'react'
 import { editorOp } from '../store'
-import { Card, EntryField } from './fields'
+import { Card, EntryField, HelpNote } from './fields'
 import { formatValue } from './format'
 import { isObject } from './patch'
 import { ComponentPicker, useComponentIndex, useSelection } from './selection'
@@ -31,7 +31,7 @@ export function LoftGuides(): ReactElement {
   }
 
   return <Card title="Loft guides">
-    <p className="form-hint">Shape profiles at independent positions, before nose/tail taper. Guides do not cut the fuselage. Smooth transitions join them; no guides uses the default cross-section throughout.</p>
+    <HelpNote>Shape profiles at independent positions, before nose/tail taper. Guides do not cut the fuselage. Smooth transitions join them; no guides uses the default cross-section throughout.</HelpNote>
     <div className="form-row">
       <label className="form-label" htmlFor="new-loft-position">New guide position (mm)</label>
       <div className="form-control"><input id="new-loft-position" className="field-input" type="number" step="any" value={position} onChange={event => setPosition(event.target.value)} /></div>
@@ -49,7 +49,7 @@ export function LoftGuides(): ReactElement {
       {PROFILE_KEYS.map(key => <EntryField key={key} path={['fuselage', 'loft_stations', index, key]} unitKey={key}
         label={key === 'shape' ? 'Shape exponent' : key === 'width_m' ? 'Width (mm)' : 'Height (mm)'} optional
         defaultValue={defaults[key]} defaultLabel="Fuselage default" />)}
-      <p className="form-hint">Shape: 1 = diamond, 2 = ellipse, 4 = rounded rectangle. Wall thickness stays global. New guides start with the current interpolated profile.</p>
+      <HelpNote>Shape: 1 = diamond, 2 = ellipse, 4 = rounded rectangle. Wall thickness stays global. New guides start with the current interpolated profile.</HelpNote>
       <button type="button" className="danger" onClick={() => void run({ op: 'loft.delete', index }, Math.max(0, index - 1))}>Remove guide</button>
     </div>)}
   </Card>

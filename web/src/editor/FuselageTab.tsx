@@ -3,7 +3,7 @@ import type { FormEvent, ReactElement } from 'react'
 import { editorOp } from '../store'
 import type { Snapshot } from '../types'
 import { Modal } from '../components/Modal'
-import { Card, CheckboxField, ChoiceField, EntryField, Fields } from './fields'
+import { Card, CheckboxField, ChoiceField, EntryField, Fields, HelpNote } from './fields'
 import { LoftGuides } from './LoftGuides'
 import { fieldLabel } from './format'
 import { isObject } from './patch'
@@ -139,7 +139,7 @@ export function FuselageTab({ snapshot, onPresetsChanged }: { snapshot: Snapshot
 
       <Card title="Fuselage">
         <EntryField path={['fuselage', 'length_m']} unitKey="length_m" label="Airframe length (mm)" />
-        <p className="form-hint">Resizes unfixed sections and longitudinal placements together. Fixed section lengths and component sizes are preserved.</p>
+        <HelpNote>Resizes unfixed sections and longitudinal placements together. Fixed section lengths and component sizes are preserved.</HelpNote>
         <fieldset className="form-group">
           <legend>section</legend>
           <Fields data={section} path={['fuselage', 'section']} context={context} />
@@ -164,10 +164,10 @@ export function FuselageTab({ snapshot, onPresetsChanged }: { snapshot: Snapshot
             {ROD_ENTRY_KEYS.map((key) => (
               <EntryField key={key} path={['fuselage', 'reinforcement', key]} unitKey={key} />
             ))}
-            <p className="form-hint">
+            <HelpNote>
               one rod position per quadrant, polar_offset_angle (deg) up from the horizontal, mirrored left/right and top/bottom; polar_split 2 = a pair at
               +/- polar_split_angle (deg), 0 = single; polar_n = all rods
-            </p>
+            </HelpNote>
           </>
         )}
       </Card>

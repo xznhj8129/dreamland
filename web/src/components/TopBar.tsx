@@ -2,6 +2,9 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactElement } from 'react'
 import { listProjects, newProject, openProject, saveProject, saveProjectAs } from '../store'
 import type { CommandResult } from '../store'
+import { cadProgress } from '../cadApi'
+import type { CadProgress } from '../cadApi'
+import type { GeometryStatus } from '../types'
 import { Modal } from './Modal'
 
 const PLANNED_VIEWS: readonly string[] = ['VLM']
@@ -18,13 +21,16 @@ interface TopBarProps {
   project: string | null
   aircraftName: string | null
   dirty: boolean
+  /** The analysis status line (Snapshot.status: "Up to date", "Computing aero...", ...). */
+  status: string | null
+  geometry: GeometryStatus | null
 }
 
 /**
  * The File menu: New, Load, Save, Save As, ported from the retired Tk menu bar (guibuilder.BuilderApp.build_menu;
  * see git history), with the main-view buttons beside it instead of a separate bottom bar.
  */
-export function TopBar({ view, onView, project, aircraftName, dirty }: TopBarProps): ReactElement {
+export function TopBar({ view, onView, project, aircraftName, dirty, status, geometry }: TopBarProps): ReactElement {
   const [menuOpen, setMenuOpen] = useState(false)
   const [dialog, setDialog] = useState<DialogKind | null>(null)
   const [notice, setNotice] = useState('')
@@ -115,7 +121,9 @@ export function TopBar({ view, onView, project, aircraftName, dirty }: TopBarPro
       </nav>
       {project !== null && (
         <div className="project-context" aria-label="Current project">
-          <span className={dirty ? "save-status unsaved" : "save-status"} role="status">{dirty ? "Unsaved changes" : "Saved"}</span>
+          {status !== null && status !== '' && <span className="top-status" role="status">{status}</span>}
+          {geometry !== null && <GeometryIndicator geometry={geometry} />}
+          <span className={dirty ? 'top-status attention' : 'top-status'} role="status">{dirty ? 'Unsaved changes' : 'Saved'}</span>
           <button type="button" disabled={!dirty} onClick={save}>Save</button>
           <span className="project-name" title={project}>{project}</span>
           {aircraftName !== null && aircraftName !== project && <span>{aircraftName}</span>}
@@ -127,6 +135,46 @@ export function TopBar({ view, onView, project, aircraftName, dirty }: TopBarPro
       {dialog === 'load' && <LoadModal onClose={() => setDialog(null)} />}
     </header>
   )
+}
+
+const PROGRESS_INTERVAL_MS = 400
+
+const GEOMETRY_TEXT: Record<Exclude<GeometryStatus, 'computing'>, string> = {
+  none: 'Mass estimated',
+  stale: 'Geometry stale',
+  exact: 'Exact mass',
+  current: 'Geometry current',
+}
+
+/** Compute Geometry for the current design; while it runs, the CAD worker's progress (GET /api/cad/progress). */
+function GeometryIndicator({ geometry }: { geometry: GeometryStatus }): ReactElement {
+  const [progress, setProgress] = useState<CadProgress | null>(null)
+  const computing = geometry === 'computing'
+
+  useEffect(() => {
+    if (!computing) {
+      setProgress(null)
+      return undefined
+    }
+    let cancelled = false
+    const poll = async (): Promise<void> => {
+      const answer = await cadProgress()
+      if (!cancelled && answer !== null) setProgress(answer)
+    }
+    const timer = window.setInterval(() => void poll(), PROGRESS_INTERVAL_MS)
+    void poll()
+    return () => {
+      cancelled = true
+      window.clearInterval(timer)
+    }
+  }, [computing])
+
+  if (!computing) {
+    return <span className={geometry === 'stale' ? 'top-status attention' : 'top-status'} role="status">{GEOMETRY_TEXT[geometry]}</span>
+  }
+  const running = progress !== null && progress.task === 'geometry' && progress.label !== null
+  const count = running && progress.total > 0 ? ` (${progress.done}/${progress.total})` : ''
+  return <span className="top-status" role="status">{running ? `Computing geometry: ${progress.label}${count}` : 'Computing geometry'}</span>
 }
 
 interface NameModalProps {

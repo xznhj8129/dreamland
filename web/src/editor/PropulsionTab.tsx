@@ -3,7 +3,7 @@ import { useId, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { RocketMotorInfo, Snapshot } from '../types'
 import { editorOp } from '../store'
-import { Card, ChoiceField, EntryField, OptionalBlock, PlacementFields, ValueList } from './fields'
+import { Card, ChoiceField, EntryField, OptionalBlock, PlacementFields, ValueList, HelpNote } from './fields'
 import { deepCopy, electricMotorCount, firstBatteryPart, newElectric, placedPartsOf } from './propulsion'
 import { MotorChart } from './MotorChart'
 import { RocketChart } from './RocketChart'
@@ -63,7 +63,7 @@ function ElectricTab({ snapshot, propulsion }: { snapshot: Snapshot; propulsion:
     <>
       <Card title="Electric system">
         <OptionalBlock label="Electric system (motor, prop, battery, ESC, wiring)" present={electric !== null} onToggle={(checked) => void toggle(checked)}>
-          <p className="form-hint">One motor and prop model drives every electric mount (Design, Motor mounts).</p>
+          <HelpNote>One motor and prop model drives every electric mount (Design, Motor mounts).</HelpNote>
         </OptionalBlock>
         {notice !== '' && <div className="field-error">{notice}</div>}
       </Card>
@@ -74,7 +74,7 @@ function ElectricTab({ snapshot, propulsion }: { snapshot: Snapshot; propulsion:
         <Card title="Motor info (motorlib, static)">
           <MotorChart chart={snapshot.propulsion_chart} />
           <ReportSections sections={(snapshot.report_pages?.propulsion ?? []).filter(section => ['Full throttle', 'Hover', 'Model limitations'].includes(section.title))} />
-          <p className="form-hint">See the Propulsion report for the complete battery and circuit details.</p>
+          <HelpNote>See the Propulsion report for the complete battery and circuit details.</HelpNote>
         </Card>
       )}
       </>}

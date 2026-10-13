@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ReactElement } from 'react'
 import { editorOp } from '../store'
-import { Card, ChoiceField, EntryField, Fields, OptionalBlock } from './fields'
+import { Card, ChoiceField, EntryField, Fields, OptionalBlock, HelpNote } from './fields'
 import { isObject } from './patch'
 import { useFormApi } from './session'
 import { ComponentPicker, useComponentIndex, useSelection } from './selection'
@@ -100,11 +100,11 @@ function MountCard({ index, mount, surfaceNames, onOp }: MountCardProps): ReactE
       )}
       {rocket ? <>
         <EntryField path={[...path, 'x_offset_m']} unitKey="x_offset_m" label="Motor aft end (mm, positive aft)" />
-        <p className="form-hint">Where the loaded motor's nozzle end sits, from the {on === 'surface' ? 'surface root leading edge' : 'tail face'}; the motor runs forward from there. Load a motor on the Propulsion tab (Rocket).</p>
+        <HelpNote>Where the loaded motor's nozzle end sits, from the {on === 'surface' ? 'surface root leading edge' : 'tail face'}; the motor runs forward from there. Load a motor on the Propulsion tab (Rocket).</HelpNote>
         <EntryField path={[...path, 'thrust_axis_tilt_deg']} unitKey="thrust_axis_tilt_deg" />
       </> : <>
       <EntryField path={[...path, 'x_offset_m']} unitKey="x_offset_m" label="X offset (mm, positive aft)" />
-      {on !== 'surface' && <p className="form-hint">Moves the motor and pod together from the {on} mounting face.</p>}
+      {on !== 'surface' && <HelpNote>Moves the motor and pod together from the {on} mounting face.</HelpNote>}
       <ChoiceField path={[...path, 'direction']} value={mount.direction} options={context.choices.direction ?? []} />
       <ChoiceField path={[...path, 'spin']} value={mount.spin} options={spins} />
       <EntryField path={[...path, 'thrust_axis_tilt_deg']} unitKey="thrust_axis_tilt_deg" />
@@ -115,13 +115,13 @@ function MountCard({ index, mount, surfaceNames, onOp }: MountCardProps): ReactE
           {holes.pattern === 'radial_slots' && <>
             <EntryField path={[...path, 'holes', 'd2_m']} unitKey="d2_m" label="D2 · outer spacing diameter (mm)" />
             <EntryField path={[...path, 'holes', 'hole_diameter_m']} unitKey="hole_diameter_m" label="Slot width (mm)" />
-            <p className="form-hint">Four radial slots from D1 to D2. M3 width: 3 mm. Equal D1/D2 makes round holes.</p>
+            <HelpNote>Four radial slots from D1 to D2. M3 width: 3 mm. Equal D1/D2 makes round holes.</HelpNote>
           </>}
           <EntryField path={[...path, 'holes', 'center_diameter_m']} unitKey="center_diameter_m" label="Center relief diameter (mm)" />
           <EntryField path={[...path, 'holes', 'center_depth_m']} unitKey="center_depth_m" label="Center relief depth (mm)" />
           <EntryField path={[...path, 'holes', 'head_diameter_m']} unitKey="head_diameter_m" label="Bolt head diameter (mm)" />
           <EntryField path={[...path, 'holes', 'head_depth_m']} unitKey="head_depth_m" label="Head seat depth from mount face (mm)" />
-          <p className="form-hint">Zero relief/head diameter disables that cut. Bolt access stops at this mount’s section boundary. Pink outlines show the cuts in Simple and 3D.</p>
+          <HelpNote>Zero relief/head diameter disables that cut. Bolt access stops at this mount’s section boundary. Pink outlines show the cuts in Simple and 3D.</HelpNote>
         </>}
       </OptionalBlock>
       <OptionalBlock label="pod" present={pod !== null} onToggle={(checked) => void onOp({ op: 'mount.pod.toggle', index, enabled: checked })}>

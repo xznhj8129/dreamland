@@ -35,9 +35,14 @@ SolidGeometryExportPanel
       STEP mode above; only the chosen format is written
     - Export printable sections writes every fuselage section (S01.., with attached surface roots and pods),
       coupler (C01.., by cut), detached fixed surface segment (W<surface>_P<panel>_S<segment>)
-      and unsplit control (CS<n>) as the chosen format (STEP or STL) into cad/sections/;
+      unsplit control (CS<n>) and retained hatch pieces (H<nn>, with copy/piece suffixes) as the chosen format (STEP or STL) into cad/sections/;
       the status line gives the part count and format; problems (a root chord past a section end, a part
       larger than the printer bed, a part in several pieces) go to the Log tab
+    - Every solid is built once per design and shared by all these exports (and by Compute Geometry in the editor):
+      after Compute Geometry, or after any export of the same design, the exports only write files; the status line
+      shows "Compute geometry — <step>" while a Compute Geometry run holds the CAD worker
+    - Access cuts affect fuselage material; installed components stay intact; seams and attachment intersections produce notes
+    - Every retained hatch piece has a unique filename; overlapping openings remove material once
     - Export drawings draws, each as .svg and .png in cad/:
         cutaway: the side cutaway (near half removed, cut faces hatched, far half in hidden-line
           view, parts numbered with a key)

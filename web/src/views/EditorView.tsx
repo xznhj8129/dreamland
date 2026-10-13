@@ -2,6 +2,7 @@ import { useState } from 'react'
 import type { ReactElement } from 'react'
 import type { Snapshot } from '../types'
 import { recompute } from '../store'
+import { computeGeometry } from '../cadApi'
 import { ModelView } from '../components/ModelView'
 import { ReportPanel } from '../components/ReportPanel'
 import { SimpleView } from '../components/SimpleView'
@@ -17,7 +18,15 @@ export function EditorView({ snapshot }: { snapshot: Snapshot | null }): ReactEl
           <button type="button" className="action" onClick={() => void recompute()}>
             Recompute (F5)
           </button>
-          <span className="status">{snapshot?.status ?? 'Connecting...'}</span>
+          {/* Builds every CAD solid and measures the exact mass in the CAD worker; its status is in the top bar. */}
+          <button
+            type="button"
+            className="action"
+            disabled={snapshot === null || snapshot.geometry === 'computing' || snapshot.geometry === 'current'}
+            onClick={() => void computeGeometry()}
+          >
+            Compute Geometry
+          </button>
         </div>
         {snapshot !== null && !snapshot.definition_valid && <p className="last-valid-note">Showing the last valid analysis. See Log for definition errors.</p>}
         <ReportPanel pages={snapshot?.report_pages ?? null} log={snapshot?.log ?? []} inspectEnabled={snapshot?.definition_valid ?? false} />

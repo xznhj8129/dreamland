@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { Path, Snapshot } from '../types'
-import { Card, ChoiceField, EntryField } from './fields'
+import { Card, ChoiceField, EntryField, HelpNote } from './fields'
 import { batteryConnector, syncedMotorRuns } from './propulsion'
 import { isObject } from './patch'
 import { useFormApi } from './session'
@@ -99,7 +99,7 @@ export function WiringTab({ snapshot }: { snapshot: Snapshot }): ReactElement {
 
   return (
     <Card title="Wire runs">
-      <p className="form-hint">Routes follow the axes and run inside wing panels. Lengths update from the component positions.</p>
+      <HelpNote>Routes follow the axes and run inside wing panels. Lengths update from the component positions.</HelpNote>
       {rows.map(row => <WireRow key={row.label} row={row} gauges={gauges} battery={row.label === 'battery -> ESC' ? battery : null} />)}
     </Card>
   )

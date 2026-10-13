@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { EditorContext, Path, PathEdit, Snapshot } from '../types'
 import { editorEdit, editorRemove, editorSet } from '../store'
+import { AccessTab } from './AccessTab'
 import { AirframeTab } from './AirframeTab'
 import { loadEditorContext } from './context-cache'
 import { FuselageTab } from './FuselageTab'
@@ -16,10 +17,10 @@ import { VolumesTab } from './VolumesTab'
 import { WiringTab } from './WiringTab'
 import { useSelection } from './selection'
 
-const DESIGN_TABS = ['Airframe', 'Fuselage', 'Sections', 'Surfaces', 'Volumes', 'Motor mounts', 'Optimization'] as const
+const DESIGN_TABS = ['Airframe', 'Fuselage', 'Sections', 'Surfaces', 'Access', 'Volumes', 'Motor mounts', 'Optimization'] as const
 const BUILD_TABS = ['Propulsion', 'Parts', 'Wiring'] as const
 
-const SELECTION_TABS = { surface: 'Surfaces', volume: 'Volumes', mount: 'Motor mounts', section: 'Sections', fuselage: 'Fuselage', loft: 'Fuselage' } as const
+const SELECTION_TABS = { surface: 'Surfaces', volume: 'Volumes', mount: 'Motor mounts', section: 'Sections', fuselage: 'Fuselage', loft: 'Fuselage', access: 'Access' } as const
 type Group = 'Design' | 'Build'
 
 /** Aircraft forms grouped into Design and Build; Optimization is a planned evaluator view. */
@@ -137,6 +138,9 @@ function EditorForms({ snapshot, context, group, tab, onPresetsChanged }: Editor
       </div>
       <div className="editor-forms" hidden={!design || tab !== 'Volumes'}>
         <VolumesTab />
+      </div>
+      <div className="editor-forms" hidden={!design || tab !== 'Access'}>
+        <AccessTab />
       </div>
       <div className="editor-forms" hidden={!design || tab !== 'Motor mounts'}>
         <MountsTab />

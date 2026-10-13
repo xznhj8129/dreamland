@@ -30,7 +30,7 @@ SCROLL_UNIT_PX = 40.0  # editor_view.py on_view_xscroll/on_view_yscroll
 SCROLL_PAGE_FRACTION = 0.9
 
 # Drag handle targets, the definition collections the move op edits (webapp.editor.apply_move).
-TAGGED_TARGETS = ("cut", "loft", "spars", "surface", "volume")  # libs/graphics.py canvas tags
+TAGGED_TARGETS = ("cut", "loft", "spars", "surface", "volume", "access")  # libs/graphics.py canvas tags
 ALWAYS_X_TARGETS = ("cut", "loft", "spars", "surface", "rod")  # only the body axis moves them, in either view
 HANDLE_OVAL_SAMPLES = 24
 

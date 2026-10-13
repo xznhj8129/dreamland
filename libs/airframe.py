@@ -73,6 +73,9 @@ POLAR_SPLITS = (0, 2)  # rods at each polar position: 0 = one, 2 = a pair either
 CONTROL_KINDS = ("split", "all_moving")
 CONTROL_ROLES = ("pitch", "yaw", "roll", "flaps")  # for reference only
 SERVO_OUTPUTS = tuple(f"S{number}" for number in range(1, 13))
+ACCESS_KINDS = ("hole", "hatch")  # a hole subtracts material; a hatch keeps the original material inside an inset profile
+ACCESS_PROFILES = ("slot", "rounded_rectangle")  # a slot is a capsule (equal extents = a circle); a rounded rectangle gives its radius
+ACCESS_EXTENTS = ("depth", "wall", "all")  # depth_m along the local +Z; wall = into the first wall; all = through the whole body
 
 
 class AirframeError(ValueError):
@@ -431,6 +434,15 @@ class Volume:
     mass_kg: tuple[float, float] | None  # its own mass (min, max), e.g. ballast; None = space only (parts carry theirs)
 
 
+def orientation_rows(yaw_deg: float, pitch_deg: float, roll_deg: float) -> tuple[tuple[float, float, float], ...]:
+    """Rows of the matrix turning an object's own axes into the body's: Rz(yaw) Ry(pitch) Rx(roll), roll first."""
+    yaw, pitch, roll = (math.radians(angle) for angle in (yaw_deg, pitch_deg, roll_deg))
+    cy, sy, cp, sp, cr, sr = math.cos(yaw), math.sin(yaw), math.cos(pitch), math.sin(pitch), math.cos(roll), math.sin(roll)
+    return ((cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr),
+            (sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr),
+            (-sp, cp * sr, cp * cr))
+
+
 @dataclass(frozen=True)
 class PlacedPart:
     """A library component, sitting in a volume or placed on its own, turned by orientation_deg (yaw about z, pitch about
@@ -446,17 +458,44 @@ class PlacedPart:
 
     def rotation(self) -> tuple[tuple[float, float, float], ...]:
         """Rows of the matrix turning the part's own axes into the body's: Rz(yaw) Ry(pitch) Rx(roll)."""
-        yaw, pitch, roll = (math.radians(angle) for angle in self.orientation_deg)
-        cy, sy, cp, sp, cr, sr = math.cos(yaw), math.sin(yaw), math.cos(pitch), math.sin(pitch), math.cos(roll), math.sin(roll)
-        return ((cy * cp, cy * sp * sr - sy * cr, cy * sp * cr + sy * sr),
-                (sy * cp, sy * sp * sr + cy * cr, sy * sp * cr - cy * sr),
-                (-sp, cp * sr, cp * cr))
+        return orientation_rows(*self.orientation_deg)
 
     def half_extents_m(self) -> tuple[float, float, float] | None:
         """Half extents along the body axes of its turned box; None without library dimensions."""
         if self.size_m is None:
             return None
         return tuple(sum(abs(value) * size / 2.0 for value, size in zip(row, self.size_m)) for row in self.rotation())
+
+
+@dataclass(frozen=True)
+class AccessRadial:
+    """Radial repetition of one Access entry about an explicit axis line: count includes the seed; copy k (0 = the
+    seed) and its local axes are turned 360 * k / count deg about the line, position and orientation together."""
+    count: int  # >= 1, includes the seed
+    axis: str  # AXES
+    position_m: tuple[float, float, float]  # a point on the rotation axis, explicit
+
+
+@dataclass(frozen=True)
+class AccessEntry:
+    """One named Hole or Hatch, saved on the airframe; shared physical cuts are built by libs.access. The
+    profile lies in the entry's local XY plane: local X is its length, local Y its width, local +Z the extrusion/cut
+    direction. width_m and length_m are the total opening extents (equal slot extents make a circle; a slot's length
+    is its longest dimension); corner_radius_m is a rounded_rectangle's corner radius; gap_m (a hatch) is the
+    clearance on each edge in the profile plane, so the retained material is the original profile inset by it.
+    extent: depth_m along the local +Z, into the first wall (wall), or through the whole body (all)."""
+    name: str
+    kind: str  # ACCESS_KINDS
+    profile: str  # ACCESS_PROFILES
+    width_m: float
+    length_m: float
+    corner_radius_m: float | None  # rounded_rectangle only
+    gap_m: float | None  # hatch only
+    position_m: tuple[float, float, float]  # profile centre in the aircraft frame
+    orientation_deg: tuple[float, float, float]  # yaw, pitch, roll; optional in the file, each 0
+    extent: str  # ACCESS_EXTENTS
+    depth_m: float | None  # depth only
+    radial: AccessRadial | None  # None = the seed alone
 
 
 @dataclass(frozen=True)
@@ -518,6 +557,7 @@ class Airframe:
     propulsion: Propulsion | None  # None when not powered
     volumes: tuple[Volume, ...]
     parts: tuple[PlacedPart, ...]
+    access: tuple[AccessEntry, ...]  # named holes and hatches; resolved frames in libs.geometry.AccessInstance
     sections: Sections
 
 
@@ -967,6 +1007,51 @@ def _part(data: dict, path: str, volumes: dict[str, Volume], parts_data: dict) -
     )
 
 
+def _access(data: dict, path: str) -> AccessEntry:
+    """One saved access entry: fields only applicable to its kind, profile or extent must be present exactly then."""
+    fields = _Fields(data, path)
+    name = fields.text("name")
+    kind = fields.choice("kind", ACCESS_KINDS)
+    profile = fields.choice("profile", ACCESS_PROFILES)
+    width_m = fields.positive("width_m")
+    length_m = fields.positive("length_m")
+    if profile == "slot" and length_m < width_m:
+        raise AirframeError(f"{fields.at('length_m')}: a slot's length is its longest dimension; {length_m} < width_m {width_m}")
+    corner_radius_m = None
+    if profile == "rounded_rectangle":
+        corner_radius_m = fields.positive("corner_radius_m")
+        if corner_radius_m > min(width_m, length_m) / 2.0:
+            raise AirframeError(f"{fields.at('corner_radius_m')}: {corner_radius_m} is more than half the smaller profile extent {min(width_m, length_m)}")
+    gap_m = fields.number("gap_m", minimum=0.0) if kind == "hatch" else None
+    if gap_m is not None and min(width_m, length_m) <= 2.0 * gap_m:
+        raise AirframeError(f"{fields.at('gap_m')}: {gap_m} on each edge leaves no material inside the profile (its smaller extent is {min(width_m, length_m)})")
+    extent = fields.choice("extent", ACCESS_EXTENTS)
+    depth_m = fields.positive("depth_m") if extent == "depth" else None
+    radial_data = fields.optional("radial", None)
+    radial = None
+    if radial_data is not None:
+        radial_fields = _Fields(radial_data, fields.at("radial"))
+        count = radial_fields.number("count", minimum=1)
+        if count != int(count):
+            raise AirframeError(f"{radial_fields.at('count')}: expected a whole number, got {count!r}")
+        radial = AccessRadial(
+            count=int(count),
+            axis=radial_fields.choice("axis", AXES),
+            position_m=tuple(radial_fields.number(key) for key in ("x_m", "y_m", "z_m")),
+        )
+        radial_fields.done()
+    x_m = fields.number("x_m")
+    y_m = fields.number("y_m") if "y_m" in fields.data else 0.0
+    z_m = fields.number("z_m") if "z_m" in fields.data else 0.0
+    orientation_deg = _orientation(fields)
+    fields.done()
+    return AccessEntry(
+        name=name, kind=kind, profile=profile, width_m=width_m, length_m=length_m, corner_radius_m=corner_radius_m,
+        gap_m=gap_m, position_m=(x_m, y_m, z_m), orientation_deg=orientation_deg, extent=extent,
+        depth_m=depth_m, radial=radial,
+    )
+
+
 @cache
 def motor_repo() -> DataRepo:
     """motorlib's motors, props, cells, ESCs and wires, loaded once."""
@@ -1395,7 +1480,14 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
         _part(part_data, f"{fields.at('parts')}[{index}]", volumes_by_name, parts_data)
         for index, part_data in enumerate(fields.required("parts"))
     )
-    for collection, label in ((surfaces, "surfaces"), (volumes, "volumes"), (parts, "parts")):
+    access_list = fields.required("access")
+    if type(access_list) is not list:
+        raise AirframeError(f"{fields.at('access')}: expected a list, got {type(access_list).__name__}")
+    access = tuple(
+        _access(entry_data, f"{fields.at('access')}[{index}]")
+        for index, entry_data in enumerate(access_list)
+    )
+    for collection, label in ((surfaces, "surfaces"), (volumes, "volumes"), (parts, "parts"), (access, "access")):
         names = [item.name for item in collection]
         duplicates = sorted({item for item in names if names.count(item) > 1})
         if duplicates:
@@ -1440,7 +1532,7 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     fields.done()
     return Airframe(
         name=name, notes=notes, preset=preset, powered=powered, vtol=vtol, tailsitter=tailsitter, operating_point=operating_point, print=print_settings,
-        fuselage=fuselage, surfaces=surfaces, propulsion=propulsion, volumes=volumes, parts=parts,
+        fuselage=fuselage, surfaces=surfaces, propulsion=propulsion, volumes=volumes, parts=parts, access=access,
         sections=Sections(cuts_m=cuts, per_section=per_section, cut_joints=tuple(cut_joints), joints=joints),
     )
 
@@ -1515,6 +1607,7 @@ def blank_definition(name: str) -> dict:
         "surfaces": [],
         "volumes": [],
         "parts": [],
+        "access": [],
         "sections": {"cuts_m": [], "per_section": [{"solid": False}], "cut_joints": [],
                      "joints": {"type": "radial_screws", "count": 8, "screw": "M3", "insertion_depth_m": 0.01,
                        "coupler_wall_m": 0.0045, "fit_clearance_m": 0.0003, "socket_wall_m": 0.00125,

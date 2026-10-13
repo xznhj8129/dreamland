@@ -75,4 +75,5 @@ def snapshot(state: AppState) -> dict[str, Any]:
         "log": [dataclasses.asdict(entry) for entry in state.log],
         "status": state.status,
         "aero_pending": state.aero is None,
+        "geometry": state.geometry_status,  # Compute Geometry: none | stale | exact | current | computing (AppState.geometry_status)
     }

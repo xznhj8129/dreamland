@@ -2,6 +2,10 @@
 
 Every mutation runs on the aiohttp event loop except the aero solve, which runs in a daemon thread and hands
 its result back through a queue drained on the loop (the retired guibuilder.BuilderApp.poll_aero_queue; see git history).
+
+An edit never builds CAD solids. Compute Geometry (webapp/server.py) builds them in a worker thread and hands back the
+measured design (libs.computed_geometry.MeasuredDesign); recompute applies its exact printed mass whenever the
+resolved design is the one it was measured for, and the analytic estimates otherwise.
 """
 
 from __future__ import annotations
@@ -20,12 +24,14 @@ from typing import Any, Callable
 
 from libs.aero import AeroResult, NoLiftingSurfacesError, OperatingPointError, analyze_aero
 from libs.airframe import AirframeError, load_parts_data, parse_airframe
+from libs.computed_geometry import MeasuredDesign, load_measured
 from libs.geometry import ResolvedAirframe, resolve_airframe
 from libs.motorlib import MotorStalled
 from libs.project import BUILD_FILE, Project
 from libs.propulsion import PropulsionSummary, propulsion_summary
 from libs.report import build_report_lines
 from libs.reportline import ReportLine
+from webapp.cad import geometry_current
 
 AeroQueueItem = tuple[int, AeroResult | None, str | None, str | None]
 
@@ -73,6 +79,8 @@ class AppState:
         self.propulsion: PropulsionSummary | None = None
         self.aero: AeroResult | None = None
         self.aero_generation = 0
+        self.measured: MeasuredDesign | None = load_measured(project.cad_dir)  # the last design measured by Compute Geometry
+        self.geometry_computing = False  # a Compute Geometry run is in flight (webapp/server.py)
         self.session_id = 0  # bumped on open/new/switch; the browser keys its forms subtree on it so they remount
         self.definition_revision = 0  # bumped on every accepted definition change; editors sync their fields from it
         self.library_revision = 0  # bumped on every accepted part-library save/delete; invalidates the cached editor context
@@ -93,6 +101,24 @@ class AppState:
     @property
     def title(self) -> str:
         return f"Dreamland - {self.project.name} ({self.definition.get('name', 'unnamed')})"
+
+    @property
+    def geometry_status(self) -> str:
+        """Compute Geometry for the current design: computing (a run is in flight), current (exact mass applied and
+        every solid built in the CAD worker, so the exports only write files), exact (exact mass applied, solids not
+        built in this server's worker), stale (the measurement is of another design) or none."""
+        if self.geometry_computing:
+            return "computing"
+        if self.measured is None or self.resolved is None:
+            return "none"
+        if not self.measured.applies_to(self.resolved, self.parts_data):
+            return "stale"
+        return "current" if geometry_current(self.resolved) else "exact"
+
+    def adopt_measured(self, design: MeasuredDesign) -> None:
+        """Keep a Compute Geometry result and recompute, so its exact mass applies when it is of the current design."""
+        self.measured = design
+        self.recompute()
 
     def add_listener(self, listener: Callable[[], None]) -> None:
         self._listeners.append(listener)
@@ -184,6 +210,7 @@ class AppState:
         self.project = project
         self.definition = definition
         self._saved_definition = copy.deepcopy(definition)
+        self.measured = load_measured(project.cad_dir)
         self.session_id += 1
         self.definition_revision += 1
         self.resolved = None
@@ -223,6 +250,8 @@ class AppState:
         try:
             airframe = parse_airframe(self.definition, self.parts_data, path=f"{self.project.name}/{BUILD_FILE}")
             resolved, problems = resolve_airframe(airframe, self.parts_data)
+            if self.measured is not None and self.measured.applies_to(resolved, self.parts_data):
+                resolved, problems = resolve_airframe(airframe, self.parts_data, self.measured.exact)
         except AirframeError as error:
             self.definition_valid = False
             self.log_error("Definition error", f"{error}\nThe drawing shows the last valid airframe.")

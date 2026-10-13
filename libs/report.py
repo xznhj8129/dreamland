@@ -60,17 +60,24 @@ def build_report_lines(resolved: ResolvedAirframe, aero: AeroResult | None, prob
     inertia = resolved.inertia_kg_m2
     lines.append(f"  Inertia at CG    : Ixx {inertia[0]:.5f}  Iyy {inertia[1]:.5f}  Izz {inertia[2]:.5f} kg m^2 (x aft, y right, z up)")
     lines.append(f"                     Ixy {inertia[3]:.6f}  Ixz {inertia[4]:.6f}  Iyz {inertia[5]:.6f} (tensor entries, -sum m a b)")
+    exact = any(point.exact for point in resolved.mass_points)
+    lines.append("  Printed structure: exact, measured on the built CAD solids (Compute Geometry)" if exact
+                 else "  Printed structure: estimated from the geometry (Compute Geometry measures the built solids)")
     for point in resolved.mass_points:
         mass_text = f"{point.mass_kg[0] * 1000:7.1f}" if point.mass_kg[0] == point.mass_kg[1] else f"{point.mass_kg[0] * 1000:.1f}-{point.mass_kg[1] * 1000:.1f}"
-        note = "  (estimated)" if point.computed else f"  (estimate {point.estimate_kg * 1000:.1f} g)" if point.estimate_kg is not None else ""
+        basis = "exact" if point.exact else "estimate"
+        note = f"  ({'exact' if point.exact else 'estimated'})" if point.computed else f"  ({basis} {point.estimate_kg * 1000:.1f} g)" if point.estimate_kg is not None else ""
         lines.append(f"    {point.name:<34} {mass_text:>12} g  x {point.position[0]:.4f}{note}")
     estimated = [point for point in resolved.mass_points if point.estimate_kg is not None]
     if any(not point.computed for point in estimated):
         given_g = sum(point.mass_kg[0] for point in estimated) * 1000.0
         estimate_g = sum(point.estimate_kg for point in estimated) * 1000.0
-        lines.append(f"  Printed parts    : {given_g:.1f} g as given, {estimate_g:.1f} g estimated (hollow sections: shell wall x material density;")
-        lines.append("                     solid sections: less their volumes, and surfaces: solid airfoil volume, x print.bulk_density_kg_m3)")
-    lines.append("  Sections         : empty as used (estimate), complete = everything attached in it, itemised or weighed")
+        if exact:
+            lines.append(f"  Printed parts    : {given_g:.1f} g as given, {estimate_g:.1f} g measured on the built solids")
+        else:
+            lines.append(f"  Printed parts    : {given_g:.1f} g as given, {estimate_g:.1f} g estimated (hollow sections: shell wall x material density;")
+            lines.append("                     solid sections: less their volumes, and surfaces: solid airfoil volume, x print.bulk_density_kg_m3)")
+    lines.append(f"  Sections         : empty as used ({'exact' if exact else 'estimate'}), complete = everything attached in it, itemised or weighed")
     for index, section in enumerate(resolved.sections):
         estimate = "-" if section.empty_estimate_kg is None else f"{section.empty_estimate_kg * 1000:.1f}"
         low, high = section.complete_itemised_kg

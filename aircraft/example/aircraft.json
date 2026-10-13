@@ -355,6 +355,23 @@
             "z_m": 0.03
         }
     ],
+    "access": [
+        {
+            "name": "Battery hatch",
+            "kind": "hatch",
+            "profile": "rounded_rectangle",
+            "width_m": 0.055,
+            "length_m": 0.14,
+            "extent": "depth",
+            "x_m": 0.14126,
+            "y_m": 0.0,
+            "z_m": 0.039,
+            "roll_deg": 180,
+            "corner_radius_m": 0.003,
+            "depth_m": 0.02,
+            "gap_m": 0.0003
+        }
+    ],
     "sections": {
         "cuts_m": [
             0.05801,

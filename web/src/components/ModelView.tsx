@@ -47,6 +47,7 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
   const [showGuides, setShowGuides] = useState(false)
   const [showSections, setShowSections] = useState(false)
   const [showFeatures, setShowFeatures] = useState(true)
+  const [showHatches, setShowHatches] = useState(true)
   /** The toggles' latest values, so a payload rebuild reapplies them without rebuilding on a toggle. */
   const showGuidesRef = useRef(showGuides)
   const showSectionsRef = useRef(showSections)
@@ -193,6 +194,7 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
     groups.sectionGroup.visible = showSectionsRef.current
     groups.featureGroup.visible = showFeaturesRef.current
     scene.add(groups.group, groups.markerGroup, groups.guideGroup, groups.sectionGroup, groups.featureGroup)
+    groups.group.traverse(object => { if (object.userData.kind === 'hatch') object.visible = showHatches })
     airframeRef.current = groups
     const minimum = new THREE.Vector3(data.bounds.min[0], data.bounds.min[1], data.bounds.min[2])
     const maximum = new THREE.Vector3(data.bounds.max[0], data.bounds.max[1], data.bounds.max[2])
@@ -215,7 +217,7 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
       lastCentreRef.current = centre
     }
     dirtyRef.current = true
-  }, [model, placeCamera, transparentSkin])
+  }, [model, placeCamera, transparentSkin, showHatches])
 
   useEffect(() => {
     showSectionsRef.current = showSections
@@ -301,6 +303,8 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
             onClick={() => setShowGuides(value => !value)} disabled={model === null}>Loft guides</button>
           <button type="button" aria-pressed={showSections} className={showSections ? 'active' : ''}
             onClick={() => setShowSections(value => !value)} disabled={model === null}>Sections</button>
+          <button type="button" aria-pressed={showHatches} className={showHatches ? 'active' : ''}
+            onClick={() => setShowHatches(value => !value)} disabled={model === null}>Hatches</button>
           <button type="button" aria-pressed={showFeatures} className={showFeatures ? 'active' : ''}
             onClick={() => setShowFeatures(value => !value)} disabled={model === null}>Cuts &amp; holes</button>
         </div>

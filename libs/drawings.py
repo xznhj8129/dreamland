@@ -5,7 +5,8 @@ paths = export_drawings(resolved, project.cad_dir)  # cad/cutaway, cad/threeview
 
 Blueprint-style drawings of the printable parts (libs/cad.py build_printable_parts), the motors and the boxed parts,
 all with hidden-line removal (OpenCascade polygonal HLR on a fine mesh: exact HLR takes minutes for views along the
-axes); facet seams between nearly tangent faces are drawn as smooth surface.
+axes); facet seams between nearly tangent faces are drawn as smooth surface. The projected lines and cut faces of each
+drawing are built once per design (libs.solid_cache, drawing_geometry); exporting then only renders them.
 - cutaway: from the side, the near half (y < 0) cut away, every part's faces on the centreline plane hatched; parts
   numbered front to back, with a key.
 - threeview: side, top and front of the whole aircraft as it looks from outside, with a scale bar, and an opaque iso
@@ -15,12 +16,14 @@ axes); facet seams between nearly tangent faces are drawn as smooth surface.
 """
 
 import math
+from functools import partial
 from pathlib import Path
 
 import numpy as np
 
 from libs.cad import M_TO_MM, Progress, build_motor_solid, build_printable_parts, build_rod_solids
 from libs.geometry import ResolvedAirframe
+from libs.solid_cache import cached, is_built
 
 FAR_MM = 5000.0  # half-space and section plane size, bigger than any aircraft
 SMOOTH_SEAM_DEG = 20.0
@@ -29,7 +32,7 @@ MESH_ANGLE_RAD = 0.15  # facet seams flatter than this are drawn as smooth surfa
 CURVE_STEP_MM = 0.5  # polyline step along drawn curves
 MIN_EDGE_MM = 1e-6
 SECTION_HATCHES = ("////", "\\\\\\\\")  # alternating from one section to the next
-KIND_HATCHES = {"coupler": "xxxx", "motor": "------", "component": "++++"}
+KIND_HATCHES = {"coupler": "xxxx", "motor": "------", "component": "++++", "hatch": "...."}
 LINE_WIDTH = 0.7
 CUT_LINE_WIDTH = 1.0
 HATCH_LINE_WIDTH = 0.5
@@ -157,10 +160,16 @@ def _scale_bar(ax, x: float, y: float) -> None:
 def drawing_parts(resolved: ResolvedAirframe, *, progress: Progress | None = None) -> list[tuple[str, object, str]]:
     """(label, cq.Shape, kind) front to back: printed sections and couplers, motors, parts with library dimensions.
 
-    progress (optional): forwarded to build_printable_parts ("building <name>" per printable part)."""
+    progress (optional): forwarded to build_printable_parts ("building <name>" per printable part). Built once per
+    design."""
+    return cached(resolved, ("drawing parts",), lambda: _build_drawing_parts(resolved, progress))
+
+
+def _build_drawing_parts(resolved: ResolvedAirframe, progress: Progress | None) -> list[tuple[str, object, str]]:
     import cadquery as cq
 
-    parts = [(name, shape, "coupler" if name.startswith("C") else "section") for name, shape, _notes in build_printable_parts(resolved, progress=progress)]
+    parts = [(name, shape, "hatch" if name.startswith("H") else "coupler" if name.startswith("C") else "section")
+             for name, shape, _notes in build_printable_parts(resolved, progress=progress)]
     parts += [(motor.name, build_motor_solid(motor).val(), "motor") for motor in resolved.motors]
     for part in resolved.airframe.parts:
         if part.size_m is not None:  # its box about the origin, turned roll, pitch then yaw about the body axes, then placed
@@ -177,17 +186,38 @@ def export_drawings(resolved: ResolvedAirframe, directory, *, progress: Progress
     """Draw the cutaway, the three-view and the x-ray into directory (each .svg and .png); returns the files written.
 
     progress (optional): "building <name>" per printable part actually built (only on a cache miss), then
-    "drawing cutaway"/"drawing threeview"/"drawing xray" (done/total = 3)."""
+    "projecting <drawing>" per drawing whose lines are not built yet and "drawing <drawing>" (done/total = 3)."""
     parts = drawing_parts(resolved, progress=progress)
+    geometry = drawing_geometry(resolved, progress=progress)
     written = []
     for index, (name, draw) in enumerate((("cutaway", _cutaway), ("threeview", _three_view), ("xray", _xray)), start=1):
         if progress is not None:
             progress(f"drawing {name}", index, 3)
-        written += draw(resolved, parts, directory)
+        written += draw(resolved, parts, geometry[name], directory)
     return written
 
 
-def _cutaway(resolved: ResolvedAirframe, parts: list, directory) -> list[Path]:
+def drawing_geometry(resolved: ResolvedAirframe, *, progress: Progress | None = None) -> dict[str, object]:
+    """The hidden-line projections and cut faces of the three drawings, by drawing name, each built once per design.
+
+    progress (optional): "projecting <drawing>" per drawing actually projected (done/total = 3)."""
+    parts = drawing_parts(resolved, progress=progress)
+    builders = (("cutaway", _cutaway_geometry), ("threeview", _three_view_geometry), ("xray", _xray_geometry))
+    geometry = {}
+    for index, (name, build) in enumerate(builders, start=1):
+        if progress is not None and not is_built(resolved, ("drawing", name)):
+            progress(f"projecting {name}", index, 3)
+        geometry[name] = cached(resolved, ("drawing", name), partial(build, resolved, parts))
+    return geometry
+
+
+def _cutaway_geometry(resolved: ResolvedAirframe, parts: list) -> list[tuple[list, list]]:
+    """Per part: its far half's side-view lines and its cut faces on the centreline plane as fill paths."""
+    return [(_projected_lines(_far_half(shape), *VIEW_AXES["SIDE"])[0], [_face_path(face) for face in _section_faces(shape)])
+            for _name, shape, _kind in parts]
+
+
+def _cutaway(resolved: ResolvedAirframe, parts: list, geometry: list, directory) -> list[Path]:
     import matplotlib
     from matplotlib.figure import Figure
     from matplotlib.patches import PathPatch
@@ -203,15 +233,15 @@ def _cutaway(resolved: ResolvedAirframe, parts: list, directory) -> list[Path]:
         ax = figure.add_axes((0.0, 0.0, 1.0, 1.0))
         labels = []
         section_count = 0
-        for name, shape, kind in parts:
-            _draw_lines(ax, _projected_lines(_far_half(shape), *VIEW_AXES["SIDE"])[0], "black", LINE_WIDTH)
+        for (name, shape, kind), (lines, faces) in zip(parts, geometry):
+            _draw_lines(ax, lines, "black", LINE_WIDTH)
             if kind == "section":
                 hatch = SECTION_HATCHES[section_count % 2]
                 section_count += 1
             else:
                 hatch = KIND_HATCHES[kind]
-            for face in _section_faces(shape):
-                ax.add_patch(PathPatch(_face_path(face), facecolor="white", edgecolor="black", lw=CUT_LINE_WIDTH, hatch=hatch))
+            for face in faces:
+                ax.add_patch(PathPatch(face, facecolor="white", edgecolor="black", lw=CUT_LINE_WIDTH, hatch=hatch))
             if kind != "motor" or not any(label_kind == "motor" for _label, label_kind, _box in labels):
                 labels.append(("motor" if kind == "motor" else name, kind, shape.BoundingBox()))
 
@@ -235,15 +265,20 @@ def _cutaway(resolved: ResolvedAirframe, parts: list, directory) -> list[Path]:
         return _save(figure, directory, "cutaway")
 
 
-def _three_view(resolved: ResolvedAirframe, parts: list, directory) -> list[Path]:
-    """Side view, the top view under it, the front view to its right and the opaque iso view under that, each as seen
-    from outside; the name and the scale bar under the iso view."""
-    from matplotlib.figure import Figure
-
+def _three_view_geometry(resolved: ResolvedAirframe, parts: list) -> dict[str, list]:
+    """The whole aircraft's visible lines in the side, top, front and iso views."""
     whole = _compound(shape for _name, shape, _kind in parts)
     views = {name: _projected_lines(whole, toward, right)[0] for name, (toward, right) in VIEW_AXES.items()}
     iso_toward, iso_right, _iso_up = _iso_axes()
     views["ISO"] = _projected_lines(whole, tuple(iso_toward), tuple(iso_right))[0]
+    return views
+
+
+def _three_view(resolved: ResolvedAirframe, parts: list, views: dict, directory) -> list[Path]:
+    """Side view, the top view under it, the front view to its right and the opaque iso view under that, each as seen
+    from outside; the name and the scale bar under the iso view."""
+    from matplotlib.figure import Figure
+
     side_x0, side_x1, side_y0, side_y1 = _bounds(views["SIDE"])
     top_x0, top_x1, top_y0, top_y1 = _bounds(views["TOP"])
     front_x0, front_x1, front_y0, front_y1 = _bounds(views["FRONT"])
@@ -273,16 +308,29 @@ def _three_view(resolved: ResolvedAirframe, parts: list, directory) -> list[Path
     return _save(figure, directory, "threeview")
 
 
-def _xray(resolved: ResolvedAirframe, parts: list, directory) -> list[Path]:
+def _xray_inside(resolved: ResolvedAirframe, parts: list) -> list[tuple[str, object, str]]:
+    """What the x-ray draws inside the skin: motors, boxed parts, rods and spars."""
+    inside = [(name, shape, kind) for name, shape, kind in parts if kind in ("motor", "component")]
+    return inside + [(name, solid, "rod") for name, solid in build_rod_solids(resolved)]
+
+
+def _xray_geometry(resolved: ResolvedAirframe, parts: list) -> tuple[list, list, list]:
+    """(skin visible, skin hidden, inside visible) lines from the iso direction."""
+    toward, right, _up = _iso_axes()
+    skin = _compound(shape for _name, shape, kind in parts if kind in ("section", "coupler", "hatch"))
+    inside = _xray_inside(resolved, parts)
+    skin_visible, skin_hidden = _projected_lines(skin, tuple(toward), tuple(right), hidden=True)
+    inside_visible = _projected_lines(_compound(shape for _name, shape, _kind in inside), tuple(toward), tuple(right))[0] if inside else []
+    return skin_visible, skin_hidden, inside_visible
+
+
+def _xray(resolved: ResolvedAirframe, parts: list, lines: tuple, directory) -> list[Path]:
     """From above, ahead and to the left: the printed skin see-through, what is inside it drawn over it."""
     from matplotlib.figure import Figure
 
-    toward, right, up = _iso_axes()
-    skin = _compound(shape for _name, shape, kind in parts if kind in ("section", "coupler"))
-    inside = [(name, shape, kind) for name, shape, kind in parts if kind in ("motor", "component")]
-    inside += [(name, solid, "rod") for name, solid in build_rod_solids(resolved)]
-    skin_visible, skin_hidden = _projected_lines(skin, tuple(toward), tuple(right), hidden=True)
-    inside_visible = _projected_lines(_compound(shape for _name, shape, _kind in inside), tuple(toward), tuple(right))[0] if inside else []
+    _toward, right, up = _iso_axes()
+    skin_visible, skin_hidden, inside_visible = lines
+    inside = _xray_inside(resolved, parts)
     x_min, x_max, y_min, y_max = _bounds(skin_visible + inside_visible)
     margin = 2.0 * LABEL_OFFSET_MM
     height_in = FIGURE_WIDTH_IN * (y_max - y_min + 2.0 * margin) / (x_max - x_min + 2.0 * margin)

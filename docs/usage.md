@@ -15,6 +15,7 @@ python analyze_airframe.py aircraft/m62v2 --export-step out.step --step-mode fus
 python analyze_airframe.py aircraft/m62v2 --export-sections   # printable sections and couplers into cad/sections/
 python analyze_airframe.py aircraft/m62v2 --export-varsets     # FreeCAD varsets into cad/varsets/
 python analyze_airframe.py aircraft/m62v2 --export-drawings    # blueprint drawings: cad/cutaway, threeview, xray (.svg and .png)
+python analyze_airframe.py aircraft/m62v2 --compute-geometry   # build every solid, measure the exact printed mass: cad/exact_mass.json
 python aero_check.py                                          # live lifting line vs asb.LiftingLine, per-surface info
 python sim_flight.py aircraft/m62v1 hover --controller inav     # INAV SITL on JSBSim: hover (VTOL)
 python sim_flight.py aircraft/quadlancer62 efficiency --controller inav # speed sweep: Wh/km, range, endurance
@@ -42,6 +43,7 @@ aircraft/<project>/
     jsbsim/         JSBSim export
     logs/           SITL and script flight logs and plots
     cad/            STEP / STL exports, blueprint drawings: cutaway, threeview, xray (.svg / .png)
+      exact_mass.json  the printed structure measured on the built solids (Compute Geometry), with the design digest it belongs to
       sections/     printable sections S01.. and couplers C01.., STEP or STL
       varsets/      FreeCAD varsets, one JSON per varset
     scenarios/      one run(flight) convention; overrides of data/scenarios/<controller>/*.py
@@ -51,4 +53,6 @@ aircraft/<project>/
 
 Every scenario defines `run(flight)`. Controller commands come from `from controllers import inav as controller` or `mcu`; simulation state, conditions, raw sensors, scheduling and recording are shared (`libs/scenario.py`, `libs/sensors.py`). `experiment` is an INAV example; `stability` is an MCU PWM example; `launch` lights the rocket motors and flies unguided. MCU control logic lives in the script, reading raw sensors and writing PWM; the backend has no autopilot or mixer. The SIM toolbar or CLI sets initial conditions; a scenario's optional `START` (e.g. `START = {"start": "rail", "launch-pitch": 85}`, keys as the CLI names them) supplies defaults the toolbar pre-selects and the CLI fills in where no option is given. Optional `PARAMETERS`, `TELEMETRY` and `LOG_FIELDS` declare parameters and recording.
 
-The GUI's SIM view runs the same simulations with a live plot of the flight log; STEP/STL export is in its CAD view. Tube size presets (tube62, tube75: section, joints, rods) are loaded, saved and created in the Fuselage tab.
+The GUI's SIM view runs the same simulations with a live plot of the flight log; STEP/STL export is in its CAD view.
+
+Compute Geometry (the editor button, or `--compute-geometry`) builds every CAD solid of the design once and measures the printed structure on it. While `cad/exact_mass.json` belongs to the current design, the editor, `analyze_airframe.py` and `sim_flight.py` (and so the JSBSim export) use the exact mass instead of the estimates; any change to the design falls back to the estimates. Within one process the built solids are shared by every export, so after a compute (or an earlier export of the same design) exports only write files. Tube size presets (tube62, tube75: section, joints, rods) are loaded, saved and created in the Fuselage tab.

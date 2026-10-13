@@ -113,7 +113,7 @@ Dreamland is growing fast. On the roadmap:
 - **More autopilots**: PX4 and ArduPilot on JSBSim and Gazebo; MSP and MAVLink commands from scenarios.
 - **More propulsion**: internal combustion and hobby jet turbines.
 - **Copters**: classic FPV plate and tube frames.
-- **Printable details**: hatches, wire routing with auto-generated conduits, automatic sectioning, fin root blending.
+- **Printable details**: hatch fasteners and hinges, wire routing with auto-generated conduits, automatic sectioning, fin root blending.
 
 The full list is in [TODO.md](TODO.md).
 

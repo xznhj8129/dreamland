@@ -4,19 +4,20 @@ The view is built from the same resolved model as every other consumer (libs.geo
 lightweight triangle mesh per body, wing panel, control surface, volume, placed part, motor, prop, rod and spar,
 plus the resolved CG, the CG/NP/Lift markers and the overall bounds. A control surface's mesh carries its hinge
 point, hinge axis, servo output and deflection limits so the client can animate it. World frame is the airframe's
-(x from the nose, y right, z up);
-the client sets its camera up to +z. Plain Python, no numpy and no CAD kernel: the body lofts the resolved body
-stations with superellipse_radius, the panels use the exact airfoil sections libs.cad builds its solids from
+(x from the nose, y right, z up); the client sets its camera up to +z. The preview uses plain Python geometry (numpy
+only to classify skin triangles against Access cuts): the body lofts the resolved body stations with superellipse_radius, the panels use the exact airfoil sections libs.cad builds its solids from
 (webapp.drawing_enrich.airfoil_profile/section_points) as closed shells (the profile loop wraps and the root/tip
 fan caps close it, and a panel's control is the rear part of that same skin, partitioned at its span and chord
 bounds), everything else is placed from the resolved fields.
-A component that cannot be built is skipped, never raised, so one bad item cannot take the endpoint down.
+Access previews clip the existing triangle mesh; the editor and live 3D never construct CAD solids.
 """
 
 from __future__ import annotations
 
 import math
 from typing import Any
+
+import numpy as np
 
 from libs.airframe import BATTERY_PART_NAME, BOX_SHAPES
 from libs.geometry import (
@@ -70,7 +71,10 @@ def build_model3d(resolved: ResolvedAirframe, aero: Any | None) -> dict[str, Any
     the airframe frame (libs.geometry.ResolvedAirframe.cg_m).
     """
     meshes: list[dict[str, Any]] = []
-    _try_mesh(meshes, lambda: _mesh("body", "body", *_body_mesh(resolved.body.stations), BODY_COLOR))
+    if resolved.access:
+        meshes.extend(_access_body_meshes(resolved))
+    else:
+        _try_mesh(meshes, lambda: _mesh("body", "body", *_body_mesh(resolved.body.stations), BODY_COLOR))
     for surface_index, surface_set in enumerate(resolved.surfaces):
         color = PANEL_COLORS[surface_index % len(PANEL_COLORS)]
         definition = surface_set.definition.control
@@ -113,6 +117,10 @@ def build_model3d(resolved: ResolvedAirframe, aero: Any | None) -> dict[str, Any
             meshes.append(_mesh(f"pivot rod C{control.number}", "spar", *_cylinder(*control.hinge, control.rod_diameter_m / 2.0), ROD_COLOR))
     markers = _markers(resolved, aero)
     bounds = _bounds(meshes, markers, resolved.body)
+    for instance in resolved.access:
+        start = instance.center
+        end = tuple(c + d * max(instance.entry.width_m, 0.015) for c, d in zip(start, instance.cut_direction))
+        meshes.append(_mesh(f"{instance.instance_id} direction", "feature", *_cylinder(start, end, 0.0004), FEATURE_COLOR))
     for hole in joint_holes(resolved):
         meshes.append(_mesh(hole.name, "feature", *_opening_mesh(hole), FEATURE_COLOR, FEATURE_OPACITY))
     for opening in motor_mount_openings(resolved):
@@ -588,3 +596,96 @@ def _bounds(meshes: list[dict[str, Any]], markers: list[dict[str, Any]], body) -
         minimum = [min(station.x_m for station in stations), -half_width, -half_height]
         maximum = [max(station.x_m for station in stations), half_width, half_height]
     return {"min": [float(value) for value in minimum], "max": [float(value) for value in maximum]}
+
+
+def _access_planes(resolved, instance, gap=0.0):
+    """Convex polygon profile and depth planes for the lightweight skin preview. Wall mode stops at the body axis;
+    actual cavity/solid-section checks belong to CAD export. No kernel geometry is constructed here."""
+    from dataclasses import replace
+    from libs.access import access_outline
+    entry = instance.entry
+    if gap:
+        radius = None if entry.corner_radius_m is None else max(0.0, entry.corner_radius_m - gap)
+        instance = replace(instance, entry=replace(entry, width_m=entry.width_m - 2 * gap,
+                                                   length_m=entry.length_m - 2 * gap, corner_radius_m=radius))
+    outline = access_outline(instance)
+    reach = resolved.body.length_m + max(station.width_m + station.height_m for station in resolved.body.stations)
+    if entry.extent == "all":
+        start, end = -reach, reach
+    elif entry.extent == "depth":
+        start, end = 0.0, entry.depth_m
+    else:
+        start = -max(entry.width_m, entry.length_m) / 2.0
+        end = max(0.0, -instance.center[1] * instance.cut_direction[1] - instance.center[2] * instance.cut_direction[2])
+    planes = []
+    for first, second in zip(outline, (*outline[1:], outline[0])):
+        edge = tuple(b - a for a, b in zip(first, second))
+        planes.append((first, unit(cross(instance.cut_direction, edge))))
+    planes.append((tuple(c + start * d for c, d in zip(instance.center, instance.cut_direction)), instance.cut_direction))
+    planes.append((tuple(c + end * d for c, d in zip(instance.center, instance.cut_direction)), tuple(-d for d in instance.cut_direction)))
+    return planes
+
+
+def _split_access_triangles(positions, indices, planes):
+    """Clip each skin triangle against the convex cut prism, retaining all outside fragments and inside fragments.
+
+    Every vertex's side of every plane is evaluated at once (numpy): a triangle wholly behind one plane is outside,
+    one in front of all is inside, and only those straddling a plane are clipped, each fragment only by the planes
+    its source triangle straddles (a fragment lies within its source triangle)."""
+    normals = np.array([normal for _point, normal in planes])
+    offsets = np.einsum("ij,ij->i", np.array([point for point, _normal in planes]), normals)
+    sides = np.asarray(positions) @ normals.T - offsets  # (vertex, plane) signed distances, positive inside
+    triangles = np.asarray(indices, dtype=np.int64).reshape(-1, 3)
+    outside_mask = (sides[triangles] < 0.0).all(axis=1).any(axis=1)
+    inside_mask = ~outside_mask & (sides[triangles] > 0.0).all(axis=(1, 2))
+    outside = triangles[outside_mask].ravel().tolist()
+    inside = triangles[inside_mask].ravel().tolist()
+    crossing = triangles[~outside_mask & ~inside_mask]
+    straddles = ~(sides[crossing] > 0.0).all(axis=1)  # (crossing triangle, plane): not wholly in front of it
+    pending = [(tuple(triangle), row) for row, triangle in enumerate(crossing.tolist())]
+    known = len(sides)
+    for number, (point, normal) in enumerate(planes):
+        side: dict[int, float] = {}  # this plane's side of each clip vertex made by the earlier passes
+        following = []
+        intersections = {}
+        for triangle, row in pending:
+            if not straddles[row, number]:
+                following.append((triangle, row))
+                continue
+            for index in triangle:
+                if index < known:
+                    side[index] = sides[index, number]
+                elif index not in side:
+                    side[index] = dot(tuple(value - origin for value, origin in zip(positions[index], point)), normal)
+            if all(side[index] > 0.0 for index in triangle):
+                following.append((triangle, row))
+            elif all(side[index] < 0.0 for index in triangle):
+                outside.extend(triangle)
+            else:
+                inside_loop, outside_loop = _clip_triangle(positions, triangle, point, normal, intersections)
+                fragments: list[int] = []
+                _fan_triangles(inside_loop, fragments)
+                following += [(tuple(fragments[offset:offset + 3]), row) for offset in range(0, len(fragments), 3)]
+                _fan_triangles(outside_loop, outside)
+        pending = following
+        if not pending:
+            break
+    return outside, inside + [index for triangle, _row in pending for index in triangle]
+
+
+def _access_body_meshes(resolved):
+    """Preview holes and retained curved hatch skins by clipping triangles, without CAD operations."""
+    positions, indices = _body_mesh(resolved.body.stations)
+    hatches = []
+    # Holes own overlaps; hatch skins are retained only from the material still present at their turn.
+    instances = sorted(resolved.access, key=lambda instance: instance.entry.kind != "hole")
+    for instance in instances:
+        indices, removed = _split_access_triangles(positions, indices, _access_planes(resolved, instance))
+        if instance.entry.kind == "hatch" and removed:
+            _discarded, retained = _split_access_triangles(positions, removed, _access_planes(resolved, instance, instance.entry.gap_m))
+            if retained:
+                used = sorted(set(retained))  # the hatch mesh carries only its own vertices, not the whole body's
+                renumber = {index: number for number, index in enumerate(used)}
+                hatches.append(_mesh(instance.instance_id, "hatch", [positions[index] for index in used],
+                                     [renumber[index] for index in retained], FEATURE_COLOR))
+    return [_mesh("body", "body", positions, indices, BODY_COLOR), *hatches]

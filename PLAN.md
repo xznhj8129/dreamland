@@ -158,6 +158,18 @@ parts[]             library components: name, part (<category>:<name>; category 
                     (x = l, y = w, z = h), a point without them; must fit its volume, must not overlap other parts;
                     yaw_deg, pitch_deg, roll_deg optional (default 0): its turn, about z, y, x, roll first, body axes;
                     the first fc part carries the script controller's IMU (its position and axes)
+access[]            saved named holes and hatches (fuselage cuts, retained hatch parts, mass and views); required, may be empty.
+                    name (unique in access), kind hole | hatch, profile slot | rounded_rectangle, width_m, length_m
+                    (total opening extents; equal slot extents = a circle, a slot's length is its longest dimension),
+                    corner_radius_m (rounded_rectangle only; positive, at most half the smaller extent), gap_m
+                    (hatch only; >= 0, clearance per edge, must leave material inside the profile),
+                    x_m, y_m, z_m (profile centre; y, z optional, default 0), roll_deg, pitch_deg, yaw_deg (each
+                    optional, default 0; applied roll first about x, then pitch about y, then yaw about z, as parts),
+                    extent depth | wall | all with depth_m (depth only; positive, along the local +Z; wall = into the
+                    first wall, all = through the whole body). The profile lies in its local XY plane: local X is its
+                    length, local Y its width, local +Z the cut direction. radial (optional): count (integer >= 1,
+                    includes the seed), axis x | y | z and x_m, y_m, z_m (a point on the rotation axis); the seed and
+                    every copy are turned 360 * k / count deg about that axis line, position and local axes together.
 sections
   joints            type radial_screws, count (screws per section end), screw, insertion_depth_m (coupler or spigot into
                     each female end's socket), coupler_wall_m, fit_clearance_m (radial play of coupler, spigot, rods and

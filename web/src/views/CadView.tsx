@@ -29,6 +29,7 @@ const TASK_LABELS: Record<string, string> = {
   sections: 'Sections',
   drawings: 'Drawings',
   varsets: 'Varsets',
+  geometry: 'Compute geometry',
 }
 
 /** The busy line: the server's per-step label and count while the export runs (e.g. "Sections — writing S03 (3/12)"). */

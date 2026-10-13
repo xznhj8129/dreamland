@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { ReactElement } from 'react'
 import { editorOp } from '../store'
 import type { ResolvedSection, Snapshot } from '../types'
-import { Card, CheckboxField, ChoiceField, EntryField, Fields } from './fields'
+import { Card, CheckboxField, ChoiceField, EntryField, Fields, HelpNote } from './fields'
 import { formatValue } from './format'
 import { isObject } from './patch'
 import { ComponentPicker, useComponentIndex, useSelection } from './selection'
@@ -33,7 +33,7 @@ export function SectionsTab({ snapshot }: { snapshot: Snapshot }): ReactElement 
   }
   return <>
     <Card title="Fuselage sections">
-      <p className="form-hint">Select a section to edit its boundaries, joint and mass. Cuts do not change the fuselage shape.</p>
+      <HelpNote>Select a section to edit its boundaries, joint and mass. Cuts do not change the fuselage shape.</HelpNote>
       {notice && <div className="field-error">{notice}</div>}
     </Card>
     <ComponentPicker kind="section" items={rows.map((row, index) => ({ name: `S${index + 1}`, detail: `${formatValue('length_m', boundaries[index + 1]! - boundaries[index]!, api.context)} mm · ${row.solid === true ? 'Solid' : 'Hollow'}` }))} />
@@ -43,18 +43,18 @@ export function SectionsTab({ snapshot }: { snapshot: Snapshot }): ReactElement 
       <button type="button" disabled={!snapshot.definition_valid || rows.length === 0}
         onClick={() => void run({ op: 'section.add_cut', index: selected, side: 'after' })}>Add after</button>
     </div>
-    <p className="form-hint">Splits the selected span in half; airframe length and loft stay unchanged.</p>
+    <HelpNote>Splits the selected span in half; airframe length and loft stay unchanged.</HelpNote>
     {rows.map((row, index) => <div key={index} hidden={index !== selected}>
       <Card title={`S${index + 1}`}>
         {index > 0 ? <EntryField path={['sections','cuts_m',index - 1]} unitKey="cuts_m" label="Start (mm)" />
           : <div className="form-row"><label className="form-label" htmlFor="section-nose-start">Start (mm)</label><div className="form-control"><input id="section-nose-start" className="field-input" value="0" readOnly /></div><span className="form-hint">Nose origin</span></div>}
         <EntryField path={index < cuts.length ? ['sections','cuts_m',index] : ['fuselage','length_m']} unitKey="length_m" label="End (mm)" />
-        <p className="form-hint">A shared boundary also changes the adjoining section.</p>
+        <HelpNote>A shared boundary also changes the adjoining section.</HelpNote>
         <EntryField path={['sections','cuts_m',index]} unitKey="length_m" label="Length (mm)"
           derivedValue={boundaries[index + 1]! - boundaries[index]!}
           onValue={value => void run({ op: 'section.length', index, value })} />
         <CheckboxField path={['sections','per_section',index,'fixed_length']} checked={row.fixed_length === true} label="Fix length" />
-        <p className="form-hint">Fix preserves length during automatic resizing. Editing length keeps the airframe length and resizes the other unfixed sections proportionally.</p>
+        <HelpNote>Fix preserves length during automatic resizing. Editing length keeps the airframe length and resizes the other unfixed sections proportionally.</HelpNote>
         {index < cuts.length ? <>
           <ChoiceField path={['sections','cut_joints',index]} value={cutJoints[index]} options={api.context.cut_joints} label="Joint at end cut" />
         </> : null}

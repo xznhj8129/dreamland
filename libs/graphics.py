@@ -203,6 +203,23 @@ def draw_print_features(canvas: Any, resolved: ResolvedAirframe, project) -> Non
         canvas.create_polygon(coords, outline=FEATURE_COLOR, fill="", width=1.5, tags=("feature",))
 
 
+def draw_access(canvas: Any, resolved: ResolvedAirframe, project) -> None:
+    """Saved profiles and local cut direction, tagged for the existing selection/drag path in both projections."""
+    from libs.access import access_outline
+    for instance in resolved.access:
+        coords = [value for point in access_outline(instance) for value in project(point)]
+        canvas.create_polygon(coords, outline=FEATURE_COLOR, fill="", width=2, tags=("drag", f"access:{instance.index}"))
+        start = project(instance.center)
+        end = project(tuple(c + d * max(instance.entry.width_m, 0.015) for c, d in zip(instance.center, instance.cut_direction)))
+        canvas.create_line(*start, *end, fill=FEATURE_COLOR, width=2)
+        length = math.hypot(end[0] - start[0], end[1] - start[1])
+        if length > 1:
+            dx, dy = (end[0] - start[0]) / length, (end[1] - start[1]) / length
+            canvas.create_line(end[0] - 7 * dx + 3 * dy, end[1] - 7 * dy - 3 * dx, *end,
+                               end[0] - 7 * dx - 3 * dy, end[1] - 7 * dy + 3 * dx, fill=FEATURE_COLOR, width=2)
+        canvas.create_text(*start, text=instance.instance_id, anchor="sw", fill=FEATURE_COLOR, font=("TkDefaultFont", 8))
+
+
 def draw_marker_guide(canvas: Any, positions: dict) -> None:
     """Legend; the CG, neutral point and lift centre with their x from the nose (marker_positions)."""
     guide = [(f"{MARKER_LABELS[key]}  x {positions[key] * 1000.0:.1f} mm" if not math.isnan(positions[key]) else f"{MARKER_LABELS[key]}  (aero pending)", color)
@@ -441,6 +458,8 @@ def draw_longitudinal_view(canvas: Any, resolved: ResolvedAirframe, aero, roll_d
         canvas.create_text((x0 + x1) / 2.0, (t0 + t1) / 2.0, text=rocket.motor.designation, fill=ROCKET_COLOR, font=("TkDefaultFont", 8))
     draw_print_features(canvas, resolved, lambda point: (x_to_screen(point[0]),
                         transverse_to_screen(longitudinal_transverse(point[1], point[2], roll_rad))))
+    draw_access(canvas, resolved, lambda point: (x_to_screen(point[0]),
+                transverse_to_screen(longitudinal_transverse(point[1], point[2], roll_rad))))
     for key, x_value in marker_positions(resolved, aero).items():
         if math.isfinite(x_value):
             x_screen = x_to_screen(x_value)
@@ -551,6 +570,7 @@ def draw_front_view(canvas: Any, resolved: ResolvedAirframe, aero, ui_draw: str,
         canvas.create_text(center_x + y1 * scale + CONTROL_LABEL_OFFSET_PX * (y1 - y0) / length, center_y - z1 * scale - CONTROL_LABEL_OFFSET_PX * (z1 - z0) / length,
                            text=f"C{control.number}", fill=CONTROL_COLOR, font=("TkDefaultFont", 8, "bold"))
     draw_print_features(canvas, resolved, lambda point: (center_x + point[1] * scale, center_y - point[2] * scale))
+    draw_access(canvas, resolved, lambda point: (center_x + point[1] * scale, center_y - point[2] * scale))
     draw_marker_guide(canvas, marker_positions(resolved, aero))
     metrics["scale"] = scale
     metrics["zoom_scale"] = zoom_scale

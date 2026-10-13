@@ -1,0 +1,1 @@
+set nav_fw_cruise_thr 1400

@@ -86,6 +86,13 @@ def _apply(definition: dict, before: tuple[float, ...], lengths: list[float]) ->
         volume["x_m"] = station(volume["x_m"])
     for surface in definition["surfaces"]:
         surface["x_root_le_m"] = station(surface["x_root_le_m"])
+    # Access entries follow the station map along x; their profile dimensions and angles are physical, and the
+    # radial axis point moves with them so the pattern stays on the same body station.
+    for entry in definition.get("access", []):
+        entry["x_m"] = station(entry["x_m"])
+        radial = entry.get("radial")
+        if isinstance(radial, dict):
+            radial["x_m"] = station(radial["x_m"])
     # Surface mounts and spars follow their surface, nose/tail mounts follow the body ends.
     definition["sections"]["cuts_m"] = list(station.after[1:-1])
     fuselage["length_m"] = station.after[-1]

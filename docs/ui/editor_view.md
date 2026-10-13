@@ -19,7 +19,9 @@ EditorView split behavior
     - left / center / right panes are horizontally split
     - startup split is 25% / 50% / 25%
     - pane dividers remain draggable after startup
-    - compact form spacing; a single Auto toggle beside optional numeric inputs (pressed = automatic)
+    - compact spreadsheet-style label/value cells stay side by side in narrow panes
+    - optional numeric inputs: Auto beside the value (A in Placement cells, pressed = automatic); source under the info control
+    - explanatory text under Help; definition errors and status remain visible
     - component pickers: uniform tight vertical rows; name left, detail right; selected row highlighted
       sections show length and Solid/Hollow; guides show x; surfaces show span; volumes show x; parts show volume or x; mounts show target
     - Notes: editable text; blank allowed
@@ -48,10 +50,18 @@ RecomputeHeader [arrange:row]
         label = "Recompute (F5)"
         on:click -> run heavy recompute
 
-    - RecomputeStatus [ui:text]
-        values include:
-            "Up to date"
-            "ASB stale (F5)"
+    - ComputeGeometryButton [ui:button]
+        label = "Compute Geometry"
+        on:click -> POST /api/geometry/compute (in the CAD worker process; edits go on meanwhile)
+            builds every CAD solid of the current design once and measures the exact printed mass
+            the exact mass replaces the estimates in Mass, CG, inertia and stability as soon as it is measured
+            the rest (airframe pieces, fused shape, drawing projections) follows, so CAD exports only write files
+        disabled while computing and when current (this design measured and built)
+        any edit makes it a different design: estimates again, button enabled
+        returning to the measured design (undo) applies its exact mass again without computing
+        failures go to the Log tab
+
+    the analysis and geometry status show in the top bar (main_window.md, ProjectStatus)
 ```
 
 ### Summary tab
@@ -71,7 +81,9 @@ SummaryTab [fill]
 
 ```text
 MassTab [fill, scrollable, copyable]
-    mass and CG, inertia, mass breakdown table, printed estimates, fuselage section masses
+    mass and CG, printed structure basis ("Exact (built solids)" after Compute Geometry, else "Estimated"),
+    inertia, mass breakdown table (Source: Exact / Estimated / Given / weighed value with the exact or estimated one),
+    printed parts, fuselage section masses
 
 AeroTab [fill, scrollable, copyable]
     static stability first: nominal and ranged-CG margins, verdicts, neutral point, Barrowman cross-check
@@ -214,6 +226,7 @@ RightPane [arrange:column]
             Fuselage
             Sections
             Surfaces
+            Access           saved holes and hatches (cuts and CAD are later work)
             Volumes
             Motor mounts
             Optimization     placeholder; objectives and part-value ranges deferred
@@ -345,6 +358,29 @@ SurfacesTab [arrange:column]
       root base (not implemented) [ui:read-only]: length, width, height, forward offset, leading cut, trailing cut
 ```
 
+## Access tab
+
+```text
+AccessTab [arrange:column]
+
+    - Saved holes and hatches (definition access[]); physical fuselage cuts, separate retained hatch parts.
+    - Add Hole / Add Hatch [ui:buttons]; component picker; selected inspector with name, type and Delete
+    - name; type Hole | Hatch; profile Slot / circle or Rounded rectangle; width and length (mm, total opening
+      extents; equal slot extents = circle; a slot's length is its longest dimension); corner radius (mm, rounded
+      rectangle)
+    - Hatch: gap (mm, clearance per edge); fasteners and hinges deferred
+    - Simple: projected profile, label and cut-direction arrow; select/drag the seed or a radial copy to move the seed
+    - 3D: actual openings and curved hatch pieces; Hatches visibility toggle; Cuts & holes hides only overlays
+    - No live CAD operations; mass estimates exclude Access removals; exact material is built only on CAD export
+    - CAD export reports misses, unsupported seams, overlap ownership and attached partial-depth hatches
+    - Placement table: profile centre x/y/z (mm), then roll/pitch/yaw (deg); local X is the length, Y the width,
+      +Z the cut direction; roll about X, then pitch about Y, then yaw about Z
+    - cut extent: Depth (mm, from the profile plane along its local +Z), Through wall (first wall into its cavity),
+      Through all (the whole body)
+    - radial pattern: Enable, count (including original), X/Y/Z axis and axis position x/y/z (mm)
+      evenly spaced around a full circle; position and orientation rotate together
+```
+
 ## Motor mounts tab
 
 ```text
@@ -406,7 +442,7 @@ BatteryPanel (title "Battery")
         - cell length along [ui:dropdown]   x | y | z
         - cells along x, y, z [ui:textbox]   their product must be S x P (otherwise a definition error in the Log)
         - lead AWG [ui:dropdown], lead length (mm) [ui:textbox]
-    - collapsed Battery placement & orientation: volume and offsets, or its own x, y, z
+    - collapsed Battery placement & orientation: volume and Placement table (offsets or own x/y/z, roll/pitch/yaw)
     - the resolved pack as a labelled list [ui:labelled values]: label, size (each axis count x (cell + 2 mm)), mass, capacity
 ```
 
@@ -451,7 +487,7 @@ PartsTab [arrange:column]
     - Add part [ui:button]        new part: first library entry with a mass, in the first volume (no volume: at mid-fuselage)
     * compact part picker and selected part inspector: name, searchable part (library), volume [ui:dropdown, "(none)" first],
       in a volume: x, y, z offset from its centre (mm, blank = 0); "(none)": its own x, y, z (mm; y, z blank = 0),
-      collapsed orientation: yaw, pitch, roll (deg, blank = 0); mass (g; blank = library, required when the library has none; 0 = counted elsewhere), Delete
+      Placement table: x/y/z (mm), roll/pitch/yaw (deg, blank = 0); mass (g; blank = library, required when the library has none; 0 = counted elsewhere), Delete
 
 Rules
     - renaming a part renames it in the propulsion ESC; the propulsion battery is not a part (Propulsion tab)
@@ -506,6 +542,9 @@ Refreshes after every edit
 
 ## Field input behavior
 
+Placement table: shared by Access, Parts and battery; position-only for volumes and radial pattern axes.
+Two columns (label/value), six rows (X/Y/Z in mm, Roll/Pitch/Yaw in deg); position-only tables have three rows. Auto is A inside each cell.
+
 ```text
 Length fields
     - displayed in mm
@@ -520,7 +559,7 @@ Mass fields
 
 Numeric entries
     - Enter and blur apply the value
-    - optional fields: the Auto toggle (pressed) shows the effective value and source; toggled off enables entry
+    - optional fields: Auto (pressed) shows the effective value; the info control shows its source; toggled off enables entry
     - Auto removes the explicit definition value
 
 Type fields

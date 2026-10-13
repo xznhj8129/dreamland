@@ -1,23 +1,56 @@
 User added TODOs (do not remove/change unless done)
 
 - changing xyz positions entry (which specifically, some must stay mm) from abs mm to relative frac to allow scaling without one-by-one mm adjustment
+- "plain ass plate" as airfoil, with or without thickness-diameter rounded edges
 
-- SIM:
+**SIM**
     * MSP/Mavlink commands (maybe complicated, not right now)
     * SIM priority: flexibility and realism; editor stability estimate versus JSBSim flight response.
     * Performance flash card: efficiency, stall speed, sustained turn rate, acceleration/speed per axis, range, maximum altitude.
     * Optimization tab: optimize for X within user ranges on part values; big outlines and features first.
         
-- INAV:
-        * Current default configs bad to configure
+**INAV**
+    * Current default configs bad to configure
 
-- Hatches (for now simple rounded rectangle polar cut with width, length, gap; fasteners and hinges deferred)
-
-- Wiring
+**Wiring**
     * Wire placement (straight horizontal/vertical, only 90deg bends for now)
     * Auto-conduits from wires
-    
 
+**UI/Styling**
+    - left pane buttons (Summary, Mass, Aero, etc) are wider apart than on the right pane; create one consistent universal "button row" element
+    - Look for visual weirdness and inconsistencies, create consistent universal styling/functional elements for reuse across UI
+    - Remember open tab/section in editor to return to
+    - Activated optional modals (ie: mounting holes) always expand if enabled
+    
+**CAD**
+    - STEP export not exporting hatch
+    - Hatches start under by default, should be on top and pointing down
+    - Make hatches/holes automatically position clear above skin surface, they always point outside-in
+
+**3D view**
+    - Cuts & Holes not on by default
+    - Show/hide motors
+    - Show/hide propellers
+    
+**Motors**
+    - show actual parametric motor (open or closed (plane) base; up or reverse shaft)
+    
+    Motor hole problems most apparent with m62_qr
+    - Motor mounting holes "single central hole" is wrong, it's "radial holes", there's 4 of them. 
+    - Redesign the section with:
+        Pattern -> Hole type: Round, Slot
+        Pattern count: int (default 4)
+        Pattern angle: deg (default 0)
+        Hole diameter: Metric M1.6-M2-M2.5-M3-M4-M5 dropdown (create primitive threaded hole element to use here)
+        Pattern diameter (if round): default 19mm
+        Pattern inner diameter (if slot): default 16mm
+        Pattern outer diameter (if slot): default 19mm
+    - CAD export failure with current method using four radial slots, face failure if no bolt head cutout, complete failure if using bolt head cutout (multiple bodies)
+    - Spar carrythrough not actually going through pods (it should)
+
+**MCP**
+    - Most of it already exists as HTTP routes in webapp/server.py
+    - MCP server joins the same session as the browser. You’d watch the agent edit the airframe in real time through the existing /ws/events push
 
 ---
 Agent added TODOs, freeform, remove done ones

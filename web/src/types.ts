@@ -2,7 +2,7 @@ import type { SceneItem } from './renderer'
 
 export type LineLevel = 'info' | 'warning' | 'problem'
 
-export type ComponentKind = 'surface' | 'part' | 'volume' | 'mount' | 'section' | 'battery' | 'fuselage' | 'loft'
+export type ComponentKind = 'surface' | 'part' | 'volume' | 'mount' | 'section' | 'battery' | 'fuselage' | 'loft' | 'access'
 export interface ComponentSelection { kind: ComponentKind; index: number; label?: string }
 
 export interface ReportLine {
@@ -115,7 +115,7 @@ export interface ResolvedSnapshot {
 
 /** One movable element's screen outline from POST /api/draw (webapp/drawing.py _handles). */
 export interface DrawHandle {
-  target: 'cut' | 'loft' | 'surface' | 'spars' | 'volume' | 'part' | 'battery' | 'rod'
+  target: 'cut' | 'loft' | 'surface' | 'spars' | 'volume' | 'part' | 'battery' | 'rod' | 'access'
   index: number
   kind: 'polygon' | 'line'
   /** Canvas px, flat x,y pairs: a closed loop for polygon, a polyline for line. */
@@ -200,7 +200,15 @@ export interface Snapshot {
   log: LogEntry[]
   status: string
   aero_pending: boolean
+  /** Compute Geometry for the current design (webapp/state.py AppState.geometry_status). */
+  geometry: GeometryStatus
 }
+
+/**
+ * none: never measured; stale: measured for another design; exact: the exact mass applies, solids not built in this
+ * server; current: exact mass applies and every solid is built (exports only write files); computing: a run is on.
+ */
+export type GeometryStatus = 'none' | 'stale' | 'exact' | 'current' | 'computing'
 
 export interface StateMessage extends Snapshot {
   type: 'state'
@@ -237,7 +245,7 @@ export interface Model3DRocket {
 /** webapp/model3d.py build_model3d: one component as a flat triangle mesh in metres, airframe frame (x forward). */
 export interface Model3DMesh {
   name: string
-  kind: 'body' | 'pod' | 'panel' | 'control' | 'volume' | 'part' | 'motor' | 'prop' | 'rod' | 'spar' | 'section' | 'loft' | 'feature'
+  kind: 'body' | 'pod' | 'panel' | 'control' | 'volume' | 'part' | 'motor' | 'prop' | 'rod' | 'spar' | 'section' | 'loft' | 'feature' | 'hatch'
   /** Flat x,y,z triples. */
   positions: number[]
   indices: number[]
@@ -352,6 +360,10 @@ export interface EditorContext {
   single_prop_spins: string[]
   volume_shapes: string[]
   volume_shape_fields: Record<string, Record<string, unknown>>
+  /** Access (webapp/editor.py context()): the enum values for kind, profile and cut extent. */
+  access_kinds: string[]
+  access_profiles: string[]
+  access_extents: string[]
   part_categories: string[]
   layout_panel_counts: Record<string, number>
   placement_keys: string[]

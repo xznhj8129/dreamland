@@ -1,5 +1,5 @@
 /**
- * Direct fetch helpers for the CAD view (webapp/cad.py routes).
+ * Direct fetch helpers for the CAD view and Compute Geometry (webapp/cad.py routes).
  *
  * These bypass the store's mutation queue on purpose: an export holds the server's export lock for seconds and
  * must not delay the editor's queued commands. A refusal answers with the state snapshot whose last Log entry
@@ -114,6 +114,20 @@ export function exportDrawings(): Promise<CadAnswer> {
 
 export function exportVarsets(): Promise<CadAnswer> {
   return post('/api/cad/varsets')
+}
+
+/**
+ * POST /api/geometry/compute: Compute Geometry for the current design (minutes, so it bypasses the editor queue
+ * like the exports). The result arrives with the state push (Snapshot.geometry and the exact mass in the report);
+ * a failure is in the Log. False when the server was unreachable or refused.
+ */
+export async function computeGeometry(): Promise<boolean> {
+  try {
+    const response = await fetch('/api/geometry/compute', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })
+    return response.ok
+  } catch {
+    return false
+  }
 }
 
 /** The one export in flight, polled while an export's request is open; null when unreachable or malformed. */

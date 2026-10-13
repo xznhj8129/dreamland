@@ -12,12 +12,13 @@ import math
 from typing import Any
 
 from libs.airframe import (
+    ACCESS_EXTENTS, ACCESS_KINDS, ACCESS_PROFILES,
     AXES, BATTERY_PART_NAME, CONTROL_KINDS, CONTROL_ROLES, CUT_JOINTS, ELECTRIC_MOUNT_KEYS, FIN_POSITIONS, INCIDENCE_MODES,
     JOINT_TYPES, LAYOUT_PANEL_COUNTS, LAYOUTS, MOUNT_TARGETS, MOUNT_TYPES, ORIENTATION_KEYS, PART_CATEGORIES,
     REINFORCEMENT_TYPES, ROCKET_MOUNT_TARGETS, SERVO_OUTPUTS, SINGLE_PROP_SPINS, SURFACE_PROP_SPINS, SURFACE_ROOTS,
     THRUST_DIRECTIONS, VOLUME_SHAPES, AirframeError, cell_format, motor_count, motor_repo,
 )
-from libs.geometry import loft_section_at
+from libs.geometry import body_section_at, loft_section_at
 from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS
 from libs.rocketmotors import rocket_motor, rocket_motor_names
 from libs.presets import (
@@ -33,7 +34,7 @@ MM_KEYS = {
     "length_m", "width_m", "height_m", "wall_radial_m", "insertion_depth_m", "diameter_m", "radial_position_m",
     "from_x_m", "to_x_m", "x_root_le_m", "span_m", "chord_root_m", "chord_tip_m", "span_position_m",
     "x_offset_m", "y_offset_m", "z_offset_m", "x_m", "y_m", "z_m", "lead_length_m", "flat_length_m", "curve_length_m", "nose_radius", "size_m", "printer_bed_m", "cuts_m",
-    "corner_radius_m", "stem_width_m", "flare_radius_m", "root_length_m", "wall_fillet_m", "coupler_wall_m", "fit_clearance_m", "socket_wall_m", "hole_edge_dist_m", "hole_diameter_m", "spacing_m", "forward_offset_m", "leading_cut_m", "trailing_cut_m", "gap_m", "rod_diameter_m", "rod_x_offset_m", "rod_y_offset_m",
+    "corner_radius_m", "stem_width_m", "flare_radius_m", "root_length_m", "wall_fillet_m", "coupler_wall_m", "fit_clearance_m", "socket_wall_m", "hole_edge_dist_m", "hole_diameter_m", "spacing_m", "forward_offset_m", "leading_cut_m", "trailing_cut_m", "gap_m", "depth_m", "rod_diameter_m", "rod_x_offset_m", "rod_y_offset_m",
 }
 # editor_view.py 43
 GRAM_KEYS = {"mass_kg", "coupler_mass_kg", "empty_mass_kg", "complete_mass_kg"}
@@ -95,6 +96,14 @@ NEW_MOUNT_HOLES = {"pattern": "single", "d1_m": 0.003, "d2_m": 0.003, "hole_diam
 NEW_SPARS = {"material": "carbon_rod", "diameter_m": 0.0064, "count": 2, "spacing_m": 0.0075, "x_offset_m": 0.02, "y_offset_m": 0.0}
 NEW_CARRY_THROUGH = {"stem_width_m": 0.01, "length_m": 0.02, "flare_radius_m": 0.02, "root_length_m": 0.04, "wall_fillet_m": 0.004}
 NEW_ROOT_BASE = {"length_m": 0.096, "width_m": 0.018, "height_m": 0.0, "forward_offset_m": 0.0, "leading_cut_m": 0.01, "trailing_cut_m": 0.06}
+# Access: a new seed sits on the resolved lower skin near mid-body with its local +Z (the cut direction) inward.
+# add_access fills the position from the resolved body; apply_op's access ops add or drop exactly the fields the
+# chosen kind, profile or extent owns, keeping existing values otherwise.
+NEW_ACCESS = {"kind": "hole", "profile": "slot", "width_m": 0.02, "length_m": 0.04, "extent": "wall"}
+NEW_ACCESS_GAP_M = 0.0003
+NEW_ACCESS_CORNER_RADIUS_M = 0.003
+NEW_ACCESS_DEPTH_M = 0.002
+NEW_ACCESS_RADIAL = {"count": 8, "axis": "x"}
 # editor_view.add_mount 1115-1118
 NEW_MOUNT = {"type": "electric", "on": "nose", "x_offset_m": 0.0, "direction": "tractor", "spin": SINGLE_PROP_SPINS[0], "thrust_axis_tilt_deg": 0.0}
 # editor_view.add_volume 1242-1249: name and x_m are set from the definition, then the `box` shape fields.
@@ -118,7 +127,7 @@ WIRING_COLUMNS = ("run", "length mm", "AWG", "wires", "plugs, along the run")
 NO_VOLUME = "(none)"
 PLACEMENT_KEYS = ("volume", "x_offset_m", "y_offset_m", "z_offset_m", "x_m", "y_m", "z_m")
 # editor_view.py 99-100
-MOVE_TARGETS = ("cut", "loft", "spars", "surface", "volume", "part", "battery", "rod")  # the drag handle targets
+MOVE_TARGETS = ("cut", "loft", "spars", "surface", "volume", "part", "battery", "rod", "access")  # the drag handle targets
 MOVE_QUANTUM_M = 1e-5  # 0.01 mm: dragged dimensions snap to this grid and are rounded to this accuracy
 
 
@@ -207,6 +216,10 @@ def context(state: AppState) -> dict[str, Any]:
         "single_prop_spins": list(SINGLE_PROP_SPINS),
         "volume_shapes": list(VOLUME_SHAPES),
         "volume_shape_fields": VOLUME_SHAPE_FIELDS,
+        # Access (webapp.editor.add_access and the access ops): the enum values and the creation defaults.
+        "access_kinds": list(ACCESS_KINDS),
+        "access_profiles": list(ACCESS_PROFILES),
+        "access_extents": list(ACCESS_EXTENTS),
         "part_categories": list(PART_CATEGORIES),
         "layout_panel_counts": LAYOUT_PANEL_COUNTS,
         "placement_keys": list(PLACEMENT_KEYS),
@@ -672,6 +685,32 @@ def reset_volume_shape(volume: dict, shape: str) -> None:
         volume[key] = copy.deepcopy(value)
 
 
+def add_access(state: AppState, kind: str = "hole") -> None:
+    """A new Hole or Hatch on the resolved body's lower skin at mid-body: the profile centre sits in the outer
+    surface (y 0, z the section's lower half-height at that station) so the default wall extent cuts the near wall,
+    and the local +Z (the cut direction) points inward, +z. The entry gets the fields its kind needs."""
+    if kind not in ACCESS_KINDS:
+        raise ValueError(f"access kind must be one of {ACCESS_KINDS}, got {kind!r}")
+    definition = state.definition
+    resolved = state.resolved
+    if resolved is None:
+        raise ValueError("the airframe does not resolve; fix the definition before adding an access entry")
+    x_m = definition["fuselage"]["length_m"] / 2.0
+    station = body_section_at(resolved.body, x_m)
+    if station.width_m <= 0.0 or station.height_m <= 0.0:
+        raise ValueError(f"the fuselage has no section at its mid-body station {x_m} m to place a new access entry on")
+    names = {entry.get("name") for entry in definition["access"]}
+    label = "Hole" if kind == "hole" else "Hatch"
+    number = len(definition["access"]) + 1
+    while f"{label} {number}" in names:
+        number += 1
+    entry = {"name": f"{label} {number}", **copy.deepcopy(NEW_ACCESS), "x_m": x_m, "y_m": 0.0, "z_m": -station.height_m / 2.0}
+    entry["kind"] = kind
+    if kind == "hatch":
+        entry["gap_m"] = NEW_ACCESS_GAP_M
+    definition["access"].append(entry)
+
+
 def add_part(definition: dict, parts_data: dict) -> None:
     """editor_view.add_part (1227-1234): `part n`, the first library entry that has a mass, into the first volume or at
     the middle of the fuselage."""
@@ -882,6 +921,52 @@ def apply_op(state: AppState, body: dict[str, Any]) -> None:
         if not isinstance(battery, dict):
             raise ValueError("the definition has no propulsion battery")
         set_item_volume(state, battery, body.get("volume"), BATTERY_PART_NAME)
+    # Access: saved holes and hatches; the ops add or drop exactly the fields the picked kind, profile or extent owns
+    # (existing values are kept), and the radial toggle owns the optional pattern block. Cuts and CAD are later work.
+    elif op == "access.add":
+        add_access(state, body.get("kind", "hole"))
+    elif op == "access.delete":
+        _indexed(definition["access"], body.get("index"), "access entry")
+        definition["access"].pop(body["index"])
+    elif op == "access.kind":
+        entry = _indexed(definition["access"], body.get("index"), "access entry")
+        kind = body.get("kind")
+        if kind not in ACCESS_KINDS:
+            raise ValueError(f"access kind must be one of {ACCESS_KINDS}, got {kind!r}")
+        entry["kind"] = kind
+        if kind == "hatch":
+            entry.setdefault("gap_m", NEW_ACCESS_GAP_M)
+        else:
+            entry.pop("gap_m", None)
+    elif op == "access.profile":
+        entry = _indexed(definition["access"], body.get("index"), "access entry")
+        profile = body.get("profile")
+        if profile not in ACCESS_PROFILES:
+            raise ValueError(f"access profile must be one of {ACCESS_PROFILES}, got {profile!r}")
+        entry["profile"] = profile
+        if profile == "rounded_rectangle":
+            entry.setdefault("corner_radius_m", min(NEW_ACCESS_CORNER_RADIUS_M, min(entry["width_m"], entry["length_m"]) / 2.0))
+        else:
+            entry.pop("corner_radius_m", None)
+    elif op == "access.extent":
+        entry = _indexed(definition["access"], body.get("index"), "access entry")
+        extent = body.get("extent")
+        if extent not in ACCESS_EXTENTS:
+            raise ValueError(f"access extent must be one of {ACCESS_EXTENTS}, got {extent!r}")
+        entry["extent"] = extent
+        if extent == "depth":
+            entry.setdefault("depth_m", NEW_ACCESS_DEPTH_M)
+        else:
+            entry.pop("depth_m", None)
+    elif op == "access.radial":
+        entry = _indexed(definition["access"], body.get("index"), "access entry")
+        if body.get("enabled") is True:
+            entry["radial"] = {
+                "count": NEW_ACCESS_RADIAL["count"], "axis": NEW_ACCESS_RADIAL["axis"],
+                "x_m": entry["x_m"], "y_m": entry.get("y_m", 0.0), "z_m": entry.get("z_m", 0.0),
+            }
+        else:
+            entry.pop("radial", None)
     # Volumes (build_volumes_tab 1124-1172).
     elif op == "volume.add":
         add_volume(definition)
@@ -1013,6 +1098,10 @@ def apply_move(state: AppState, body: dict[str, Any], notify: bool = True) -> No
             volume["y_m"] = _quantize(volume.get("y_m", 0.0) + dy)
         if dz:
             volume["z_m"] = _quantize(volume.get("z_m", 0.0) + dz)
+    elif target == "access":
+        entry = _indexed(definition["access"], index, "access entry")
+        if not _move_placement(entry, dx, dy, dz, f"access {entry['name']!r}"):
+            return
     elif target == "part":
         part = _indexed(definition["parts"], index, "part")
         if not _move_placement(part, dx, dy, dz, f"part {part.get('name', index)!r}"):

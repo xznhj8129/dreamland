@@ -58,6 +58,7 @@ PropertyEditor [fill]
 
 ```text
 Formatting
+    - compact spreadsheet-style label/value cells; optional-field guidance on hover and in the accessible description
     - length fields are shown in mm where applicable
     - mass fields are shown in g
     - descriptive labels with units; battery dimensions only under Dimensions

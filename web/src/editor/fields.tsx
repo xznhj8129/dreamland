@@ -4,6 +4,7 @@ import type { EditorContext } from '../types'
 import { FieldParseError, displayFactor, fieldLabel, formatValue, parseValue } from './format'
 import { getIn, isObject } from './patch'
 import type { Path } from './patch'
+import { PlacementTable } from './PlacementTable'
 import { useFormApi } from './session'
 
 interface EntryFieldProps {
@@ -156,9 +157,9 @@ export function EntryField({
   }
 
   return (
-    <div className={showLabel ? 'form-row' : 'form-row form-row-bare'}>
+    <div className={showLabel ? `form-row${optional ? ' form-row-with-help' : ''}` : 'form-row form-row-bare'}>
       {showLabel && (
-        <label className="form-label" htmlFor={id}>
+        <label className="form-label" htmlFor={id} title={label ?? fieldLabel(unitKey, api.context)}>
           {label ?? fieldLabel(unitKey, api.context)}
         </label>
       )}
@@ -166,7 +167,8 @@ export function EntryField({
         {optional && <div className="optional-mode">
           <button type="button" className={!overriding ? 'active' : ''} aria-pressed={!overriding}
             aria-label={`${label ?? fieldLabel(unitKey, api.context)} Auto`}
-            onClick={overriding ? useAuto : useOverride}>Auto</button>
+            title={`Auto: ${automatic}${defaultText !== '' ? ` (${defaultText})` : ''}`}
+            onClick={overriding ? useAuto : useOverride}>{showLabel ? 'Auto' : 'A'}</button>
         </div>}
         <input
           ref={inputRef}
@@ -196,7 +198,10 @@ export function EntryField({
         {error !== '' && <div className="field-error">{error}</div>}
       </div>
       {showLabel && optional && (
-        <span className="form-hint">{automatic}{defaultText !== '' ? `: ${defaultText}` : ''}{overriding ? ' · overridden' : ''}</span>
+        <details className="field-help">
+          <summary aria-label={`${label ?? fieldLabel(unitKey, api.context)} default`} title="Default value and source">ⓘ</summary>
+          <div className="field-help-text">{automatic}{defaultText !== '' ? `: ${defaultText}` : ''}{overriding ? ' · overridden' : ''}</div>
+        </details>
       )}
     </div>
   )
@@ -237,7 +242,7 @@ export function ChoiceField({ path, value, options, optionLabels, label, unitKey
   return (
     <div className={showLabel ? 'form-row' : 'form-row form-row-bare'}>
       {showLabel && (
-        <label className="form-label" htmlFor={id}>
+        <label className="form-label" htmlFor={id} title={label ?? fieldLabel(unitKey ?? String(path[path.length - 1]), api.context)}>
           {label ?? fieldLabel(unitKey ?? String(path[path.length - 1]), api.context)}
         </label>
       )}
@@ -289,6 +294,11 @@ export function Group({ label, children }: { label: string; children: ReactNode 
       {children}
     </fieldset>
   )
+}
+
+/** Keep explanatory text available without reserving several lines in the inspector. */
+export function HelpNote({ children }: { children: ReactNode }): ReactElement {
+  return <details className="form-help"><summary>Help</summary><div className="form-hint">{children}</div></details>
 }
 
 interface OptionalBlockProps {
@@ -363,11 +373,14 @@ interface PlacementFieldsProps {
 
 /**
  * editor_view.add_placement (1190-1207): volume dropdown (NO_VOLUME first) and the offsets in it, or the item's
- * own x, y, z, then its yaw, pitch, roll. Shared by the Parts form and the Propulsion battery.
+ * own x, y, z and roll, pitch, yaw in a compact Placement table. Shared by Parts and the Propulsion battery.
  */
 export function PlacementFields({ path, item, volumeNames, onVolume }: PlacementFieldsProps): ReactElement {
   const api = useFormApi()
   const inVolume = typeof item.volume === 'string'
+  const xKey = inVolume ? 'x_offset_m' : 'x_m'
+  const yKey = inVolume ? 'y_offset_m' : 'y_m'
+  const zKey = inVolume ? 'z_offset_m' : 'z_m'
   return (
     <>
       <ChoiceField
@@ -377,25 +390,15 @@ export function PlacementFields({ path, item, volumeNames, onVolume }: Placement
         options={[api.context.no_volume, ...volumeNames]}
         onValue={onVolume}
       />
-      {inVolume ? (
-        <>
-          {['x_offset_m', 'y_offset_m', 'z_offset_m'].map((key) => (
-            <EntryField key={key} path={[...path, key]} unitKey={key} optional blankHint="blank = 0" />
-          ))}
-        </>
-      ) : (
-        <>
-          <EntryField path={[...path, 'x_m']} unitKey="x_m" />
-          {['y_m', 'z_m'].map((key) => (
-            <EntryField key={key} path={[...path, key]} unitKey={key} optional blankHint="blank = 0" />
-          ))}
-        </>
-      )}
-      <details className="advanced-fields"><summary>Orientation</summary>
-      {api.context.orientation_keys.map((key) => (
-        <EntryField key={key} path={[...path, key]} unitKey={key} optional blankHint="blank = 0" />
-      ))}
-      </details>
+      <PlacementTable positionLabel={inVolume ? 'Offset' : 'Position'} position={[
+        <EntryField key={xKey} path={[...path, xKey]} unitKey={xKey} label={`${inVolume ? 'Offset' : 'Position'} X (mm)`} showLabel={false} optional={inVolume} blankHint="blank = 0" />,
+        <EntryField key={yKey} path={[...path, yKey]} unitKey={yKey} label={`${inVolume ? 'Offset' : 'Position'} Y (mm)`} showLabel={false} optional blankHint="blank = 0" />,
+        <EntryField key={zKey} path={[...path, zKey]} unitKey={zKey} label={`${inVolume ? 'Offset' : 'Position'} Z (mm)`} showLabel={false} optional blankHint="blank = 0" />,
+      ]} angles={[
+        <EntryField path={[...path, 'roll_deg']} unitKey="roll_deg" label="Roll (deg)" showLabel={false} optional blankHint="blank = 0" />,
+        <EntryField path={[...path, 'pitch_deg']} unitKey="pitch_deg" label="Pitch (deg)" showLabel={false} optional blankHint="blank = 0" />,
+        <EntryField path={[...path, 'yaw_deg']} unitKey="yaw_deg" label="Yaw (deg)" showLabel={false} optional blankHint="blank = 0" />,
+      ]} />
     </>
   )
 }

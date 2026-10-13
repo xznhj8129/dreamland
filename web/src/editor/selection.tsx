@@ -41,6 +41,7 @@ export function selectionFromHandle(handle: Pick<DrawHandle, 'target' | 'index'>
 }
 
 export function handleFromSelection(selection: ComponentSelection | null): Pick<DrawHandle, 'target' | 'index'> | null {
+  // Mounts have no draw handle; access entries are not drawn yet (a later change gives them outlines).
   if (selection === null || selection.kind === 'mount') return null
   const target = selection.kind === 'section' ? 'cut' : selection.kind === 'fuselage' ? 'rod' : selection.kind
   return { target, index: selection.index }

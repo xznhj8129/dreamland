@@ -91,7 +91,7 @@ function FieldRow({ node, payload, edits, errors, onEdit }: FieldRowProps): Reac
   const onChange = (event: ChangeEvent<HTMLInputElement>): void => onEdit(key, { text: event.target.value })
   return (
     <div className="form-row">
-      <label className="form-label" htmlFor={id}>
+      <label className="form-label" htmlFor={id} title={label}>
         {label}
       </label>
       <div className="form-control">
@@ -101,9 +101,10 @@ function FieldRow({ node, payload, edits, errors, onEdit }: FieldRowProps): Reac
           value={text}
           spellCheck={false}
           aria-invalid={error !== undefined}
+          title={node.optionalKind !== null ? 'blank = left out' : undefined}
+          aria-description={node.optionalKind !== null ? 'blank = left out' : undefined}
           onChange={onChange}
         />
-        {node.optionalKind !== null && <span className="form-hint">blank = left out</span>}
         {error !== undefined && <div className="field-error">{error}</div>}
       </div>
     </div>

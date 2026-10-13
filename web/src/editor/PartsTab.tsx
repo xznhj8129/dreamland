@@ -1,7 +1,7 @@
 import { useState } from 'react'
 import type { ReactElement } from 'react'
 import { editorOp } from '../store'
-import { Card, ChoiceField, EntryField, PlacementFields } from './fields'
+import { Card, ChoiceField, EntryField, PlacementFields, HelpNote } from './fields'
 import { formatValue } from './format'
 import { isObject } from './patch'
 import { useFormApi } from './session'
@@ -34,10 +34,10 @@ export function PartsTab(): ReactElement {
   return (
     <>
       <Card title="Parts">
-        <p className="form-hint">
+        <HelpNote>
           Library components (data/parts/), in a volume (offset from its centre) or at their own x, y, z. Mass: grams, or a range like 10-30; 0 = counted
           elsewhere (e.g. a weighed section).
-        </p>
+        </HelpNote>
         <div className="button-row">
           <button type="button" onClick={() => void run({ op: 'part.add' })}>
             Add part

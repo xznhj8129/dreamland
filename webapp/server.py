@@ -68,6 +68,7 @@ def create_app(state: AppState, dist_dir: Path) -> web.Application:
     app.router.add_post("/api/library/delete", handle_library_delete)
     app.router.add_post("/api/draw", handle_draw)
     app.router.add_post("/api/model3d", handle_model3d)
+    app.router.add_post("/api/geometry/compute", handle_geometry_compute)
     app.router.add_post("/api/cad/step", handle_cad_step)
     app.router.add_post("/api/cad/stl", handle_cad_stl)
     app.router.add_post("/api/cad/sections", handle_cad_sections)
@@ -473,7 +474,8 @@ async def handle_model3d(request: web.Request) -> web.Response:
         return web.json_response(snapshot(state), status=409)
     if state.resolved is None:
         return web.json_response(snapshot(state), status=409)
-    return web.json_response(build_model3d(state.resolved, state.aero))
+    resolved, aero = state.resolved, state.aero
+    return web.json_response(await asyncio.to_thread(build_model3d, resolved, aero))  # off the loop: edits stay responsive
 
 
 NO_VALID_AIRFRAME = "No valid airframe yet; fix the definition first."
@@ -521,6 +523,35 @@ async def _run_cad_export(state: AppState, export: Callable[..., dict[str, Any]]
     except cad_export.ExportFailed as error:
         return _cad_export_failed(state, error)
     return web.json_response(result)
+
+
+async def handle_geometry_compute(request: web.Request) -> web.Response:
+    """POST /api/geometry/compute: Compute Geometry for the current design, in worker threads, while edits go on.
+
+    First the printable parts and the exact printed mass (saved to cad/exact_mass.json and applied as soon as it is
+    measured, when the design is still the current one), then every other solid the CAD exports use. Progress is the
+    CAD progress record (task geometry); a failure goes to the Log like a CAD export. A second request while one runs
+    is refused with the snapshot (409)."""
+    state = _state(request)
+    if state.resolved is None:
+        return _refuse_no_airframe(state)
+    if state.geometry_computing:
+        return web.json_response(snapshot(state), status=409)
+    resolved, project = state.resolved, state.project
+    state.geometry_computing = True
+    state.notify()
+    try:
+        design = await asyncio.to_thread(cad_export.measure_geometry, resolved, project, state.parts_data)
+        if state.project is project:
+            state.adopt_measured(design)
+        await asyncio.to_thread(cad_export.build_geometry, resolved, state.parts_data)
+    except cad_export.ExportFailed as error:
+        state.geometry_computing = False  # before the failure snapshot is built
+        return _cad_export_failed(state, error)
+    finally:
+        state.geometry_computing = False  # never left set, whatever ends the run
+    state.notify()
+    return web.json_response(snapshot(state))
 
 
 async def handle_cad_step(request: web.Request) -> web.Response:

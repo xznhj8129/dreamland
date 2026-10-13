@@ -13,7 +13,7 @@ from pathlib import Path
 
 from libs.airframe import load_airframe, load_parts_data
 from libs.flightlog import flight_log_path, flight_snapshot
-from libs.geometry import resolve_airframe
+from libs.computed_geometry import resolve_project
 from libs.jsbsim import reuse_or_export
 from libs.project import open_project
 from libs.scenario import CONTROLLERS, DEFAULT_LIMIT_S, Flight, ScenarioSpec, ScenarioStopped, load_scenario, scenario_path
@@ -48,7 +48,8 @@ def main():
     spec = ScenarioSpec.from_source(source, args.controller)
     apply_start_defaults(args, spec.start)
     parts = load_parts_data()
-    resolved, _ = resolve_airframe(load_airframe(project.build_path, parts), parts)
+    resolved, _, exact = resolve_project(load_airframe(project.build_path, parts), parts, project.cad_dir)
+    print(f"Printed structure mass: {'exact (built solids)' if exact else 'estimated'}")
     airframe = resolved.airframe
     reason = start_reasons(airframe)[args.start]
     if reason is not None:

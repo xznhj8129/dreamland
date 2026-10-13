@@ -129,7 +129,11 @@ def stability_metrics(
 
 
 def mass_sections(resolved: ResolvedAirframe) -> list[ReportSection]:
-    metrics = [ReportMetric("Total mass", mass_text(resolved.mass_kg))]
+    exact = any(point.exact for point in resolved.mass_points)
+    metrics = [
+        ReportMetric("Total mass", mass_text(resolved.mass_kg)),
+        ReportMetric("Printed structure", "Exact (built solids)" if exact else "Estimated"),
+    ]
     metrics.extend(
         ReportMetric(f"CG {axis}", f"{value:.4f} m")
         for axis, value in zip("xyz", resolved.cg_m)
@@ -169,10 +173,11 @@ def mass_sections(resolved: ResolvedAirframe) -> list[ReportSection]:
     )
     rows = []
     for point in resolved.mass_points:
+        basis = "Exact" if point.exact else "Estimate"
         note = (
-            "Estimated"
+            ("Exact" if point.exact else "Estimated")
             if point.computed
-            else f"Estimate {point.estimate_kg * 1000:.1f} g"
+            else f"{basis} {point.estimate_kg * 1000:.1f} g"
             if point.estimate_kg is not None
             else "Given"
         )
@@ -200,13 +205,15 @@ def mass_sections(resolved: ResolvedAirframe) -> list[ReportSection]:
                         f"{sum(point.mass_kg[0] for point in estimated) * 1000:.1f} g",
                     ),
                     ReportMetric(
-                        "Estimated",
+                        "Exact" if exact else "Estimated",
                         f"{sum(point.estimate_kg for point in estimated) * 1000:.1f} g",
                     ),
                 ],
                 [
                     ReportLine(
-                        "Hollow sections: shell wall × material density. Solid sections: less their volumes; surfaces: solid airfoil volume × print.bulk_density_kg_m3."
+                        "Measured on the built CAD solids."
+                        if exact
+                        else "Hollow sections: shell wall × material density. Solid sections: less their volumes; surfaces: solid airfoil volume × print.bulk_density_kg_m3."
                     )
                 ],
             )
@@ -219,7 +226,7 @@ def mass_sections(resolved: ResolvedAirframe) -> list[ReportSection]:
             ),
             ReportMetric("Empty, as used", f"{section.empty_kg * 1000:.1f} g"),
             ReportMetric(
-                "Empty estimate",
+                "Empty, exact" if exact else "Empty estimate",
                 "Not available"
                 if section.empty_estimate_kg is None
                 else f"{section.empty_estimate_kg * 1000:.1f} g",

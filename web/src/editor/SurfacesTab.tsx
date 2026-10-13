@@ -2,7 +2,7 @@ import { useState } from 'react'
 import type { ReactElement } from 'react'
 import { editorOp } from '../store'
 import type { ResolvedControl, Snapshot } from '../types'
-import { Card, CheckboxField, ChoiceField, EntryField, Fields, OptionalBlock } from './fields'
+import { Card, CheckboxField, ChoiceField, EntryField, Fields, OptionalBlock, HelpNote } from './fields'
 import { fieldLabel, formatValue } from './format'
 import { isObject } from './patch'
 import { useFormApi } from './session'
@@ -144,7 +144,7 @@ function SurfaceSections({ index, surface, onOp }: Pick<SurfaceCardProps, 'index
   }
   return <details className="form-group" open>
     <summary>Sections</summary>
-    <p className="form-hint">S1 stays attached; later fixed segments print separately. Controls stay in one piece.</p>
+    <HelpNote>S1 stays attached; later fixed segments print separately. Controls stay in one piece.</HelpNote>
     <ComponentList label="Select surface section" index={selected} onSelect={setSelection}
       items={bounds.slice(1).map((end, position) => ({ name: position === 0 ? 'S1 · Root' : `S${position + 1}`,
         detail: `${formatValue('length_m', end - bounds[position]!, api.context)} mm` }))} />
@@ -152,12 +152,12 @@ function SurfaceSections({ index, surface, onOp }: Pick<SurfaceCardProps, 'index
       <button type="button" onClick={() => void add('before')}>Add before</button>
       <button type="button" onClick={() => void add('after')}>Add after</button>
     </div>
-    <p className="form-hint">First cut: 15 mm root (max half span). Later cuts halve the selected segment.</p>
+    <HelpNote>First cut: 15 mm root (max half span). Later cuts halve the selected segment.</HelpNote>
     {selected > 0 ? <EntryField path={[...path, selected - 1]} unitKey="length_m" label="Start (mm)" />
       : <div className="form-row"><span className="form-label">Start (mm)</span><output>0</output></div>}
     {selected < cuts.length ? <EntryField path={[...path, selected]} unitKey="length_m" label="End (mm)" />
       : <div className="form-row"><span className="form-label">End (mm)</span><output>{formatValue('length_m', surface.span_m, api.context)}</output></div>}
-    <p className="form-hint">Start and End are cut positions in mm from the root; the first Start is 0, the last End is the fixed wing span. A shared boundary also changes the adjoining segment.</p>
+    <HelpNote>Start and End are cut positions in mm from the root; the first Start is 0, the last End is the fixed wing span. A shared boundary also changes the adjoining segment.</HelpNote>
     {selected < cuts.length && <button type="button" className="danger" onClick={() => void onOp({ op: 'surface.section.delete', index, section_index: selected })}>Remove end cut & merge sections</button>}
   </details>
 }

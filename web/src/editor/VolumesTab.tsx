@@ -1,9 +1,10 @@
 import { useState } from 'react'
 import type { ReactElement } from 'react'
 import { editorOp } from '../store'
-import { Card, ChoiceField, EntryField, VectorField } from './fields'
+import { Card, ChoiceField, EntryField, VectorField, HelpNote } from './fields'
 import { formatValue } from './format'
 import { isObject } from './patch'
+import { PlacementTable } from './PlacementTable'
 import { useFormApi } from './session'
 import { ComponentPicker, useComponentIndex, useSelection } from './selection'
 
@@ -28,10 +29,10 @@ export function VolumesTab(): ReactElement {
   return (
     <>
       <Card title="Volumes">
-        <p className="form-hint">
+        <HelpNote>
           Internal space; parts sit in volumes (Parts tab). Mass: grams, or a range like 10-30. Drag volumes along the body in the side view (their parts
           move with them).
-        </p>
+        </HelpNote>
         <div className="button-row">
           <button type="button" onClick={() => void run({ op: 'volume.add' })}>
             Add volume
@@ -82,9 +83,11 @@ function VolumeCard({ index, volume, contents, onOp }: VolumeCardProps): ReactEl
         // 1132: a shape change resets the shape's fields to their template values.
         onValue={(value) => void onOp({ op: 'volume.shape', index, shape: value })}
       />
-      <EntryField path={[...path, 'x_m']} unitKey="x_m" />
-      <EntryField path={[...path, 'y_m']} unitKey="y_m" optional blankHint="blank = 0" />
-      <EntryField path={[...path, 'z_m']} unitKey="z_m" optional blankHint="blank = 0" />
+      <PlacementTable position={[
+        <EntryField path={[...path, 'x_m']} unitKey="x_m" label="Position X (mm)" showLabel={false} />,
+        <EntryField path={[...path, 'y_m']} unitKey="y_m" label="Position Y (mm)" showLabel={false} optional blankHint="blank = 0" />,
+        <EntryField path={[...path, 'z_m']} unitKey="z_m" label="Position Z (mm)" showLabel={false} optional blankHint="blank = 0" />,
+      ]} />
       {Object.keys(shapeFields).map((key) => {
         if (key === 'size_m') {
           return <VectorField key={key} path={[...path, 'size_m']} unitKey="size_m" axes={['x', 'y', 'z']} />

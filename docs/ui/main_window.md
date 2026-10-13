@@ -73,8 +73,13 @@ TopBar [docked:top, arrange:row]
             on:click -> raise the view; the visible view's button is highlighted
             VLM disabled and labelled Planned
 
-    * ProjectStatus
+    * ProjectStatus [arrange:row, right]
+        analysis status: "Up to date" | "Computing aero..." | "Aero pending" | "<error> (see Log)" ...
+        geometry status: "Mass estimated" | "Geometry stale" | "Exact mass" | "Geometry current"
+            | "Computing geometry: <step> (<done>/<total>)" (the CAD worker's progress while Compute Geometry runs)
         Saved | Unsaved changes; Save button enabled when changed
+        project name, aircraft name
+        status indicators live here, not in the views
 ```
 
 ### Load / Save behavior

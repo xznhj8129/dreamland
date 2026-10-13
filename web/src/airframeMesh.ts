@@ -134,7 +134,7 @@ export function buildAirframe(
     if (control !== undefined) geometry.translate(-control.hinge[0], -control.hinge[1], -control.hinge[2])
     const doubleSided = mesh.kind === 'panel' || mesh.kind === 'control'
     const seeThrough = mesh.kind === 'volume' || mesh.kind === 'prop'
-    const skin = options.transparentSkin && ['body', 'pod', 'panel', 'control'].includes(mesh.kind)
+    const skin = options.transparentSkin && ['body', 'pod', 'panel', 'control', 'hatch'].includes(mesh.kind)
     const material = new THREE.MeshStandardMaterial({
       color: new THREE.Color(mesh.color),
       side: doubleSided || skin ? THREE.DoubleSide : THREE.FrontSide,
@@ -145,6 +145,7 @@ export function buildAirframe(
       metalness: 0.05,
     })
     const object = new THREE.Mesh(geometry, material)
+    object.userData.kind = mesh.kind
     if (doubleSided) {
       // A flat panel/control shell seen edge-on (the Side view) renders nothing; its edges stay visible.
       object.add(new THREE.LineSegments(new THREE.EdgesGeometry(geometry), new THREE.LineBasicMaterial({ color: mesh.color })))

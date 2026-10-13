@@ -95,6 +95,23 @@ def airframe_varset(airframe: Airframe) -> dict:
             if value is not None:
                 group[key] = number(value) if key == "Shape" else length(value)
         groups[f"LoftGuide{index}"] = group
+    for index, entry in enumerate(airframe.access, start=1):  # one group per saved hole or hatch
+        group = {"Name": text(entry.name), "Kind": text(entry.kind), "Profile": text(entry.profile),
+                 "Width": length(entry.width_m), "Length": length(entry.length_m),
+                 "X": length(entry.position_m[0]), "Y": distance(entry.position_m[1]), "Z": distance(entry.position_m[2]),
+                 "Roll": angle(entry.orientation_deg[2]), "Pitch": angle(entry.orientation_deg[1]), "Yaw": angle(entry.orientation_deg[0]),
+                 "Extent": text(entry.extent)}
+        if entry.corner_radius_m is not None:
+            group["CornerRadius"] = length(entry.corner_radius_m)
+        if entry.gap_m is not None:
+            group["Gap"] = length(entry.gap_m)
+        if entry.depth_m is not None:
+            group["Depth"] = length(entry.depth_m)
+        if entry.radial is not None:
+            group |= {"PatternCount": integer(entry.radial.count), "PatternAxis": text(entry.radial.axis),
+                      "PatternX": length(entry.radial.position_m[0]), "PatternY": distance(entry.radial.position_m[1]),
+                      "PatternZ": distance(entry.radial.position_m[2])}
+        groups[f"Access{index:02d}"] = group
     return groups
 
 

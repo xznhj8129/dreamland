@@ -42,6 +42,8 @@ export function App(): ReactElement {
         project={snapshot?.project ?? null}
         dirty={snapshot?.dirty ?? false}
         aircraftName={typeof snapshot?.definition.name === 'string' ? snapshot.definition.name : null}
+        status={snapshot?.status ?? null}
+        geometry={snapshot?.geometry ?? null}
       />
       <main className="view-host">
         {view === 'Editor' ? (
