@@ -1,0 +1,13 @@
+# quadrocketbuilder export of ezplane: fixed-wing, motors on throttle; servo mix from the
+# control roles, signs from each control's computed moments.
+set throttle_idle = 8
+mixer_profile 1
+set platform_type = AIRPLANE
+mmix reset
+mmix 0 1.000 +0.000 +0.000 +0.000    # motor 1 tail, cw
+smix reset
+smix 0 0 1 100 0 -1    # S1 pitch: C4 elevators panel 1
+smix 1 1 1 100 0 -1    # S2 pitch: C5 elevators panel 2
+smix 2 2 2 -100 0 -1    # S3 yaw: C3 rudder panel 1
+smix 3 3 0 -100 0 -1    # S4 roll: C1 main-wing panel 1
+smix 4 4 0 100 0 -1    # S5 roll: C2 main-wing panel 2

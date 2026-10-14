@@ -1,17 +1,23 @@
 User added TODOs (do not remove/change unless done)
 
-- changing xyz positions entry (which specifically, some must stay mm) from abs mm to relative frac to allow scaling without one-by-one mm adjustment
-- "plain ass plate" as airfoil, with or without thickness-diameter rounded edges
-- ducts, NACA ducts and intake ducts
+
+- In Parameters, we add a performance box.
 
 **SIM**
     * MSP/Mavlink commands (maybe complicated, not right now)
     * SIM priority: flexibility and realism; editor stability estimate versus JSBSim flight response.
     * Performance flash card: efficiency, stall speed, sustained turn rate, acceleration/speed per axis, range, maximum altitude.
     * Optimization tab: optimize for X within user ranges on part values; big outlines and features first.
+    * remember scenario and settings when switching to other tabs
         
 **INAV**
     * Current default configs bad to configure
+
+**Editor**
+    - changing xyz positions entry (which specifically, some must stay mm) from abs mm to relative frac to allow scaling without one-by-one mm adjustment
+    - Add direction arrow triangles to prop circle to show direction of spin (from front)
+    - "plain ass plate" as airfoil, with or without thickness-diameter rounded edges
+    - ducts, NACA ducts and intake ducts
 
 **Wiring**
     * Wire placement (straight horizontal/vertical, only 90deg bends for now)
@@ -24,7 +30,7 @@ User added TODOs (do not remove/change unless done)
     
 **Construction**
     - Allow non 3D-printed shell construction methods (such as fiberglass or carbon fiber molding), different materials (what that excludes TBD)
-    - Allow one section to be considered a monolithic carbon fiber or metal plate, allowing different material from 3D print. This would be used for thin (1-10mm) reinforcement sections
+    - Allow one section to be considered a monolithic carbon fiber, fiberglass or metal plate, allowing different material for CNC rather than 3D print. This would be used for thin (1-10mm) reinforcement sections
     - Actual real wing, hatch, section joint/closure mechanisms
     
 **CAD**
@@ -43,11 +49,7 @@ User added TODOs (do not remove/change unless done)
     
 **Motors**
     - show actual parametric motor (open or closed (plane) base; up or reverse shaft) (/media/anon/WD2TB/DataVault/TechProjects/CAD/my_drones/std_parts/parametric motor.FCStd)
-    
-    Motor hole problems most apparent with m62_qr
-    - CAD export failure with current method using four radial slots, face failure if no bolt head cutout, complete failure if using bolt head cutout (multiple bodies)
-    
-    Motor mount must clear everything after it (cut), so even if a wing intrudes inside it's perimeter, everything from the motor mount face and up (within the same wing/section) will be cut out. This allows a pod to be recessed slightly into the wing and leave space for a channel.
+
 
 **MCP**
     - Most of it already exists as HTTP routes in webapp/server.py
@@ -68,9 +70,6 @@ Agent added TODOs, freeform, remove done ones
         mass (g)
         Everything else is relevant more to propulsion, not display
 
-- Add direction arrow triangles to prop circle to show direction of spin (from front)
-
-- In Parameters, we add a performance box.
 
 - Geometry, verify on the plane-first model (found on the old module model):
         - Incidence on unpaired vertical fins opposite in CAD vs ASB (bottom fin chord y -0.086 CAD, +0.087 ASB).
@@ -86,7 +85,7 @@ Agent added TODOs, freeform, remove done ones
         - FC part position and orientation not used in INAV SITL yet (the script controller's IMU uses them): bench change to read sensors at the FC (lever arm, axes) and matching board alignment in the generated diff.
         - Validate shared forward lifting-line aero against real flight; sideslip and rate damping remain AeroBuildup, with a blended outer envelope.
         - Expand/validate the 5–50 m/s Reynolds grid and altitude dependence before accepting performance outside it.
-        - quadlancer62 hover with INAV 10 default PIDs oscillates (~1 Hz pitch/yaw, tilt to 30 deg): needs a hover tune.
+        - quadlancer62 hover with INAV 10 default PIDs oscillates (~1 Hz pitch/yaw, tilt to 30 deg): needs a hover tune. {aircraft design problem, out of scope}
         - NAV ALTHOLD climbs steadily (0.5-1 m/s) at mid stick; unexplained.
         - Fixed-wing INAV tuning (trim, PIDs).
         - No battery sag in the bench (JSBSim maxvolts only).
@@ -119,11 +118,11 @@ Agent added TODOs, freeform, remove done ones
 
 - Found designing and flying aircraft/albatross (2026-10-14); [decide] = needs owner input:
         - [decide] In-flight battery power (libs/simrun.py motor_electrics) is I = (throttle x V - rpm / Kv) / R, after the fact: no no-load current (Io; libs/propulsion.py has it, 0.5 A = ~8 W on this motor) and not coupled to the shaft power the JSBSim prop absorbs. At 38 m/s battery 117 W vs drag power ~112 W (overall efficiency ~96 %); efficiency.py range/endurance (343 km, 5.8 h) are therefore optimistic. Which model the flight power should come from.
-        - [decide] Drag looks optimistic for printed airframes: glide 18:1 (lifting line + AeroBuildup, no roughness/joint/interference drag). Whether to model an allowance, and from what data (no fudge fits; real logs).
-        - [decide] Wing twist/washout: no field. A tapered wing without washout departs at the stall (Albatross rolls 14-20 deg below ~13 m/s in glide.py). Schema field (tip incidence or washout_deg)?
+        - [decide] Drag looks optimistic for printed airframes: glide 18:1 (lifting line + AeroBuildup, no roughness/joint/interference drag). Whether to model an allowance, and from what data (no fudge fits; real logs). {owner: good point, we can look at how OpenRocket does it}
+        - [decide] Wing twist/washout: no field. A tapered wing without washout departs at the stall (Albatross rolls 14-20 deg below ~13 m/s in glide.py). Schema field (tip incidence or washout_deg)? {yeah we should add that, different incidence for tip}
         - [decide] Parts in wings: aileron servos placed in the wing stick out of it (9 g servo 28.5 mm tall, wing ~13 mm); part_checks only test fuselage volumes; no servo bays, pockets, wire channels or covers in printed wings.
-        - [decide] Printed surface construction: estimate = solid airfoil x bulk density (Albatross wing 431 g for 0.16 m^2); exact CAD mass is solid too. Shell + ribs / spar web / infill choice per surface?
-        - [decide] efficiency.py starts its sweep at the aero grid top (48 m/s); any aircraft that cannot hold it ends with no data. Start from the full-throttle level speed instead? (Albatross uses a project override, sweep_from 38.)
+        - [decide] Printed surface construction: estimate = solid airfoil x bulk density (Albatross wing 431 g for 0.16 m^2); exact CAD mass is solid too. Shell + ribs / spar web / infill choice per surface? {slicers provide estimation code?}
+        - [decide] efficiency.py starts its sweep at the aero grid top (48 m/s); any aircraft that cannot hold it ends with no data. Start from the full-throttle level speed instead? (Albatross uses a project override, sweep_from 38.) {definitely needs adjustment}
         - Pitch stability falls off above ~2-3 deg AoA in the lifting line (local NP moves forward with AoA) for a V-tail behind a high wing; check with VLM once the VLM view exists.
         - Cutaway drawing: leader numbers overlap where parts share an x (wing root, tail servos); the key line runs off the image's right edge.
         - Web SIM (webapp/sim.py) always uses SITL port 5760; sim_flight.py now refuses a taken port (--sitl-port to move it).

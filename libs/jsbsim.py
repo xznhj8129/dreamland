@@ -4,6 +4,10 @@ from libs.jsbsim import export_jsbsim, reuse_or_export
 export = export_jsbsim(resolved, parts_data, project.jsbsim_dir, project.name)  # libs/project.py
 export, reused = reuse_or_export(resolved, parts_data, project.jsbsim_dir, project.name)  # skips an unchanged one
 
+Skips what an edit did not change: the assembled model is keyed by export_fingerprint, and the aero tables inside it
+by their own, finer aero_fingerprint, so a change no solve reads (a mass, a part, a hatch, the electric system)
+re-emits the model and reuses every table.
+
 JSBSim model of a resolved airframe (libs/geometry.py), for INAV SITL through inav-jsbsim-bench. INAV does the mixing;
 motor i is driven through fcs/throttle-cmd-norm[i], in resolved motor order. Writes:
 - <out>/aircraft/<model>/<model>.xml: metrics, mass, contact points, propulsion, throttle curve, aerodynamics
@@ -77,6 +81,8 @@ REPO_DIR = Path(__file__).resolve().parent.parent
 EXPORT_ROOT = "export_jsbsim"  # the code an export runs is what this function reaches (export_code_digest)
 EXPORT_FINGERPRINT_FILE = "export.fingerprint"  # in the export directory, next to the export it describes
 EXPORT_CACHE_FILE = "export.pickle"  # the JSBSimExport of that export
+TABLE_CACHE_FILE = "tables.pickle"  # the solved tables in the export directory, each under its own input fingerprint
+TABLE_CACHE_LIMIT = 64  # entries kept: the oldest are dropped once another airframe's tables push past this
 PROP_J_TABLE_POINTS = 25
 PROP_J_TABLE_END = 1.2  # of the zero-thrust advance ratio
 APC_REFERENCE_PROP = "DJI_9450"  # JSBSim's bundled APC 9x4.5E table, for the Ct(J) and Cp(J) shapes
@@ -323,10 +329,76 @@ class FlightAero:
         return values.reshape(6, *shape)
 
 
-def aero_tables(resolved: ResolvedAirframe, model: FlightAero | None = None) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+class TableCache:
+    """The solved aero tables kept next to the export, each under a fingerprint of exactly what that solve reads
+    (aero_fingerprint plus the control, deflection and solved value): an edit recomputes the solves that read it and
+    reuses the rest, instead of all of them because one field somewhere in the airframe moved."""
+
+    def __init__(self, path: Path):
+        self.path = path
+        self.entries: dict[str, object] = {}
+        if path.is_file():
+            try:
+                with path.open("rb") as file:
+                    self.entries = pickle.load(file)
+            except (OSError, EOFError, ValueError, TypeError, AttributeError, ImportError, pickle.UnpicklingError) as error:
+                print(f"  table cache {path.name} unreadable ({error}); solving everything again", flush=True)
+
+    def get(self, key: str):
+        return self.entries.get(key)
+
+    def put(self, key: str, value) -> None:
+        while key not in self.entries and len(self.entries) >= TABLE_CACHE_LIMIT:
+            del self.entries[next(iter(self.entries))]  # oldest entry first
+        self.entries[key] = value
+
+    def save(self) -> None:
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(".tmp")
+        with temporary.open("wb") as file:
+            pickle.dump(self.entries, file)
+        temporary.replace(self.path)  # atomic: a run cut short leaves the old cache, never half of a new one
+
+
+def aero_surface(definition):
+    """A surface as the aero reads it: the definition with the control's deflection limits, roles and servos blanked
+    (only the deflection ladder, the servo rules and the actuator read those)."""
+    control = definition.control
+    if control is None:
+        return definition
+    return dataclasses.replace(definition, control=dataclasses.replace(
+        control, roles=(), servos=(), deflection_min_deg=0.0, deflection_max_deg=0.0, rate_deg_s=0.0))
+
+
+def aero_fingerprint(resolved: ResolvedAirframe) -> str:
+    """Hash of what a solved table reads: the body, the surfaces as the aero sees them (aero_surface), the motor bells,
+    the CG the moments are taken about, the reference lengths, whether rocket motors add speed bands, the operating
+    altitude, the library versions and the export code. Nothing else reaches these solves: masses, parts, the printed
+    structure, access and the electric system arrive only through cg_m."""
+    digest = hashlib.sha256()
+    digest.update(f"asb {asb.__version__} neuralfoil {neuralfoil.__version__}".encode())
+    feed_canonical(digest, resolved.body)
+    feed_canonical(digest, tuple(aero_surface(surface_set.definition) for surface_set in resolved.surfaces))
+    feed_canonical(digest, resolved.motors)
+    feed_canonical(digest, resolved.cg_m)
+    feed_canonical(digest, resolved.reference)
+    digest.update(f"rockets {bool(resolved.rockets)}".encode())
+    feed_canonical(digest, resolved.airframe.operating_point.altitude_m)
+    digest.update(export_code_digest().encode())
+    return digest.hexdigest()
+
+
+def aero_tables(resolved: ResolvedAirframe, model: FlightAero | None = None, cache: TableCache | None = None,
+                key: str | None = None) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
     """Body-axis coefficients on the airspeed x AoA x sideslip grid, and the damping derivatives on the airspeed x AoA
-    grid at sideslip 0."""
+    grid at sideslip 0. cache and key (aero_fingerprint): an unchanged body reuses the solved tables."""
+    entry = None if cache is None or key is None else cache.get(f"{key}:body")
+    if entry is not None:
+        print("  body aero tables reused", flush=True)
+        return entry
     model = model or FlightAero(resolved)
+    print("  body aero tables...", flush=True)
+    stage = time.monotonic()
     airplane, atmosphere = model.airplane, model.atmosphere
     speeds = model.speeds_m_s
     speed, alpha, beta = np.meshgrid(speeds, AERO_ALPHA_DEG, AERO_BETA_DEG, indexing="ij")
@@ -344,6 +416,10 @@ def aero_tables(resolved: ResolvedAirframe, model: FlightAero | None = None) -> 
             sideslip = f", sideslip {AERO_BETA_DEG[index[2]]:g} deg" if table.ndim == 3 else ""
             raise ValueError(f"Flight aero returned non-finite {name} at {speeds[index[0]]:g} m/s, "
                              f"AoA {AERO_ALPHA_DEG[index[1]]:g} deg{sideslip}; {len(invalid)} invalid grid points")
+    print(f"  body aero tables done ({time.monotonic() - stage:.0f} s)", flush=True)
+    if cache is not None and key is not None:
+        cache.put(f"{key}:body", (tables, dampers))
+        cache.save()
     return tables, dampers
 
 
@@ -362,36 +438,60 @@ def finite_wing_factor(airplane: asb.Airplane, wing: int, run) -> float:
     return float(np.mean(twist_change / hinge_change))
 
 
-def control_tables(resolved: ResolvedAirframe, model: FlightAero | None = None) -> list[ControlTable]:
+def control_tables(resolved: ResolvedAirframe, model: FlightAero | None = None, cache: TableCache | None = None,
+                   key: str | None = None) -> list[ControlTable]:
     """Each control's increments over the undeflected aircraft, shared FlightAero at sideslip 0.
     Only the outer-envelope AeroBuildup deflection uses finite_wing_factor. An XZ-mirrored pair is one ASB wing, each side deflected alone
-    (SideControlSurface)."""
+    (SideControlSurface). cache and key (aero_fingerprint): the undeflected pass, each wing's factor and each deflection's
+    solved increments are kept separately, so changed deflection limits re-solve only the deflections they added."""
     if not resolved.controls:
         return []
     model = model or FlightAero(resolved)
     hybrid = model.forward.hybrid
     probe_point = asb.OperatingPoint(atmosphere=model.atmosphere, velocity=model.speeds_m_s, alpha=np.full(len(model.speeds_m_s), CONTROL_FACTOR_AOA_DEG))
     speed, alpha = np.meshgrid(model.speeds_m_s, AERO_ALPHA_DEG, indexing="ij")
-    base = model.run(speed, alpha)
+    base = None if cache is None or key is None else cache.get(f"{key}:control-base")
+    if base is None:
+        base = model.run(speed, alpha)
+        if cache is not None and key is not None:
+            cache.put(f"{key}:control-base", base)
     near = np.abs(AERO_ALPHA_DEG) <= CONTROL_DERIVATIVE_AOA_DEG
     placements = {control.number: control for control in resolved.controls}
     tables = []
+    print(f"  control tables ({len(resolved.controls)} controls)...", flush=True)
     for wing, (owner, numbers) in enumerate(zip(hybrid.owners, hybrid.controls)):
         if not any(numbers):
             continue
         surface_set = resolved.surfaces[owner]
         definition = surface_set.definition.control
-        factor = finite_wing_factor(model.airplane, wing, lambda plane: body_coefficients(
-            asb.AeroBuildup(airplane=plane, op_point=probe_point, model_size=AERO_MODEL_SIZE).run(), probe_point, resolved))
+        factor = None if cache is None or key is None else cache.get(f"{key}:wing{wing}-factor")
+        if factor is None:
+            factor = finite_wing_factor(model.airplane, wing, lambda plane: body_coefficients(
+                asb.AeroBuildup(airplane=plane, op_point=probe_point, model_size=AERO_MODEL_SIZE).run(), probe_point, resolved))
+            if cache is not None and key is not None:
+                cache.put(f"{key}:wing{wing}-factor", factor)
         deflections = np.unique([0.0, definition.deflection_min_deg, definition.deflection_max_deg,
                                  *(-d for d in CONTROL_DEFLECTION_GRID_DEG if -d > definition.deflection_min_deg),
                                  *(d for d in CONTROL_DEFLECTION_GRID_DEG if d < definition.deflection_max_deg)])
         sides: list[list[np.ndarray]] = [[], []]  # own, mirror: (6, points) per deflection
+        reused = 0
         for deflection in deflections:
             solved = float(deflection * factor)
-            for side, (number, columns) in enumerate(zip(numbers, sides)):
-                if number:
-                    columns.append(model.run(speed, alpha, deflections={number: float(deflection)}, envelope_deflections={number: solved}) - base if deflection else np.zeros_like(base))
+            entry_key = None if key is None else f"{key}:wing{wing}-deflection{deflection:g}-solved{solved:.9g}"
+            entry = None if cache is None or entry_key is None else cache.get(entry_key)
+            if entry is None:
+                entry = tuple(model.run(speed, alpha, deflections={number: float(deflection)}, envelope_deflections={number: solved}) - base
+                              if number and deflection else (np.zeros_like(base) if number else None)
+                              for number in numbers)
+                if cache is not None and entry_key is not None:
+                    cache.put(entry_key, entry)
+            else:
+                reused += 1
+            for side, column in enumerate(entry):
+                if numbers[side]:
+                    sides[side].append(column)
+        if cache is not None and key is not None:
+            cache.save()
         neutral = int(np.flatnonzero(deflections == 0.0)[0])
         low, high = max(neutral - 1, 0), min(neutral + 1, len(deflections) - 1)  # the columns either side of neutral
         for number, columns in zip(numbers, sides):
@@ -409,7 +509,13 @@ def control_tables(resolved: ResolvedAirframe, model: FlightAero | None = None) 
                 derivatives={name: float(np.mean(stacked[index][:, near, high] - stacked[index][:, near, low]) / (deflections[high] - deflections[low]))
                              for index, name in enumerate(CONTROL_COEFFICIENTS)},
             ))
-            print(f"    C{number} {control.surface} panel {control.panel_index + 1} solved", flush=True)
+            if reused == len(deflections):
+                status = "reused"
+            elif reused:
+                status = f"solved ({reused} of {len(deflections)} deflections reused)"
+            else:
+                status = "solved"
+            print(f"    C{number} {control.surface} panel {control.panel_index + 1} {status}", flush=True)
     return sorted(tables, key=lambda table: table.number)
 
 
@@ -757,7 +863,8 @@ def export_fingerprint(resolved: ResolvedAirframe, parts_data: dict, out_dir: Pa
     label and limits) and the operating point's AoA and airspeed left out: they do not change the model), the
     library values it reads beyond that (the ESC, the connectors on the wire runs, motorlib's motor, prop and wire
     rows), the code it runs (export_code_digest), the AeroSandbox and NeuralFoil versions, the model name, the output
-    directory and the pack voltage."""
+    directory and the pack voltage. The solved tables have their own, finer key (aero_fingerprint): this one decides
+    whether the assembled model is re-emitted; that one decides what is re-solved."""
     airframe = resolved.airframe
     operating_point = dataclasses.replace(airframe.operating_point, aoa_deg=0.0, airspeed_m_s=0.0)
     digest = hashlib.sha256(repr((model_name, str(out_dir), pack_voltage_v, asb.__version__, neuralfoil.__version__)).encode())
@@ -781,7 +888,8 @@ def export_fingerprint(resolved: ResolvedAirframe, parts_data: dict, out_dir: Pa
 def reuse_or_export(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, model_name: str,
                     pack_voltage_v: float | None = None) -> tuple[JSBSimExport, bool]:
     """(export, reused): the export already in out_dir when nothing it depends on changed (export_fingerprint), otherwise
-    a fresh one into an emptied out_dir."""
+    the model re-emitted there with every solved table whose own inputs (aero_fingerprint) did not change taken from the
+    table cache."""
     electric = None if resolved.airframe.propulsion is None else resolved.airframe.propulsion.electric
     if electric is not None and electric.esc is None:
         raise ExportError(f"{resolved.airframe.name}: the electric system has no ESC part placed; the simulation needs one (Propulsion tab, ESC)")
@@ -790,8 +898,18 @@ def reuse_or_export(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path,
     if fingerprint_path.is_file() and fingerprint_path.read_text() == fingerprint and cache_path.is_file():
         with open(cache_path, "rb") as file:
             return pickle.load(file), True
-    shutil.rmtree(out_dir, ignore_errors=True)  # nothing left over from an earlier model name
-    print("JSBSim model: rebuilding for the current airframe and code; solving tables, this can take minutes", flush=True)
+    # everything left over from an earlier model name, except the solved tables: those are reused whenever their own
+    # input fingerprints match (TableCache, aero_fingerprint)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    for stale in out_dir.iterdir():
+        if stale.name == TABLE_CACHE_FILE:
+            continue
+        if stale.is_dir():
+            shutil.rmtree(stale, ignore_errors=True)
+        else:
+            stale.unlink(missing_ok=True)
+    print("JSBSim model: rebuilding for the current airframe and code; solving the tables whose own inputs changed, "
+          "the rest come from the table cache (this can take minutes)", flush=True)
     started = time.monotonic()
     export = export_jsbsim(resolved, parts_data, out_dir, model_name, pack_voltage_v)
     print(f"JSBSim model: exported in {time.monotonic() - started:.0f} s", flush=True)
@@ -851,14 +969,10 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
       <damping_coeff unit="N/M/SEC"> {damping:.3f} </damping_coeff>
     </contact>""" for index, (x, y, z) in enumerate(contacts))
     aero_model = FlightAero(resolved)
-    print("  body aero tables...", flush=True)
-    stage = time.monotonic()
-    tables, rates = aero_tables(resolved, aero_model)
-    print(f"  body aero tables done ({time.monotonic() - stage:.0f} s)", flush=True)
-    print(f"  control tables ({len(resolved.controls)} controls)...", flush=True)
-    stage = time.monotonic()
-    controls = control_tables(resolved, aero_model)
-    print(f"  control tables done ({time.monotonic() - stage:.0f} s)", flush=True)
+    cache, key = TableCache(out_dir / TABLE_CACHE_FILE), aero_fingerprint(resolved)
+    tables, rates = aero_tables(resolved, aero_model, cache, key)
+    controls = control_tables(resolved, aero_model, cache, key)
+    cache.save()
     servos = servo_mix(resolved, controls)
     speeds = aero_model.speeds_m_s
     forces = {"X": "CX", "Y": "CY", "Z": "CZ"}
