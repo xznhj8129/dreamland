@@ -71,7 +71,7 @@ def main() -> None:
         aero = None
     print(f"Source: {project.build_path}")
     propulsion = None
-    if resolved.motors:
+    if resolved.motors and resolved.wires is not None:  # no ESC placed yet: reported in the problems
         try:
             propulsion = propulsion_summary(resolved, parts_data)
         except MotorStalled as error:

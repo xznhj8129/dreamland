@@ -25,20 +25,24 @@ User added TODOs (do not remove/change unless done)
 **Construction**
     - Allow non 3D-printed shell construction methods (such as fiberglass or carbon fiber molding), different materials (what that excludes TBD)
     - Allow one section to be considered a monolithic carbon fiber or metal plate, allowing different material from 3D print. This would be used for thin (1-10mm) reinforcement sections
+    - Actual real wing, hatch, section joint/closure mechanisms
     
 **CAD**
     - Access holes currently cut straight into (in-line). A proper hatch cuts towards the center. This must be an option (not always applicable to non-fuselage ie wings)
     - Hatches start under by default, should be on top and pointing down
     - Make hatches/holes automatically position clear above skin surface, they always point outside-in
     - Why do them CAD exports have all these loft lines anyway?
+    - Swifting off CAD tab interrupts
+    - Thicken fuselage line on xray export
+    - Tell me we're not exporting parts in CAD
 
 **3D view**
-    - Cuts & Holes not on by default
+    - turn Cuts & Holes off by default
     - Show/hide motors
     - Show/hide propellers
     
 **Motors**
-    - show actual parametric motor (open or closed (plane) base; up or reverse shaft)
+    - show actual parametric motor (open or closed (plane) base; up or reverse shaft) (/media/anon/WD2TB/DataVault/TechProjects/CAD/my_drones/std_parts/parametric motor.FCStd)
     
     Motor hole problems most apparent with m62_qr
     - CAD export failure with current method using four radial slots, face failure if no bolt head cutout, complete failure if using bolt head cutout (multiple bodies)
@@ -112,3 +116,14 @@ Agent added TODOs, freeform, remove done ones
         - INAV: no way to ignite a rocket motor from INAV yet (output or mode).
         - Aero past 300 m/s (~Mach 0.9): transonic/supersonic; tables hold the 300 m/s values beyond.
         - Liquid-fuel motors (later; up to space).
+
+- Found designing and flying aircraft/albatross (2026-10-14); [decide] = needs owner input:
+        - [decide] In-flight battery power (libs/simrun.py motor_electrics) is I = (throttle x V - rpm / Kv) / R, after the fact: no no-load current (Io; libs/propulsion.py has it, 0.5 A = ~8 W on this motor) and not coupled to the shaft power the JSBSim prop absorbs. At 38 m/s battery 117 W vs drag power ~112 W (overall efficiency ~96 %); efficiency.py range/endurance (343 km, 5.8 h) are therefore optimistic. Which model the flight power should come from.
+        - [decide] Drag looks optimistic for printed airframes: glide 18:1 (lifting line + AeroBuildup, no roughness/joint/interference drag). Whether to model an allowance, and from what data (no fudge fits; real logs).
+        - [decide] Wing twist/washout: no field. A tapered wing without washout departs at the stall (Albatross rolls 14-20 deg below ~13 m/s in glide.py). Schema field (tip incidence or washout_deg)?
+        - [decide] Parts in wings: aileron servos placed in the wing stick out of it (9 g servo 28.5 mm tall, wing ~13 mm); part_checks only test fuselage volumes; no servo bays, pockets, wire channels or covers in printed wings.
+        - [decide] Printed surface construction: estimate = solid airfoil x bulk density (Albatross wing 431 g for 0.16 m^2); exact CAD mass is solid too. Shell + ribs / spar web / infill choice per surface?
+        - [decide] efficiency.py starts its sweep at the aero grid top (48 m/s); any aircraft that cannot hold it ends with no data. Start from the full-throttle level speed instead? (Albatross uses a project override, sweep_from 38.)
+        - Pitch stability falls off above ~2-3 deg AoA in the lifting line (local NP moves forward with AoA) for a V-tail behind a high wing; check with VLM once the VLM view exists.
+        - Cutaway drawing: leader numbers overlap where parts share an x (wing root, tail servos); the key line runs off the image's right edge.
+        - Web SIM (webapp/sim.py) always uses SITL port 5760; sim_flight.py now refuses a taken port (--sitl-port to move it).

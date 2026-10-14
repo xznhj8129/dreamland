@@ -11,6 +11,7 @@ import sys
 import time
 from pathlib import Path
 
+from controllers.inav import SITL_BASE_PORT
 from libs.airframe import load_airframe, load_parts_data
 from libs.flightlog import flight_log_path, flight_snapshot
 from libs.computed_geometry import resolve_project
@@ -31,6 +32,7 @@ def main():
     parser.add_argument("--duration", type=float, default=DEFAULT_LIMIT_S, help="maximum simulated seconds")
     parser.add_argument("--pack-voltage", type=float)
     parser.add_argument("--sitl", type=Path)
+    parser.add_argument("--sitl-port", type=int, default=SITL_BASE_PORT, help="the SITL's first TCP port (it uses 8: MSP = +1, MAVLink = +2)")
     parser.add_argument("--inav-config", type=Path)
     parser.add_argument("--no-msp", action="store_true")
     parser.add_argument("--no-mavlink", action="store_true")
@@ -40,7 +42,7 @@ def main():
         value = getattr(args, name)
         if not math.isfinite(value) or value <= 0:
             parser.error(f"--{name} must be finite and positive")
-    if args.controller != "inav" and (args.sitl or args.inav_config or args.no_msp or args.no_mavlink):
+    if args.controller != "inav" and (args.sitl or args.inav_config or args.no_msp or args.no_mavlink or args.sitl_port != SITL_BASE_PORT):
         parser.error("SITL, INAV settings, MSP and MAVLink options require the INAV controller")
     project = open_project(args.project)
     path = scenario_path(project.scenarios_dir, args.controller, args.scenario)

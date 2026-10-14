@@ -268,7 +268,7 @@ class AppState:
         self.resolved = resolved
         self.problems = problems
         self.propulsion = None
-        if resolved.motors:
+        if resolved.motors and resolved.wires is not None:  # no ESC placed yet: reported in the problems, summary waits
             try:
                 self.propulsion = propulsion_summary(resolved, self.parts_data)
             except MotorStalled as error:

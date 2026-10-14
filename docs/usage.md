@@ -30,6 +30,7 @@ python sim_flight.py aircraft/m62v1 experiment --controller inav
 python sim_flight.py aircraft/example stability --controller mcu --clock stepped
 python sim_flight.py aircraft/minirocket launch --controller mcu --start rail --launch-pitch 85 # unguided rocket flight
 python sim_flight.py aircraft/example level --controller mcu --duration 120
+python sim_flight.py aircraft/example controls --controller inav --sitl-port 5780  # beside another SITL: it uses base..base+7
 ```
 
 Each aircraft is a project directory, opened as an argument or with File → Load; Save As copies the whole project under a new name. The bundled example is `aircraft/example`; the other names above are local projects:

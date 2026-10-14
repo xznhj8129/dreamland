@@ -282,6 +282,8 @@ FuselagePanel
     * section: width, height, shape (superellipse exponent, 2 = circle), wall radial
     * nose, tail: profile [ui:dropdown], length, the profile's parameters
     * Loft guides: independent position mm, width mm, height mm, shape exponent; compact G<n> picker.
+      A new guide takes the section at its position from the last valid airframe (also while the definition has an
+      error elsewhere).
       One Auto on/off button per profile field inherits the Fuselage default when on.
       Add guide at the entered position, seeded from the interpolated profile; Remove guide deletes only the guide.
       Smooth cubic transitions join guides before nose/tail taper; no guides uses the default section throughout.

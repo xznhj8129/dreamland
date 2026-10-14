@@ -6,6 +6,7 @@ The shared harness SITL must support stepped time. No mock bench or controller i
 
 import asyncio
 import json
+import shutil
 import time
 from pathlib import Path
 
@@ -13,12 +14,27 @@ from aiohttp.test_utils import TestClient, TestServer
 from inavbench.msp import Msp
 from pymavlink import mavutil
 
+from libs.project import Project
 from webapp.server import create_app
-from webapp.test_sim import make_state
+from webapp.state import AppState
 from webapp import sim
 
 TIMEOUT_S = 600
 ROOT = Path(__file__).resolve().parent.parent
+VALIDATION_PROJECT = ROOT / "aircraft" / "example" / "cad" / "sim-scenarios-validation" / "example"  # outputs persist here
+
+
+def make_state(root: Path) -> AppState:
+    """A validation project at root flying the current example definition (copied in each run), aero off."""
+    for relative in ("inav/generated", "sitl", "jsbsim", "logs", "scenarios/inav", "scenarios/mcu"):
+        (root / relative).mkdir(parents=True, exist_ok=True)
+    shutil.copy2(ROOT / "aircraft" / "example" / "aircraft.json", root / "aircraft.json")
+    state = AppState(Project(root=root))
+    original = state.recompute
+    state.recompute = lambda run_aero=True, notify=True: original(run_aero=False, notify=notify)
+    state.recompute()
+    assert state.resolved is not None, "the example airframe did not resolve"
+    return state
 STOP_SOURCE = '''from controllers import inav as controller
 
 
@@ -72,7 +88,7 @@ async def run(client, scenario, **options):
 
 
 async def main():
-    state = make_state(ROOT / "aircraft" / "example" / "cad" / "sim-scenarios-validation")
+    state = make_state(VALIDATION_PROJECT)
     client = TestClient(TestServer(create_app(state, ROOT / "web/dist")))
     await client.start_server()
     try:

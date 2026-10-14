@@ -22,6 +22,10 @@ web/dist/
 aircraft/*
 !aircraft/example/
 !aircraft/minirocket/
+!aircraft/albatross/
+aircraft/albatross/*
+!aircraft/albatross/aircraft.json
+!aircraft/albatross/scenarios/
 
 # Generated per-project output
 aircraft/*/cad/

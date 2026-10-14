@@ -1391,8 +1391,8 @@ def route_length_m(route: tuple[Vec, ...]) -> float:
 
 
 def build_wires(airframe: Airframe, motors: tuple[MotorPlacement, ...]) -> WireRoutes | None:
-    if airframe.propulsion is None or airframe.propulsion.electric is None:
-        return None
+    if airframe.propulsion is None or airframe.propulsion.electric is None or airframe.propulsion.electric.esc is None:
+        return None  # no ESC placed yet: no routes (electric_checks reports it)
     electric = airframe.propulsion.electric
     parts = {part.name: part for part in airframe.parts}
     battery, esc = electric.battery.placed.position_m, parts[electric.esc].position_m
@@ -1500,6 +1500,14 @@ def rocket_mass_points(rockets: tuple[RocketPlacement, ...]) -> list[MassPoint]:
         points.append(MassPoint(f"{rocket.name} casing", "rocket casing", rocket.center, (rocket.motor.casing_kg,) * 2, False, None, inertia, rocket.mount_x_m))
         points.append(MassPoint(f"{rocket.name} propellant", ROCKET_PROPELLANT_KIND, rocket.center, (rocket.motor.propellant_kg,) * 2, False, None, inertia, rocket.mount_x_m))
     return points
+
+
+def electric_checks(airframe: Airframe) -> list[str]:
+    """What an electric system in progress still lacks (it resolves without it; only what needs it waits)."""
+    electric = None if airframe.propulsion is None else airframe.propulsion.electric
+    if electric is not None and electric.esc is None:
+        return ["propulsion.electric.esc: no ESC part placed yet; the wiring routes, propulsion summary and simulation wait for one"]
+    return []
 
 
 def rocket_checks(airframe: Airframe, body: Body, rockets: tuple[RocketPlacement, ...]) -> list[str]:
@@ -1689,5 +1697,5 @@ def resolve_airframe(airframe: Airframe, parts_data: dict, exact: ExactStructure
         inertia_kg_m2=combine_inertia([(mass, point.position, point.inertia_per_kg) for mass, point in zip(nominal, points)])[2],
         reference=build_reference(surfaces, body), wires=build_wires(airframe, motors),
     )
-    return resolved, (volume_checks(airframe, body) + part_checks(airframe, body) + preset_checks(airframe) + socket_checks(airframe, body)
+    return resolved, (electric_checks(airframe) + volume_checks(airframe, body) + part_checks(airframe, body) + preset_checks(airframe) + socket_checks(airframe, body)
                       + reinforcement_checks(airframe, body) + spar_checks(surfaces, spars) + rocket_checks(airframe, body, rockets))

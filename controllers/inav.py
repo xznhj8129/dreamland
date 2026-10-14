@@ -1,6 +1,7 @@
 """INAV SITL transport, settings, and controller commands."""
 
 import re
+import socket
 import time
 from pathlib import Path
 
@@ -21,6 +22,8 @@ PLANE_TEMPLATE = INAV_TEMPLATES_DIR / "plane.txt"
 INAV_10_RENAMED_SETTINGS = {"mixer_pid_profile_linking": "mixer_control_profile_linking"}
 SITL_TEMPLATE = INAV_TEMPLATES_DIR / "sitl.txt"  # the bench's simulated hardware, in every generated diff
 REAL_FC_BANNER = re.compile(r"# INAV/\S+ \d+\.\d+")  # the version line of a real FC's CLI diff
+SITL_BASE_PORT = 5760  # the SITL's first TCP port (sim_flight.py --sitl-port); it takes one per UART:
+SITL_PORT_COUNT = 8    # base .. base + 7, so parallel benches go at least 10 apart
 # From a real (INAV 8) diff only what defines the aircraft goes into the INAV 10 SITL: the mixer profiles (platform,
 # motor mix, motor direction, tailsitter offset, profile linking) and the mode switches on AUX1-4 (all MSP_SIMULATOR
 # carries). Tuning, filters, hardware and calibration stay at INAV 10 defaults.
@@ -122,17 +125,31 @@ engine = None
 forward = None
 
 
+def check_sitl_ports(base: int) -> None:
+    """Refuse a base port whose range another process holds: the SITL could not bind it and the bench would connect to
+    that process instead (arming, configuring and flying someone else's SITL)."""
+    for port in range(base, base + SITL_PORT_COUNT):
+        with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as probe:
+            probe.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            try:
+                probe.bind(("0.0.0.0", port))
+            except OSError as error:
+                raise RuntimeError(f"SITL TCP port {port} is already in use (another SITL or GCS?); "
+                                   f"pick a free range with --sitl-port (ports {base}..{base + SITL_PORT_COUNT - 1} are needed)") from error
+
+
 def connect(project, resolved, export, args, state, hardware, log_path):
     sitl_path = args.sitl or DEFAULT_SITL_PATH
     if not sitl_path.is_file():
         raise FileNotFoundError(f"INAV SITL build missing: {sitl_path}; run scripts/setup_vendor.sh (or pass --sitl)")
+    check_sitl_ports(args.sitl_port)
     diff = flown_diff(project, export, resolved.airframe.tailsitter, args.inav_config)
     project.sitl_dir.mkdir(parents=True, exist_ok=True)
     print(f"INAV firmware: {sitl_path.relative_to(REPO_DIR) if sitl_path.is_relative_to(REPO_DIR) else sitl_path}")
     print(f"INAV settings: {diff.relative_to(project.root) if diff.is_relative_to(project.root) else diff.name}")
     vehicle = build_vehicle(export, str(diff), args.start, state, resolved.airframe.tailsitter)
     motor_count = len(export.motor_properties)
-    bench = FlightBench(vehicle, stepped=args.clock != "realtime", faster=args.clock == "stepped-faster",
+    bench = FlightBench(vehicle, port=args.sitl_port, stepped=args.clock != "realtime", faster=args.clock == "stepped-faster",
                         rate_hz=args.rate, gcs_msp=not args.no_msp, gcs_mavlink=not args.no_mavlink,
                         sitl=str(sitl_path), workdir=str(project.sitl_dir), log=str(log_path), log_fc=True,
                         heading_deg=state.heading_deg, home=(state.lat_deg, state.lon_deg),

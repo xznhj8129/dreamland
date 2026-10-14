@@ -118,7 +118,8 @@ propulsion          required when powered, absent when not
                         each axis; x * y * z = s * p), lead_awg, lead_length_m; size per axis = count * (cell size + 2 mm),
                         mass, capacity, resistance and voltage from the cell
                     its connector is the first plug of the battery run; its leads add to the shared resistance
-  esc               name of a placed esc part; wires run battery -> ESC along the axes, ESC -> a surface motor inside its panel (along x to the root
+  esc               name of a placed esc part, or null / "" while none is placed yet (a design in progress resolves; the
+                    problems say so and the wiring routes, propulsion summary and simulation wait for one); wires run battery -> ESC along the axes, ESC -> a surface motor inside its panel (along x to the root
                     mid-chord, out along the mid-chord to the motor's span station), ESC -> a nose/tail motor along the axes
   wiring            battery (the battery -> ESC run), motors[] (ESC -> each electric motor, one per motor in motor order); a run:
                     gauge_awg (motorlib wire gauge), conductors (wires in the cable), plugs[] (data/parts/connector.json

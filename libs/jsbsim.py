@@ -782,6 +782,9 @@ def reuse_or_export(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path,
                     pack_voltage_v: float | None = None) -> tuple[JSBSimExport, bool]:
     """(export, reused): the export already in out_dir when nothing it depends on changed (export_fingerprint), otherwise
     a fresh one into an emptied out_dir."""
+    electric = None if resolved.airframe.propulsion is None else resolved.airframe.propulsion.electric
+    if electric is not None and electric.esc is None:
+        raise ExportError(f"{resolved.airframe.name}: the electric system has no ESC part placed; the simulation needs one (Propulsion tab, ESC)")
     fingerprint = export_fingerprint(resolved, parts_data, out_dir, model_name, pack_voltage_v)
     fingerprint_path, cache_path = out_dir / EXPORT_FINGERPRINT_FILE, out_dir / EXPORT_CACHE_FILE
     if fingerprint_path.is_file() and fingerprint_path.read_text() == fingerprint and cache_path.is_file():

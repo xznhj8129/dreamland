@@ -1,2 +1,0 @@
-# INAV/MATEKF405 7.0.0
-set nav_fw_cruise_thr 1500

@@ -418,7 +418,8 @@ class ElectricPropulsion:
     motor: MotorRef
     prop: str  # motorlib propeller (libs/motorlib/data/propellers.csv)
     battery: Battery
-    esc: str  # name of the placed ESC part (battery leads end and motor leads start there)
+    esc: str | None  # name of the placed ESC part (battery leads end and motor leads start there); None = none placed yet
+                     # (saved as null or ""): the wiring, propulsion summary and simulation wait for one
     wiring: Wiring  # motors: one run per electric motor, in motor order
     motor_mass_kg: float  # per motor, motorlib
     bell_diameter_m: float  # stator diameter, motorlib
@@ -1321,8 +1322,10 @@ def _electric(data: dict, path: str, mounts: tuple[Mount, ...], surfaces: tuple[
 
     categories = {part.name: part.part.partition(":")[0] for part in parts}
     battery = _battery(fields.required("battery"), fields.at("battery"), volumes, parts_data)
-    esc = fields.text("esc")
-    if categories.get(esc) != "esc":
+    esc = fields.required("esc")
+    if esc in (None, ""):  # not placed yet: a design in progress (geometry.electric_checks reports it)
+        esc = None
+    elif categories.get(esc) != "esc":
         raise AirframeError(f"{fields.at('esc')}: {esc!r} must name a part whose part is 'esc:<name>'; esc parts: {sorted(n for n, c in categories.items() if c == 'esc')}")
 
     wiring_fields = _Fields(fields.required("wiring"), fields.at("wiring"))

@@ -359,9 +359,9 @@ def add_loft_guide(state: AppState, value: object) -> None:
     guides = state.definition["fuselage"]["loft_stations"]
     if any(guide["x_m"] == x for guide in guides):
         raise ValueError(f"A loft guide already exists at {x * 1000:g} mm")
-    if not state.definition_valid:
-        raise ValueError("Fix the definition before adding a loft guide")
-    profile = loft_section_at(state.resolved.body, x)
+    if state.resolved is None:
+        raise ValueError("No airframe has resolved yet to take the guide's section from")
+    profile = loft_section_at(state.resolved.body, x)  # the last valid body: the section the drawing shows there
     guides.append({"x_m": x, "width_m": profile.width_m, "height_m": profile.height_m, "shape": profile.shape})
     guides.sort(key=lambda guide: guide["x_m"])
 

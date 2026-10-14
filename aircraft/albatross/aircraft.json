@@ -1,0 +1,377 @@
+{
+    "schema": "airframe/2",
+    "powered": true,
+    "vtol": false,
+    "tailsitter": false,
+    "name": "Albatross",
+    "notes": "Designed by Claude (Anthropic), 2026-10-14: long-range printed FPV cruiser. V-tail (ruddervators mix pitch and yaw), 4S2P Molicel P45B Li-ion, pusher Spektrum X2216 880KV / APC E 9x6. INAV SITL: level 16.4-39 m/s, glide 18:1 at 17.5 m/s; its range/endurance figures are optimistic (TODO.md, albatross).",
+    "operating_point": {
+        "aoa_deg": 1.0,
+        "airspeed_m_s": 19.0,
+        "altitude_m": 0.0
+    },
+    "print": {
+        "material": "elegoo_pla_plus",
+        "bulk_density_kg_m3": 318.3,
+        "printer_bed_m": [
+            0.24,
+            0.24,
+            0.25
+        ]
+    },
+    "fuselage": {
+        "length_m": 0.86,
+        "section": {
+            "width_m": 0.062,
+            "height_m": 0.062,
+            "shape": 2.0,
+            "wall_radial_m": 0.00125
+        },
+        "nose": {
+            "profile": "tangent_ogive",
+            "length_m": 0.09,
+            "params": {}
+        },
+        "tail": {
+            "profile": "parabolic",
+            "length_m": 0.14,
+            "params": {
+                "k_prime": 1.0
+            }
+        },
+        "channels": [],
+        "loft_stations": [
+            {
+                "x_m": 0.07
+            },
+            {
+                "x_m": 0.12,
+                "width_m": 0.07,
+                "height_m": 0.076,
+                "shape": 3.0
+            },
+            {
+                "x_m": 0.42,
+                "width_m": 0.07,
+                "height_m": 0.076,
+                "shape": 3.0
+            },
+            {
+                "x_m": 0.56
+            },
+            {
+                "x_m": 0.72
+            }
+        ]
+    },
+    "surfaces": [
+        {
+            "name": "wing",
+            "x_root_le_m": 0.3,
+            "layout": "H",
+            "fin_position": "top",
+            "dihedral_deg": 3.0,
+            "vertical_offset": 0.5,
+            "root": "body",
+            "span_m": 0.55,
+            "chord_root_m": 0.18,
+            "chord_tip_m": 0.11,
+            "sweep_le_deg": 2.0,
+            "incidence_deg": 2.0,
+            "incidence_mode": "symmetric",
+            "airfoil": "mh32",
+            "control": {
+                "align_hinge_vertically": false,
+                "kind": "split",
+                "roles": [
+                    "roll"
+                ],
+                "deflection_min_deg": -25.0,
+                "deflection_max_deg": 25.0,
+                "rate_deg_s": 300.0,
+                "gap_m": 0.0008,
+                "rod_diameter_m": 0.002,
+                "rod_x_offset_m": 0.0025,
+                "chord_start": 0.76,
+                "span_start": 0.55,
+                "span_end": 0.97,
+                "servos": [
+                    "S3",
+                    "S4"
+                ]
+            },
+            "spars": {
+                "material": "carbon_rod",
+                "diameter_m": 0.004,
+                "count": 2,
+                "spacing_m": 0.04,
+                "x_offset_m": 0.035,
+                "y_offset_m": 0.0,
+                "carry_through": {
+                    "stem_width_m": 0.015,
+                    "length_m": 0.03,
+                    "flare_radius_m": 0.01,
+                    "root_length_m": 0.05,
+                    "wall_fillet_m": 0.004
+                }
+            },
+            "sections": {
+                "cuts_m": [
+                    0.04,
+                    0.24,
+                    0.44
+                ]
+            }
+        },
+        {
+            "name": "v-tail",
+            "x_root_le_m": 0.69,
+            "layout": "H",
+            "fin_position": "top",
+            "dihedral_deg": 35.0,
+            "vertical_offset": 0.3,
+            "root": "body",
+            "span_m": 0.22,
+            "chord_root_m": 0.13,
+            "chord_tip_m": 0.08,
+            "sweep_le_deg": 15.0,
+            "incidence_deg": 1.0,
+            "incidence_mode": "symmetric",
+            "airfoil": "naca0009",
+            "control": {
+                "align_hinge_vertically": false,
+                "kind": "split",
+                "roles": [
+                    "pitch",
+                    "yaw"
+                ],
+                "deflection_min_deg": -30.0,
+                "deflection_max_deg": 30.0,
+                "rate_deg_s": 300.0,
+                "gap_m": 0.0005,
+                "rod_diameter_m": 0.002,
+                "rod_x_offset_m": 0.0025,
+                "chord_start": 0.62,
+                "span_start": 0.08,
+                "span_end": 1.0,
+                "servos": [
+                    "S1",
+                    "S2"
+                ]
+            },
+            "sections": {
+                "cuts_m": [
+                    0.01
+                ]
+            }
+        }
+    ],
+    "volumes": [
+        {
+            "name": "battery",
+            "shape": "rounded_box",
+            "x_m": 0.175,
+            "size_m": [
+                0.15,
+                0.046,
+                0.048
+            ],
+            "axis": "x",
+            "corner_radius_m": 0.004
+        }
+    ],
+    "parts": [
+        {
+            "name": "cam",
+            "part": "camera:camera-generic-micro",
+            "x_m": 0.035,
+            "y_m": 0.0,
+            "z_m": 0.006
+        },
+        {
+            "name": "fc",
+            "part": "fc:fc-generic-wing",
+            "x_m": 0.4,
+            "y_m": 0.0,
+            "z_m": 0.0
+        },
+        {
+            "name": "gps",
+            "part": "gps:gps-generic",
+            "x_m": 0.46,
+            "y_m": 0.0,
+            "z_m": 0.022
+        },
+        {
+            "name": "rx",
+            "part": "receiver:receiver-generic",
+            "x_m": 0.5,
+            "y_m": 0.0,
+            "z_m": 0.0
+        },
+        {
+            "name": "vtx",
+            "part": "vtx:vtx-generic-20x20",
+            "x_m": 0.54,
+            "y_m": 0.0,
+            "z_m": 0.0
+        },
+        {
+            "name": "ESC",
+            "part": "esc:esc-single-40a",
+            "x_m": 0.655,
+            "y_m": 0.0,
+            "z_m": 0.0
+        },
+        {
+            "name": "aileron servo L",
+            "part": "servo:servo-generic-9g",
+            "x_m": 0.43,
+            "y_m": -0.28,
+            "z_m": 0.02
+        },
+        {
+            "name": "aileron servo R",
+            "part": "servo:servo-generic-9g",
+            "x_m": 0.43,
+            "y_m": 0.28,
+            "z_m": 0.02
+        },
+        {
+            "name": "tail servo L",
+            "part": "servo:servo-generic-9g",
+            "x_m": 0.595,
+            "y_m": -0.007,
+            "z_m": 0.0
+        },
+        {
+            "name": "tail servo R",
+            "part": "servo:servo-generic-9g",
+            "x_m": 0.595,
+            "y_m": 0.007,
+            "z_m": 0.0
+        }
+    ],
+    "access": [
+        {
+            "name": "battery hatch",
+            "kind": "hatch",
+            "profile": "rounded_rectangle",
+            "width_m": 0.05,
+            "length_m": 0.15,
+            "extent": "wall",
+            "x_m": 0.175,
+            "y_m": 0.0,
+            "z_m": 0.04,
+            "roll_deg": 180,
+            "corner_radius_m": 0.006,
+            "gap_m": 0.0003
+        }
+    ],
+    "sections": {
+        "cuts_m": [
+            0.09,
+            0.29,
+            0.5,
+            0.68
+        ],
+        "per_section": [
+            {
+                "solid": false
+            },
+            {
+                "solid": false
+            },
+            {
+                "solid": false
+            },
+            {
+                "solid": false
+            },
+            {
+                "solid": false
+            }
+        ],
+        "cut_joints": [
+            "front_male",
+            "front_male",
+            "rear_male",
+            "rear_male"
+        ],
+        "joints": {
+            "type": "radial_screws",
+            "count": 8,
+            "screw": "M3",
+            "insertion_depth_m": 0.01,
+            "coupler_wall_m": 0.0045,
+            "fit_clearance_m": 0.0003,
+            "socket_wall_m": 0.00125,
+            "hole_edge_dist_m": 0.006,
+            "hole_diameter_m": 0.003,
+            "hole_angle_offset_deg": 22.5
+        }
+    },
+    "preset": "tube62",
+    "propulsion": {
+        "mounts": [
+            {
+                "type": "electric",
+                "on": "tail",
+                "direction": "pusher",
+                "spin": "cw",
+                "clearance_m": 0.001,
+                "thrust_axis_tilt_deg": 0.0,
+                "x_offset_m": 0.01,
+                "pod": {
+                    "diameter_m": 0.035,
+                    "flat_length_m": 0.015,
+                    "curve_length_m": 0.025,
+                    "profile": "elliptical"
+                }
+            }
+        ],
+        "electric": {
+            "motor": {
+                "manufacturer": "Spektrum",
+                "name": "X2216 KV880 V3 3-4S"
+            },
+            "prop": "APC E 9x6",
+            "battery": {
+                "model": "custom_liion",
+                "s": 4,
+                "p": 2,
+                "cell": "Molicel INR21700-P45B 7/10C",
+                "connector": "XT60",
+                "cell_axis": "x",
+                "stacking": [
+                    2,
+                    2,
+                    2
+                ],
+                "lead_awg": 14,
+                "lead_length_m": 0.1,
+                "volume": "battery"
+            },
+            "esc": "ESC",
+            "wiring": {
+                "battery": {
+                    "gauge_awg": 14,
+                    "conductors": 2,
+                    "plugs": [
+                        "XT60",
+                        "XT60"
+                    ]
+                },
+                "motors": [
+                    {
+                        "gauge_awg": 18,
+                        "conductors": 3,
+                        "plugs": [
+                            "MR60"
+                        ]
+                    }
+                ]
+            }
+        }
+    }
+}
