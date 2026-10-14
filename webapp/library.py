@@ -68,6 +68,7 @@ NEW_PART_LIBRARY_DEFAULTS = {
     **{role: dict(NEW_ROLE_PART) for role in PART_ROLES},
     "esc": dict(NEW_ROLE_PART) | {"curr": 0, "min_s": 0, "max_s": 0},
     "mounting": {"holes_mm": [], "screw": "M3", "outline_mm": [0.0, 0.0], "notes": ""},
+    "screw": {"clearance_mm": 0.0, "tap_drill_mm": 0.0, "head_diameter_mm": 0.0, "head_height_mm": 0.0, "notes": ""},
     "prop": {"diameter_in": 0, "mass": 0.0},
     "material": {"density_kg_m3": 0.0},
     "connector": {"contact_resistance_ohm": 0.0},

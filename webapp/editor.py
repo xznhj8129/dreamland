@@ -14,7 +14,7 @@ from typing import Any
 from libs.airframe import (
     ACCESS_EXTENTS, ACCESS_KINDS, ACCESS_PROFILES,
     AXES, BATTERY_PART_NAME, CONTROL_KINDS, CONTROL_ROLES, CUT_JOINTS, ELECTRIC_MOUNT_KEYS, FIN_POSITIONS, INCIDENCE_MODES,
-    JOINT_TYPES, LAYOUT_PANEL_COUNTS, LAYOUTS, MOUNT_TARGETS, MOUNT_TYPES, ORIENTATION_KEYS, PART_CATEGORIES,
+    JOINT_TYPES, LAYOUT_PANEL_COUNTS, LAYOUTS, MOUNT_HOLE_TYPES, MOUNT_TARGETS, MOUNT_TYPES, ORIENTATION_KEYS, PART_CATEGORIES,
     REINFORCEMENT_TYPES, ROCKET_MOUNT_TARGETS, SERVO_OUTPUTS, SINGLE_PROP_SPINS, SURFACE_PROP_SPINS, SURFACE_ROOTS,
     THRUST_DIRECTIONS, VOLUME_SHAPES, AirframeError, cell_format, motor_count, motor_repo,
 )
@@ -30,7 +30,7 @@ from webapp.resizing import resize_airframe, resize_section
 
 # editor_view.py 37-42
 MM_KEYS = {
-    "d1_m", "d2_m", "center_diameter_m", "center_depth_m", "head_diameter_m", "head_depth_m",
+    "pattern_diameter_m", "inner_diameter_m", "outer_diameter_m", "center_diameter_m", "center_depth_m", "head_diameter_m", "head_depth_m", "clearance_m",
     "length_m", "width_m", "height_m", "wall_radial_m", "insertion_depth_m", "diameter_m", "radial_position_m",
     "from_x_m", "to_x_m", "x_root_le_m", "span_m", "chord_root_m", "chord_tip_m", "span_position_m",
     "x_offset_m", "y_offset_m", "z_offset_m", "x_m", "y_m", "z_m", "lead_length_m", "flat_length_m", "curve_length_m", "nose_radius", "size_m", "printer_bed_m", "cuts_m",
@@ -90,8 +90,13 @@ NEW_CONTROL = {"kind": "split", "roles": [], "deflection_min_deg": -25.0, "defle
                "align_hinge_vertically": False}  # + kind fields, servos
 # editor_view.py 71
 NEW_POD = {"diameter_m": 0.035, "flat_length_m": 0.02, "curve_length_m": 0.05, "profile": "elliptical"}
-NEW_MOUNT_HOLES = {"pattern": "single", "d1_m": 0.003, "d2_m": 0.003, "hole_diameter_m": 0.003,
-                   "center_diameter_m": 0.0, "center_depth_m": 0.0, "head_diameter_m": 0.0, "head_depth_m": 0.0}
+# Motor mount holes (libs.airframe.MotorMountHoles): a new pattern is round; each type owns its diameters, and the
+# type switch (mount.holes.type) adds the other type's defaults and drops its own. The head bore (mount.holes.head)
+# starts at NEW_MOUNT_HEAD_DEPTH_M, the mount face thickness the screw head seats behind.
+NEW_MOUNT_HOLE_TYPE_FIELDS = {"round": {"pattern_diameter_m": 0.019}, "slot": {"inner_diameter_m": 0.016, "outer_diameter_m": 0.019}}
+NEW_MOUNT_HOLES = {"type": "round", "count": 4, "angle_deg": 0.0, "screw": "M3", **NEW_MOUNT_HOLE_TYPE_FIELDS["round"],
+                   "center_diameter_m": 0.0, "center_depth_m": 0.0}
+NEW_MOUNT_HEAD_DEPTH_M = 0.003
 # editor_view.py 73-75: spars and carry-through for an aircraft without a preset to take them from (the tube62 values).
 NEW_SPARS = {"material": "carbon_rod", "diameter_m": 0.0064, "count": 2, "spacing_m": 0.0075, "x_offset_m": 0.02, "y_offset_m": 0.0}
 NEW_CARRY_THROUGH = {"stem_width_m": 0.01, "length_m": 0.02, "flare_radius_m": 0.02, "root_length_m": 0.04, "wall_fillet_m": 0.004}
@@ -105,7 +110,9 @@ NEW_ACCESS_CORNER_RADIUS_M = 0.003
 NEW_ACCESS_DEPTH_M = 0.002
 NEW_ACCESS_RADIAL = {"count": 8, "axis": "x"}
 # editor_view.add_mount 1115-1118
-NEW_MOUNT = {"type": "electric", "on": "nose", "x_offset_m": 0.0, "direction": "tractor", "spin": SINGLE_PROP_SPINS[0], "thrust_axis_tilt_deg": 0.0}
+NEW_MOUNT_CLEARANCE_M = 0.001  # added to the bell diameter for the mount clearance cut
+NEW_MOUNT = {"type": "electric", "on": "nose", "x_offset_m": 0.0, "direction": "tractor", "spin": SINGLE_PROP_SPINS[0], "thrust_axis_tilt_deg": 0.0,
+             "clearance_m": NEW_MOUNT_CLEARANCE_M}
 # editor_view.add_volume 1242-1249: name and x_m are set from the definition, then the `box` shape fields.
 NEW_VOLUME = {"name": "volume", "shape": "box", "x_m": 0.0, **VOLUME_SHAPE_FIELDS["box"]}
 # editor_view.add_part 1227-1234: name, the first library part with a mass and its place are set from the definition.
@@ -226,6 +233,8 @@ def context(state: AppState) -> dict[str, Any]:
         "orientation_keys": list(ORIENTATION_KEYS),
         "new_mount": NEW_MOUNT,
         "mount_types": list(MOUNT_TYPES),
+        "mount_hole_types": list(MOUNT_HOLE_TYPES),
+        "screw_sizes": list(state.parts_data["screw"]),
         "rocket_mount_targets": list(ROCKET_MOUNT_TARGETS),
         "rocket_motors": rocket_motor_list(),
         # Propulsion and wiring (editor_view.build_propulsion_tab 944-1019, build_wiring_tab 627-682): the model
@@ -533,6 +542,7 @@ def normalize_mount(definition: dict, mount: dict) -> None:
         mount.setdefault("span_position_m", 0.0)
         if not rocket:
             mount.setdefault("direction", "tractor")
+            mount.setdefault("clearance_m", NEW_MOUNT_CLEARANCE_M)
             if mount.get("spin") not in SURFACE_PROP_SPINS:
                 mount["spin"] = SURFACE_PROP_SPINS[0]
     else:
@@ -540,6 +550,7 @@ def normalize_mount(definition: dict, mount: dict) -> None:
             mount.pop(key, None)
         if not rocket:
             mount["direction"] = "tractor" if mount["on"] == "nose" else "pusher"
+            mount.setdefault("clearance_m", NEW_MOUNT_CLEARANCE_M)
             if mount.get("spin") not in SINGLE_PROP_SPINS:
                 mount["spin"] = SINGLE_PROP_SPINS[0]
 
@@ -893,6 +904,35 @@ def apply_op(state: AppState, body: dict[str, Any]) -> None:
         mount = _indexed(propulsion["mounts"], body.get("index"), "mount")
         key, defaults = ("pod", NEW_POD) if op == "mount.pod.toggle" else ("holes", NEW_MOUNT_HOLES)
         toggle_block(mount, key, defaults, enabled=body.get("enabled") is True)
+    elif op in ("mount.holes.type", "mount.holes.head"):
+        propulsion = definition.get("propulsion")
+        if not isinstance(propulsion, dict):
+            raise ValueError("the aircraft is not powered")
+        mount = _indexed(propulsion["mounts"], body.get("index"), "mount")
+        holes = mount.get("holes")
+        if not isinstance(holes, dict):
+            raise ValueError("the mount has no holes")
+        if op == "mount.holes.head":  # the head bore starts at the screw's table head diameter; the owner edits it
+            if body.get("enabled") is True:
+                screw = state.parts_data["screw"].get(holes.get("screw"))
+                if screw is None:
+                    raise ValueError(f"mount hole screw {holes.get('screw')!r} is not in data/parts/screw.json")
+                holes.setdefault("head_diameter_m", screw["head_diameter_mm"] / 1000.0)
+                holes.setdefault("head_depth_m", NEW_MOUNT_HEAD_DEPTH_M)
+            else:
+                holes.pop("head_diameter_m", None)
+                holes.pop("head_depth_m", None)
+        else:
+            hole_type = body.get("type")
+            if hole_type not in MOUNT_HOLE_TYPES:
+                raise ValueError(f"mount hole type must be one of {MOUNT_HOLE_TYPES}, got {hole_type!r}")
+            holes["type"] = hole_type
+            for other, fields in NEW_MOUNT_HOLE_TYPE_FIELDS.items():
+                for key, value in fields.items():
+                    if other == hole_type:
+                        holes.setdefault(key, value)
+                    else:
+                        holes.pop(key, None)
     # The electric system: installed from the client's template (new_propulsion's electric part) or removed.
     elif op == "electric.toggle":
         propulsion = definition.get("propulsion")

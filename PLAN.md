@@ -137,11 +137,18 @@ propulsion          required when powered, absent when not
                     axis; out = INAV props out, X: front-right and rear-left cw, multirotor front = aircraft belly),
                     nose/tail cw | ccw;
                     thrust_axis_tilt_deg: thrust line tilted up (+z) from the body axis, e.g. to pass through the CG;
+                    clearance_m (electric): added to the motor bell diameter for the mount clearance cut: everything of
+                      the carrying wing and pod (or fuselage section) on the motor's side of the mount face, within that
+                      diameter, is cut away (a pod can sit recessed into the wing, leaving a channel)
                     pod optional: diameter_m, flat_length_m, curve_length_m, profile (parameter-free)
-                    holes optional: pattern single (D1 hole) or radial_slots (4 M3-width slots from D1 to D2);
-                      d1_m, d2_m (slot-centre circle diameters), hole_diameter_m (slot width),
-                      center_diameter_m + center_depth_m (relief), head_diameter_m + head_depth_m
-                      (head seat inward from mounting face; bolt entry cleared to the carrying section's inner cut)
+                    holes optional: type round | slot, count (int), angle_deg (first hole; 0 = +y, positive towards +z),
+                      screw (a data/parts/screw.json size, M1.6..M5: its clearance bore is cut), round:
+                      pattern_diameter_m; slot: inner_diameter_m, outer_diameter_m (radial slot ends);
+                      center_diameter_m + center_depth_m (shaft relief); head bore optional, head_diameter_m and
+                      head_depth_m together (heads vary; the editor starts it at the screw table's head diameter; the
+                      seat inward from the mounting face: the head bore runs from there on through the material in
+                      front, the way the screw goes in). A surface motor's bores go through its whole wing and pod (fused first);
+                      a nose or tail motor's through the fuselage section carrying it
 volumes[]           internal space: name, x_m (centre), y_m and z_m (default 0), shape:
                       box: size_m [x, y, z]
                       rounded_box: size_m [x, y, z], axis x|y|z, corner_radius_m (the edges along axis rounded; fit and

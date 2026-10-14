@@ -53,14 +53,14 @@ NOMINAL_CELL_V = {"lipo": 3.7, "liion": 3.6}  # commercial packs, by type
 # data/parts/mounting.json pattern, or null), wiring_origin_mm [x, y, z] (where its wires start, from its centre in its
 # own frame), generic (true = typical values for layout, not a real product), notes; role-specific fields beside them.
 PART_ROLES = ("fc", "esc", "camera", "companion", "vtx", "receiver", "gps", "servo")
-PART_TABLES = ("battery", "connector", "prop", "material", "mounting")  # data/parts/<table>.json: {name: entry}
+PART_TABLES = ("battery", "connector", "prop", "material", "mounting", "screw")  # data/parts/<table>.json: {name: entry}
 PART_CATEGORIES = ("battery", *PART_ROLES)  # what can be placed in an airframe (parts[], the battery)
 AXES = ("x", "y", "z")
 ORIENTATION_KEYS = ("yaw_deg", "pitch_deg", "roll_deg")  # a placed part's turn (PlacedPart), each optional (absent = 0)
 MOUNT_TYPES = ("electric", "rocket")  # what a motor mount carries: an electric motor and prop, or a solid rocket motor
 MOUNT_TARGETS = ("nose", "tail", "surface")
 ROCKET_MOUNT_TARGETS = ("tail", "surface")  # a rocket motor fires aft: not from the nose
-ELECTRIC_MOUNT_KEYS = ("direction", "spin", "pod", "holes")  # mount fields only an electric mount has
+ELECTRIC_MOUNT_KEYS = ("direction", "spin", "clearance_m", "pod", "holes")  # mount fields only an electric mount has
 THRUST_DIRECTIONS = ("tractor", "pusher")
 # Prop spin, seen from where the thrust points (from above in hover). A surface mount carries 2+ motors that spin in
 # pairs, props out or in; a nose or tail mount carries one motor, cw or ccw.
@@ -320,23 +320,48 @@ class Pod:
 
 
 @dataclass(frozen=True)
+class MetricScrew:
+    """One metric screw size from data/parts/screw.json: the threaded-hole primitive a printed part is cut for. The
+    clearance bore is what the screw passes through; the head bore is what it is inserted through; tap_drill_m is the
+    bore a screw cuts its own thread in."""
+    size: str
+    clearance_m: float
+    tap_drill_m: float
+    head_diameter_m: float
+    head_height_m: float
+
+
+MOUNT_HOLE_TYPES = ("round", "slot")
+
+
+@dataclass(frozen=True)
 class MotorMountHoles:
-    """Mount-face cuts. D1/D2 are slot-centre circle diameters; single uses D1 as its hole diameter."""
-    pattern: str
-    d1_m: float
-    d2_m: float
-    hole_diameter_m: float
+    """The motor's fastening pattern on the mount face: count holes, the first at angle_deg (0 = towards +y, positive
+    towards +z) and the rest evenly round: round holes on pattern_diameter_m, or radial slots from inner_diameter_m to
+    outer_diameter_m. Each is the screw's clearance bore through the mount face; with a head bore (head_diameter_m and
+    head_depth_m), the head bore runs from that seat depth on through the material in front, the way the screw is
+    inserted. The centre relief clears the shaft."""
+    type: str  # MOUNT_HOLE_TYPES
+    count: int
+    angle_deg: float
+    screw: MetricScrew
+    pattern_diameter_m: float | None  # round only
+    inner_diameter_m: float | None  # slot only
+    outer_diameter_m: float | None  # slot only
     center_diameter_m: float
     center_depth_m: float
-    head_diameter_m: float
-    head_depth_m: float  # seat distance inward from the mounting face; access is cleared behind it
+    head_diameter_m: float | None  # head bore diameter (heads vary; the screw table's head diameter is only the default); None = no head bore
+    head_depth_m: float | None  # seat distance inward from the mounting face; None = no head bore
 
     def segments_m(self) -> tuple[tuple[tuple[float, float], tuple[float, float]], ...]:
-        if self.pattern == "single":
-            return (((0.0, 0.0), (0.0, 0.0)),)
-        return tuple(((y * self.d1_m / 2.0, z * self.d1_m / 2.0),
-                      (y * self.d2_m / 2.0, z * self.d2_m / 2.0))
-                     for y, z in ((1.0, 0.0), (0.0, 1.0), (-1.0, 0.0), (0.0, -1.0)))
+        """(start, end) of each hole in the mount-face plane (y, z), metres; a round hole has start == end."""
+        segments = []
+        for index in range(self.count):
+            angle = math.radians(self.angle_deg + 360.0 * index / self.count)
+            direction = (math.cos(angle), math.sin(angle))
+            inner, outer = ((self.pattern_diameter_m,) * 2 if self.type == "round" else (self.inner_diameter_m, self.outer_diameter_m))
+            segments.append((tuple(inner / 2.0 * d for d in direction), tuple(outer / 2.0 * d for d in direction)))
+        return tuple(segments)
 
 
 @dataclass(frozen=True)
@@ -352,6 +377,8 @@ class Mount:
     thrust_axis_tilt_deg: float  # thrust line tilted up (+z) from the body axis, e.g. to pass through the CG
     pod: Pod | None  # electric only
     holes: MotorMountHoles | None = None  # electric only
+    clearance_m: float | None = None  # electric only: added to the bell diameter for the mount clearance cut (everything of
+                                      # the carrying wing/pod or section on the motor's side of the mount face, within it)
 
 
 @dataclass(frozen=True)
@@ -1191,27 +1218,44 @@ def _wire_run(data: dict, path: str, parts_data: dict) -> WireRun:
     return WireRun(gauge_awg=gauge, conductors=conductors, plugs=tuple(plugs))
 
 
-def _motor_mount_holes(data: dict, path: str) -> MotorMountHoles:
+def metric_screw(size: str, screws: dict, path: str) -> MetricScrew:
+    """The data/parts/screw.json entry of a screw size, in metres."""
+    if size not in screws:
+        raise AirframeError(f"{path}: {size!r} is not a size in data/parts/screw.json {list(screws)}")
+    fields = _Fields(dict(screws[size]), f"data/parts/screw.json {size}")
+    return MetricScrew(size=size, clearance_m=fields.positive("clearance_mm") / 1000.0, tap_drill_m=fields.positive("tap_drill_mm") / 1000.0,
+                       head_diameter_m=fields.positive("head_diameter_mm") / 1000.0, head_height_m=fields.positive("head_height_mm") / 1000.0)
+
+
+def _motor_mount_holes(data: dict, path: str, screws: dict) -> MotorMountHoles:
+    """A mount's holes: the fields of its type exactly (pattern_diameter_m round; inner/outer_diameter_m slot); the head
+    bore's head_diameter_m and head_depth_m together or neither."""
     fields = _Fields(data, path)
+    head_bore = "head_diameter_m" in data or "head_depth_m" in data
+    hole_type = fields.choice("type", MOUNT_HOLE_TYPES)
+    count = fields.required("count")
+    if type(count) is not int or count < 1:
+        raise AirframeError(f"{fields.at('count')}: must be a whole number >= 1, got {count!r}")
     holes = MotorMountHoles(
-        pattern=fields.choice("pattern", ("single", "radial_slots")),
-        d1_m=fields.positive("d1_m"), d2_m=fields.positive("d2_m"),
-        hole_diameter_m=fields.positive("hole_diameter_m"),
+        type=hole_type, count=count, angle_deg=fields.number("angle_deg"),
+        screw=metric_screw(fields.text("screw"), screws, fields.at("screw")),
+        pattern_diameter_m=fields.number("pattern_diameter_m", minimum=0.0) if hole_type == "round" else None,
+        inner_diameter_m=fields.number("inner_diameter_m", minimum=0.0) if hole_type == "slot" else None,
+        outer_diameter_m=fields.positive("outer_diameter_m") if hole_type == "slot" else None,
         center_diameter_m=fields.number("center_diameter_m", minimum=0.0),
         center_depth_m=fields.number("center_depth_m", minimum=0.0),
-        head_diameter_m=fields.number("head_diameter_m", minimum=0.0),
-        head_depth_m=fields.number("head_depth_m", minimum=0.0),
+        head_diameter_m=fields.positive("head_diameter_m") if head_bore else None,
+        head_depth_m=fields.number("head_depth_m", minimum=0.0) if head_bore else None,
     )
     fields.done()
-    if holes.pattern == "radial_slots" and holes.d2_m < holes.d1_m:
-        raise AirframeError(f"{path}.d2_m: must be >= D1")
-    hole_size = holes.d1_m if holes.pattern == "single" else holes.hole_diameter_m
-    if holes.head_diameter_m and holes.head_diameter_m < hole_size:
-        raise AirframeError(f"{path}.head_diameter_m: must be >= the fastening hole diameter")
+    if holes.head_diameter_m is not None and holes.head_diameter_m < holes.screw.clearance_m:
+        raise AirframeError(f"{fields.at('head_diameter_m')}: {holes.head_diameter_m} is less than the {holes.screw.size} clearance bore {holes.screw.clearance_m}")
+    if holes.type == "slot" and holes.outer_diameter_m <= holes.inner_diameter_m:
+        raise AirframeError(f"{fields.at('outer_diameter_m')}: {holes.outer_diameter_m} must be more than inner_diameter_m {holes.inner_diameter_m}")
     return holes
 
 
-def _mount(data: dict, path: str, surfaces: dict[str, Surface]) -> Mount:
+def _mount(data: dict, path: str, surfaces: dict[str, Surface], screws: dict) -> Mount:
     fields = _Fields(data, path)
     mount_type = fields.choice("type", MOUNT_TYPES)
     on = fields.choice("on", MOUNT_TARGETS if mount_type == "electric" else ROCKET_MOUNT_TARGETS)
@@ -1233,6 +1277,7 @@ def _mount(data: dict, path: str, surfaces: dict[str, Surface]) -> Mount:
     if (on, direction) in (("nose", "pusher"), ("tail", "tractor")):
         raise AirframeError(f"{fields.at('direction')}: a {on} motor must be a {'tractor' if on == 'nose' else 'pusher'}")
     spin = fields.choice("spin", SURFACE_PROP_SPINS if on == "surface" else SINGLE_PROP_SPINS)
+    clearance_m = fields.number("clearance_m", minimum=0.0)
     pod_data = fields.optional("pod", None)
     pod = None
     if pod_data is not None:
@@ -1251,10 +1296,10 @@ def _mount(data: dict, path: str, surfaces: dict[str, Surface]) -> Mount:
         except ValueError as error:
             raise AirframeError(f"{fields.at('pod')}: {error}") from error
     holes_data = fields.optional("holes", None)
-    holes = None if holes_data is None else _motor_mount_holes(holes_data, fields.at("holes"))
+    holes = None if holes_data is None else _motor_mount_holes(holes_data, fields.at("holes"), screws)
     fields.done()
     return Mount(type=mount_type, on=on, surface=surface_name, span_position_m=span_position_m, x_offset_m=x_offset_m, direction=direction, spin=spin,
-                 thrust_axis_tilt_deg=thrust_axis_tilt_deg, pod=pod, holes=holes)
+                 thrust_axis_tilt_deg=thrust_axis_tilt_deg, pod=pod, holes=holes, clearance_m=clearance_m)
 
 
 def _electric(data: dict, path: str, mounts: tuple[Mount, ...], surfaces: tuple[Surface, ...], parts: tuple[PlacedPart, ...], volumes: dict[str, Volume],
@@ -1321,7 +1366,7 @@ def _rocket(data: dict, path: str, mounts: tuple[Mount, ...]) -> tuple[RocketLoa
 def _propulsion(data: dict, path: str, surfaces: tuple[Surface, ...], parts: tuple[PlacedPart, ...], volumes: dict[str, Volume], parts_data: dict) -> Propulsion:
     fields = _Fields(data, path)
     surface_names = {surface.name: surface for surface in surfaces}
-    mounts = tuple(_mount(mount_data, f"{fields.at('mounts')}[{index}]", surface_names) for index, mount_data in enumerate(fields.required("mounts")))
+    mounts = tuple(_mount(mount_data, f"{fields.at('mounts')}[{index}]", surface_names, parts_data["screw"]) for index, mount_data in enumerate(fields.required("mounts")))
     if not mounts:
         raise AirframeError(f"{fields.at('mounts')}: at least one mount is required")
     electric_data = fields.optional("electric", None)

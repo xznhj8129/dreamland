@@ -371,6 +371,10 @@ export interface EditorContext {
   new_mount: Record<string, unknown>
   /** Motor mount types (electric | rocket), where a rocket mount may sit, and the rocket motor database by name. */
   mount_types: string[]
+  /** libs.airframe.MOUNT_HOLE_TYPES: round holes or radial slots. */
+  mount_hole_types: string[]
+  /** The data/parts/screw.json sizes (M1.6..M5), in table order. */
+  screw_sizes: string[]
   rocket_mount_targets: string[]
   rocket_motors: Record<string, RocketMotorInfo>
   /** Propulsion and wiring (webapp/editor.py context()): model labels, add templates and motorlib combo lists. */

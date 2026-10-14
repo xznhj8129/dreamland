@@ -312,7 +312,8 @@ interface OptionalBlockProps {
  * shows its fields when present (spars with a nested carry-through, root base, pod). */
 export function OptionalBlock({ label, present, onToggle, children }: OptionalBlockProps): ReactElement {
   return (
-    <details className="advanced-fields">
+    // Open whenever the block is enabled (on load and as it is ticked); collapsing it by hand still works.
+    <details className="advanced-fields" open={present}>
       <summary>{label}<span>{present ? 'Enabled' : 'Not used'}</span></summary>
       <CheckboxField checked={present} label={`Enable ${label}`} onToggle={onToggle} />
       {present && <Group label={label}>{children}</Group>}

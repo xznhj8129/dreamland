@@ -210,6 +210,7 @@ class MotorPlacement:
     mount_x_m: float  # surface root LE, or the end mount face clamped to the body; assigns attached mass to a section
     panel: Panel | None  # the surface panel it sits on; None on the nose or tail
     mount_holes: MotorMountHoles | None
+    mount_clearance_m: float  # Mount.clearance_m: the mount clearance cut is the bell diameter plus this
     mount_face: Vec
     mount_inward: Vec  # physical bell and pod axes are X
 
@@ -770,11 +771,46 @@ def through_partner(surface_set: SurfaceSet, along_m: float) -> int | None:
     return None
 
 
-def build_spars(surfaces: tuple[SurfaceSet, ...], clearance_m: float) -> tuple[SparLine, ...]:
+def _pod_exit(end: Vec, direction: Vec, motor: "MotorPlacement") -> float:
+    """How far past end along direction a spar line leaves a motor pod on its far side (0 when it misses the pod or
+    leaves it before end). The pod is a body of revolution about the x-parallel line through the motor."""
+    stations = motor.pod_stations
+    axis = (stations[0][0], motor.position[1], motor.position[2])
+    approach = closest_approach(end, direction, axis, (1.0, 0.0, 0.0))
+    radius_max = max(radius for _x, radius in stations)
+    if approach is None or approach[2] >= radius_max:
+        return 0.0
+
+    def outside(t: float) -> float:
+        point = tuple(e + t * d for e, d in zip(end, direction))
+        x = point[0]
+        if not stations[0][0] <= x <= stations[-1][0]:
+            return 1.0
+        index = min(bisect.bisect_right([station[0] for station in stations], x), len(stations) - 1)
+        (x0, r0), (x1, r1) = stations[index - 1], stations[index]
+        radius = r0 if x1 == x0 else r0 + (r1 - r0) * (x - x0) / (x1 - x0)
+        return math.hypot(point[1] - axis[1], point[2] - axis[2]) - radius
+
+    inside = approach[0]
+    if outside(inside) >= 0.0:
+        return 0.0
+    across = math.hypot(direction[1], direction[2])
+    out = inside + 2.0 * radius_max / max(across, 1e-9)
+    for _ in range(60):
+        middle = (inside + out) / 2.0
+        if outside(middle) < 0.0:
+            inside = middle
+        else:
+            out = middle
+    return max(out, 0.0)
+
+
+def build_spars(surfaces: tuple[SurfaceSet, ...], clearance_m: float, motors: tuple["MotorPlacement", ...] = ()) -> tuple[SparLine, ...]:
     """Spar lines. Where the first panel's spar line runs on in line into the opposite panel, that pair's spars run
     through, tip to tip. Every other spar runs from its tip inward and stops where it meets another (by closest approach
     within a diameter): clearance_m clear of a through spar, or of the plane midway between itself and a spar that also
-    stops there (dihedral, radially symmetric sets that are not in line)."""
+    stops there (dihedral, radially symmetric sets that are not in line). A spar whose line crosses a motor pod on its
+    panel runs on to the pod's far skin, so it goes through the pod (its hole comes out the far side)."""
     lines = []
     for surface_set in surfaces:
         spars = surface_set.definition.spars
@@ -787,6 +823,11 @@ def build_spars(surfaces: tuple[SurfaceSet, ...], clearance_m: float) -> tuple[S
             partner = through_partner(surface_set, along)
             through = {0, partner} if partner is not None else set()
             raw = {panel.index: (*spar_plane_line(panel, along, surface_set.definition.span_m, spars.y_offset_m), panel.span_dir) for panel in surface_set.panels}
+            for panel_index, (start, end, direction) in list(raw.items()):
+                pods = [motor for motor in motors if motor.pod_stations and motor.panel is not None
+                        and (motor.panel.surface, motor.panel.index) == (surface_set.name, panel_index)]
+                exit_m = max((_pod_exit(end, direction, motor) for motor in pods), default=0.0)
+                raw[panel_index] = (start, tuple(e + exit_m * d for e, d in zip(end, direction)), direction)
             for panel_index, (start, end, direction) in raw.items():
                 if panel_index in through:
                     lines.append(SparLine(surface_set.name, panel_index, start, end, spars.diameter_m, True, tuple(p - hole_radius * d for p, d in zip(start, direction))))
@@ -1379,7 +1420,7 @@ def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[
         return ()
     electric = propulsion.electric
     bell_len = electric.bell_length_m
-    placements = []  # (name, position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel)
+    placements = []  # (name, position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel, mount)
     for number, mount in propulsion.electric_mounts:
         if mount.on == "surface":
             surface_set = next(item for item in surfaces if item.name == mount.surface)
@@ -1409,17 +1450,17 @@ def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[
                 curve = sample_pointed_profile(mount.pod.profile, mount.pod.curve_length_m, pod_radius, POD_PROFILE_SAMPLES)
                 stations += [(flat_end - prop_side * (mount.pod.curve_length_m - x), r) for x, r in curve[:-1]]
                 pod_stations = tuple(sorted(stations))
-            placements.append((f"motor {number} {name}", position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel, mount.holes))
+            placements.append((f"motor {number} {name}", position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel, mount))
     return tuple(
         MotorPlacement(
             name=name, position=position, thrust_dir=thrust_dir,
             prop_center=tuple(p - prop_side * (bell_len / 2.0 + PROP_SHAFT_LEN_M) * t for p, t in zip(position, thrust_dir)),
             prop_radius_m=electric.prop_diameter_m / 2.0, bell_diameter_m=electric.bell_diameter_m,
             bell_length_m=bell_len, pod_stations=pod_stations, spin=spin, mount_x_m=mount_x, panel=panel,
-            mount_holes=holes, mount_face=(position[0] - prop_side * bell_len / 2.0, position[1], position[2]),
+            mount_holes=mount.holes, mount_clearance_m=mount.clearance_m, mount_face=(position[0] - prop_side * bell_len / 2.0, position[1], position[2]),
             mount_inward=(-prop_side, 0.0, 0.0),
         )
-        for name, position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel, holes in placements
+        for name, position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel, mount in placements
     )
 
 
@@ -1609,7 +1650,7 @@ def resolve_airframe(airframe: Airframe, parts_data: dict, exact: ExactStructure
         points += reinforcement_mass_points(reinforcement, airframe.sections.cuts_m, parts_data["material"][reinforcement.pattern.material]["density_kg_m3"])
     points += [surface_mass_point(surface_set, airframe.print.bulk_density_kg_m3, None if exact is None else exact.surfaces[surface_set.name])
                for surface_set in surfaces]
-    spars = build_spars(surfaces, airframe.sections.joints.fit_clearance_m)
+    spars = build_spars(surfaces, airframe.sections.joints.fit_clearance_m, motors)
     points += spar_mass_points(surfaces, spars, parts_data)
     carry_through = build_carry_through(surfaces, body, airframe.fuselage.section.wall_radial_m)
     if exact is None:  # the built sections carry it: ExactStructure counts it in its section

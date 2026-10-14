@@ -261,9 +261,13 @@ def _mount_opening(opening):
     return work.extrude((opening.depth1_m - opening.depth0_m) * M_TO_MM).val()
 
 
-def cut_motor_mount_holes(shape, resolved: ResolvedAirframe):
-    """Cut fastening holes, shaft relief and bolt-entry clearance in printed material, leaving motors intact."""
-    cutters = cached(resolved, ("mount cutters",), lambda: [_mount_opening(opening) for opening in motor_mount_openings(resolved)])
+def cut_motor_mount_holes(shape, resolved: ResolvedAirframe, panel: Panel | None = None):
+    """Cut the fastening bores, head bores and shaft relief of the motors one carrier holds: a surface panel (its wing
+    with its pod fused on, cut before it is clipped into sections) or, with panel None, the fuselage (nose and tail
+    motors, cut into the finished section). Motors stay intact."""
+    carrier = None if panel is None else (panel.surface, panel.index)
+    cutters = cached(resolved, ("mount cutters", carrier),
+                     lambda: [_mount_opening(opening) for opening in motor_mount_openings(resolved) if opening.carrier == carrier])
     return shape.cut(*cutters).clean() if cutters else shape
 
 
@@ -297,14 +301,14 @@ def _build_airframe_pieces(resolved: ResolvedAirframe) -> list[tuple[int, str, o
             index = section_index(resolved.airframe.sections.cuts_m, panel.attach_le[0])
             fixed, moving = build_panel_solids(resolved, panel, surface_set.definition.control)
             if fixed is not None:
-                pieces.append((index, f"S{index + 1:02d}_{surface_set.name}_{panel.index + 1}", cut_motor_mount_holes(fixed, resolved), "panel"))
+                pieces.append((index, f"S{index + 1:02d}_{surface_set.name}_{panel.index + 1}", cut_motor_mount_holes(fixed, resolved, panel), "panel"))
             for solid in moving:
                 pieces.append((index, f"S{index + 1:02d}_CS{placements[(surface_set.name, panel.index)]}", solid, "control"))
     for motor_index, motor in enumerate(resolved.motors, start=1):
         index = section_index(resolved.airframe.sections.cuts_m, motor.position[0])
         pieces.append((index, f"S{index + 1:02d}_motor_{motor_index}", build_motor_solid(motor).val(), "motor"))
         if motor.pod_stations:
-            pieces.append((index, f"S{index + 1:02d}_pod_{motor_index}", cut_motor_mount_holes(build_pod_solid(motor).val(), resolved), "pod"))
+            pieces.append((index, f"S{index + 1:02d}_pod_{motor_index}", cut_motor_mount_holes(build_pod_solid(motor).val(), resolved, motor.panel), "pod"))
     return pieces
 
 
@@ -559,6 +563,8 @@ def _build_panel_attachments(resolved: ResolvedAirframe) -> tuple[list[Attachmen
                 if motor.pod_stations and motor.panel is not None and (motor.panel.surface, motor.panel.index) == (panel.surface, panel.index):
                     pod = build_pod_solid(motor).val()
                     fixed_solid = pod if fixed_solid is None else fixed_solid.fuse(pod)
+            if fixed_solid is not None:  # wing and pods fused first, then the motor bores cut through them whole
+                fixed_solid = cut_motor_mount_holes(fixed_solid, resolved, panel)
             if fixed_solid is not None:
                 cuts = surface_set.definition.sections.cuts_m
                 root = _clip_span(fixed_solid, panel, None, cuts[0]) if cuts else fixed_solid
@@ -573,7 +579,7 @@ def _build_panel_attachments(resolved: ResolvedAirframe) -> tuple[list[Attachmen
                         piece = _clip_span(fixed_solid, panel, start, end).cut(outer_body)
                         if holes:
                             piece = piece.cut(*holes)
-                        piece = cut_motor_mount_holes(piece, resolved).clean()
+                        piece = piece.clean()
                         name = f"W{surface_index}_P{panel.index + 1}_S{segment_index}"
                         if piece.Volume() <= 1e-3:
                             raise ValueError(f"{name}: span segment has no fixed material outside the fuselage; move the cut or remove it")

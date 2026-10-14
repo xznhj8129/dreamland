@@ -1,0 +1,44 @@
+{
+    "M1.6": {
+        "clearance_mm": 1.8,
+        "tap_drill_mm": 1.25,
+        "head_diameter_mm": 3.0,
+        "head_height_mm": 1.6,
+        "notes": "ISO 273 medium clearance; ISO 4762 socket head cap screw head"
+    },
+    "M2": {
+        "clearance_mm": 2.4,
+        "tap_drill_mm": 1.6,
+        "head_diameter_mm": 3.8,
+        "head_height_mm": 2.0,
+        "notes": "ISO 273 medium clearance; ISO 4762 socket head cap screw head"
+    },
+    "M2.5": {
+        "clearance_mm": 2.9,
+        "tap_drill_mm": 2.05,
+        "head_diameter_mm": 4.5,
+        "head_height_mm": 2.5,
+        "notes": "ISO 273 medium clearance; ISO 4762 socket head cap screw head"
+    },
+    "M3": {
+        "clearance_mm": 3.4,
+        "tap_drill_mm": 2.5,
+        "head_diameter_mm": 5.5,
+        "head_height_mm": 3.0,
+        "notes": "ISO 273 medium clearance; ISO 4762 socket head cap screw head"
+    },
+    "M4": {
+        "clearance_mm": 4.5,
+        "tap_drill_mm": 3.3,
+        "head_diameter_mm": 7.0,
+        "head_height_mm": 4.0,
+        "notes": "ISO 273 medium clearance; ISO 4762 socket head cap screw head"
+    },
+    "M5": {
+        "clearance_mm": 5.5,
+        "tap_drill_mm": 4.2,
+        "head_diameter_mm": 8.5,
+        "head_height_mm": 5.0,
+        "notes": "ISO 273 medium clearance; ISO 4762 socket head cap screw head"
+    }
+}

@@ -161,7 +161,7 @@ def propulsion_varset(airframe: Airframe) -> dict:
 def mount_varset(mount: Mount) -> dict:
     groups = {"Mount": {"Type": text(mount.type), "On": text(mount.on), "XOffset": distance(mount.x_offset_m), "ThrustTilt": angle(mount.thrust_axis_tilt_deg)}}
     if mount.type == "electric":
-        groups["Mount"] |= {"Direction": text(mount.direction), "Spin": text(mount.spin)}
+        groups["Mount"] |= {"Direction": text(mount.direction), "Spin": text(mount.spin), "Clearance": length(mount.clearance_m)}
     if mount.on == "surface":
         groups["Mount"] |= {"Surface": text(mount.surface), "SpanPosition": length(mount.span_position_m)}
     if mount.pod is not None:
@@ -170,10 +170,15 @@ def mount_varset(mount: Mount) -> dict:
                          "Profile": text(pod.profile)}
     if mount.holes is not None:
         holes = mount.holes
-        groups["MountingHoles"] = {"Pattern": text(holes.pattern), "D1": length(holes.d1_m), "D2": length(holes.d2_m),
-                                  "HoleDiameter": length(holes.hole_diameter_m), "CenterDiameter": length(holes.center_diameter_m),
-                                  "CenterDepth": length(holes.center_depth_m), "HeadDiameter": length(holes.head_diameter_m),
-                                  "HeadDepth": length(holes.head_depth_m)}
+        groups["MountingHoles"] = {"Type": text(holes.type), "Count": number(holes.count), "Angle": angle(holes.angle_deg),
+                                  "Screw": text(holes.screw.size), "ClearanceDiameter": length(holes.screw.clearance_m),
+                                  "CenterDiameter": length(holes.center_diameter_m), "CenterDepth": length(holes.center_depth_m)}
+        if holes.type == "round":
+            groups["MountingHoles"]["PatternDiameter"] = length(holes.pattern_diameter_m)
+        else:
+            groups["MountingHoles"] |= {"InnerDiameter": length(holes.inner_diameter_m), "OuterDiameter": length(holes.outer_diameter_m)}
+        if holes.head_depth_m is not None:
+            groups["MountingHoles"] |= {"HeadDiameter": length(holes.head_diameter_m), "HeadDepth": length(holes.head_depth_m)}
     return groups
 
 

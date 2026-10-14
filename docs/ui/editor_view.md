@@ -185,7 +185,7 @@ OrthographicView [fill, switchable, pannable, zoomable]
         - mouse drag on a spar -> move that set's spars along the root chord (x offset)
         - draw top-left colored point guide: blue CG, red Neutral point, green Lift @ AoA, each with its x from the nose
         - draw pods, motors, shafts, props, CG, CP, CL
-        - pink projected cut outlines: joint screws, motor bolts, head access and shaft relief
+        - pink projected cut outlines: joint screws, motor bolts, head bores and shaft relief
 
     mode Front
         - draw body as the front envelope of its lofted cross-sections
@@ -196,7 +196,7 @@ OrthographicView [fill, switchable, pannable, zoomable]
         - draw spars as pink lines (solid = through, dashed = stops) and the carry-through as dashed pink outlines
         - draw top-left colored point guide: blue CG, red Neutral point, green Lift @ AoA, each with its x from the nose
         - draw motor / pod / prop cross-sections
-        - pink projected cut outlines: joint screws, motor bolts, head access and shaft relief
+        - pink projected cut outlines: joint screws, motor bolts, head bores and shaft relief
 ```
 
 ### 3D tab
@@ -208,7 +208,7 @@ OrthographicView [fill, switchable, pannable, zoomable]
     - Transparent skin [ui:toggle button]: translucent body, pods, panels and controls; internal parts remain visible
     - Sections: toggle fuselage cross-section outlines and surface print-cut planes; off initially
     - Loft guides: independently toggle fuselage cross-section outlines at loft guides; off initially
-    - Cuts & holes: pink cut-volume outlines for joint screws, motor bolts, head access and shaft relief; on initially
+    - Cuts & holes: pink cut-volume outlines for joint screws, motor bolts, head bores and shaft relief; on initially
     - NP = static estimate; camera retained through transparency changes
     - Three.js model from webapp/model3d.py
     - drag to orbit, wheel to zoom
@@ -219,6 +219,9 @@ OrthographicView [fill, switchable, pannable, zoomable]
 
 ```text
 RightPane [arrange:column]
+
+    optional groups with an Enable checkbox (control surface, spars, pod, mounting holes, head bore, ...): expanded
+    while enabled (on load and as soon as they are ticked), collapsed while not used; can still be collapsed by hand
 
     * RightTabs [ui:tabs]
         Design [ui:tabs]   the airframe itself
@@ -395,9 +398,18 @@ MotorMountsTab [arrange:column]
       tail); X offset is the loaded motor's aft (nozzle) end from the tail face or surface root LE, positive aft; the motor
       runs forward from there. The motor itself is loaded on the Propulsion tab (Rocket)
     - deleting a mount takes the rocket motor loaded in it; later mounts' motors follow their mount's new number
-    - Mounting holes [ui:checkbox]: single D1 hole or four radial slots from D1 to D2; slot width defaults to 3 mm
-      center relief diameter/depth, bolt head diameter/seat depth; zero diameter disables relief/head cut
-      bolt entry stops at the carrying section's inner cut; pink cut outlines in Simple and 3D; cuts in CAD exports
+    - Mount clearance (mm, added to the bell diameter), electric only, new = 1 mm: everything of the carrying wing and pod
+      (or fuselage section) on the motor's side of the mount face, within bell + clearance, is cut away
+    - Mounting holes [ui:checkbox]: new = round, count 4, angle 0, M3, pattern diameter 19 mm
+        Hole type [ui:dropdown] Round | Slot; switching swaps the diameters (round: pattern diameter 19 mm;
+          slot: inner 16 mm, outer 19 mm)
+        Pattern count, Pattern angle (deg; 0 = +y), Hole diameter (screw) [ui:dropdown] M1.6 M2 M2.5 M3 M4 M5
+          (data/parts/screw.json; its clearance bore is cut)
+        Center relief diameter/depth; zero disables the relief
+        Head bore [ui:checkbox]: Head bore diameter (starts at the screw table's head diameter), Head seat depth from
+          mount face; the head bore runs from the seat on through the material in front, the way the screw is inserted
+      a surface motor's bores go through its whole wing and pod; a nose/tail motor's through its fuselage section
+      pink cut outlines in Simple and 3D; cuts in CAD exports
     - X offset: all mounts; positive aft; nose/tail motor and pod move together from the end face
 ```
 

@@ -2,6 +2,7 @@ User added TODOs (do not remove/change unless done)
 
 - changing xyz positions entry (which specifically, some must stay mm) from abs mm to relative frac to allow scaling without one-by-one mm adjustment
 - "plain ass plate" as airfoil, with or without thickness-diameter rounded edges
+- ducts, NACA ducts and intake ducts
 
 **SIM**
     * MSP/Mavlink commands (maybe complicated, not right now)
@@ -20,12 +21,16 @@ User added TODOs (do not remove/change unless done)
     - left pane buttons (Summary, Mass, Aero, etc) are wider apart than on the right pane; create one consistent universal "button row" element
     - Look for visual weirdness and inconsistencies, create consistent universal styling/functional elements for reuse across UI
     - Remember open tab/section in editor to return to
-    - Activated optional modals (ie: mounting holes) always expand if enabled
+    
+**Construction**
+    - Allow non 3D-printed shell construction methods (such as fiberglass or carbon fiber molding), different materials (what that excludes TBD)
+    - Allow one section to be considered a monolithic carbon fiber or metal plate, allowing different material from 3D print. This would be used for thin (1-10mm) reinforcement sections
     
 **CAD**
-    - STEP export not exporting hatch
+    - Access holes currently cut straight into (in-line). A proper hatch cuts towards the center. This must be an option (not always applicable to non-fuselage ie wings)
     - Hatches start under by default, should be on top and pointing down
     - Make hatches/holes automatically position clear above skin surface, they always point outside-in
+    - Why do them CAD exports have all these loft lines anyway?
 
 **3D view**
     - Cuts & Holes not on by default
@@ -36,17 +41,9 @@ User added TODOs (do not remove/change unless done)
     - show actual parametric motor (open or closed (plane) base; up or reverse shaft)
     
     Motor hole problems most apparent with m62_qr
-    - Motor mounting holes "single central hole" is wrong, it's "radial holes", there's 4 of them. 
-    - Redesign the section with:
-        Pattern -> Hole type: Round, Slot
-        Pattern count: int (default 4)
-        Pattern angle: deg (default 0)
-        Hole diameter: Metric M1.6-M2-M2.5-M3-M4-M5 dropdown (create primitive threaded hole element to use here)
-        Pattern diameter (if round): default 19mm
-        Pattern inner diameter (if slot): default 16mm
-        Pattern outer diameter (if slot): default 19mm
     - CAD export failure with current method using four radial slots, face failure if no bolt head cutout, complete failure if using bolt head cutout (multiple bodies)
-    - Spar carrythrough not actually going through pods (it should)
+    
+    Motor mount must clear everything after it (cut), so even if a wing intrudes inside it's perimeter, everything from the motor mount face and up (within the same wing/section) will be cut out. This allows a pod to be recessed slightly into the wing and leave space for a channel.
 
 **MCP**
     - Most of it already exists as HTTP routes in webapp/server.py

@@ -6,7 +6,7 @@ import { isObject } from './patch'
 import { useFormApi } from './session'
 import { ComponentPicker, useComponentIndex, useSelection } from './selection'
 
-const MOUNT_PATTERN_LABELS = { single: 'Single central hole', radial_slots: 'Four radial slots' }
+const MOUNT_HOLE_TYPE_LABELS = { round: 'Round', slot: 'Slot' }
 const MOUNT_TYPE_LABELS = { electric: 'Electric motor', rocket: 'Rocket motor' }
 
 /** editor_view.build_mounts_tab (1021-1042), normalize_mount (1100-1113), add_mount (1115-1118). */
@@ -108,20 +108,35 @@ function MountCard({ index, mount, surfaceNames, onOp }: MountCardProps): ReactE
       <ChoiceField path={[...path, 'direction']} value={mount.direction} options={context.choices.direction ?? []} />
       <ChoiceField path={[...path, 'spin']} value={mount.spin} options={spins} />
       <EntryField path={[...path, 'thrust_axis_tilt_deg']} unitKey="thrust_axis_tilt_deg" />
+      <EntryField path={[...path, 'clearance_m']} unitKey="clearance_m" label="Mount clearance (mm, added to the bell diameter)" />
       <OptionalBlock label="Mounting holes" present={holes !== null} onToggle={(checked) => void onOp({ op: 'mount.holes.toggle', index, enabled: checked })}>
         {holes !== null && <>
-          <ChoiceField path={[...path, 'holes', 'pattern']} value={holes.pattern} options={Object.keys(MOUNT_PATTERN_LABELS)} optionLabels={MOUNT_PATTERN_LABELS} label="Pattern" />
-          <EntryField path={[...path, 'holes', 'd1_m']} unitKey="d1_m" label={holes.pattern === 'single' ? 'Single hole diameter (mm)' : 'D1 · inner spacing diameter (mm)'} />
-          {holes.pattern === 'radial_slots' && <>
-            <EntryField path={[...path, 'holes', 'd2_m']} unitKey="d2_m" label="D2 · outer spacing diameter (mm)" />
-            <EntryField path={[...path, 'holes', 'hole_diameter_m']} unitKey="hole_diameter_m" label="Slot width (mm)" />
-            <HelpNote>Four radial slots from D1 to D2. M3 width: 3 mm. Equal D1/D2 makes round holes.</HelpNote>
+          <ChoiceField
+            path={[...path, 'holes', 'type']}
+            value={holes.type}
+            options={context.mount_hole_types}
+            optionLabels={MOUNT_HOLE_TYPE_LABELS}
+            label="Hole type"
+            // Switching the type swaps its diameters: round has the pattern diameter, slot the inner and outer.
+            onValue={(value) => void onOp({ op: 'mount.holes.type', index, type: value })}
+          />
+          <EntryField path={[...path, 'holes', 'count']} unitKey="count" label="Pattern count" />
+          <EntryField path={[...path, 'holes', 'angle_deg']} unitKey="angle_deg" label="Pattern angle (deg)" />
+          <ChoiceField path={[...path, 'holes', 'screw']} value={holes.screw} options={context.screw_sizes} label="Hole diameter (screw)" />
+          {holes.type === 'round' ? (
+            <EntryField path={[...path, 'holes', 'pattern_diameter_m']} unitKey="pattern_diameter_m" label="Pattern diameter (mm)" />
+          ) : <>
+            <EntryField path={[...path, 'holes', 'inner_diameter_m']} unitKey="inner_diameter_m" label="Pattern inner diameter (mm)" />
+            <EntryField path={[...path, 'holes', 'outer_diameter_m']} unitKey="outer_diameter_m" label="Pattern outer diameter (mm)" />
           </>}
           <EntryField path={[...path, 'holes', 'center_diameter_m']} unitKey="center_diameter_m" label="Center relief diameter (mm)" />
           <EntryField path={[...path, 'holes', 'center_depth_m']} unitKey="center_depth_m" label="Center relief depth (mm)" />
-          <EntryField path={[...path, 'holes', 'head_diameter_m']} unitKey="head_diameter_m" label="Bolt head diameter (mm)" />
-          <EntryField path={[...path, 'holes', 'head_depth_m']} unitKey="head_depth_m" label="Head seat depth from mount face (mm)" />
-          <HelpNote>Zero relief/head diameter disables that cut. Bolt access stops at this mount’s section boundary. Pink outlines show the cuts in Simple and 3D.</HelpNote>
+          <OptionalBlock label="Head bore" present={typeof holes.head_depth_m === 'number'} onToggle={(checked) => void onOp({ op: 'mount.holes.head', index, enabled: checked })}>
+            {typeof holes.head_depth_m === 'number' && <>
+              <EntryField path={[...path, 'holes', 'head_diameter_m']} unitKey="head_diameter_m" label="Head bore diameter (mm)" />
+              <EntryField path={[...path, 'holes', 'head_depth_m']} unitKey="head_depth_m" label="Head seat depth from mount face (mm)" />
+            </>}
+          </OptionalBlock>
         </>}
       </OptionalBlock>
       <OptionalBlock label="pod" present={pod !== null} onToggle={(checked) => void onOp({ op: 'mount.pod.toggle', index, enabled: checked })}>

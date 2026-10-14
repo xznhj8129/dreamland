@@ -252,6 +252,7 @@
                 "on": "tail",
                 "direction": "pusher",
                 "spin": "cw",
+                "clearance_m": 0.001,
                 "thrust_axis_tilt_deg": 0.0,
                 "pod": {
                     "diameter_m": 0.035,
