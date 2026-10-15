@@ -13,6 +13,12 @@ export interface SimOptions {
   firmware: string
   /** Available command modules in controllers/ (libs.scenario.CONTROLLERS). */
   controllers: string[]
+  /** This plane's SIM defaults (the project's sim.json, set with "Set as default"): the controller and scenario the
+   *  panel opens a project with when the browser has no remembered setup for it. */
+  defaults: { controller: string | null; scenario: string | null }
+  /** Processes solving the aero tables on a model rebuild (libs.jsbsim.DEFAULT_WORKERS) and this machine's count. */
+  default_workers: number
+  max_workers: number
   /** The project's inav/*.txt diffs, each with the label the Tk view showed ("SITL diff: ...", "real FC diff: ..."). */
   inav_configs: { file: string; label: string }[]
   /** The scenarios the current airframe can fly; empty means no valid airframe. */
@@ -45,6 +51,22 @@ export interface SimStart {
   inav_config?: string
   /** Maximum simulated seconds for any scenario. */
   duration?: string
+  /** Processes solving the aero tables on a model rebuild; 1 is sequential. */
+  workers?: number
+}
+
+/** One model rebuild's stage and counts (libs.jsbsim.BuildProgress): the SIM panel's model-build section. */
+export interface SimBuild {
+  stage: string
+  detail: string
+  done: number
+  total: number
+  workers: number
+  elapsed_s: number
+  /** Tasks the last solve did not have to redo (cache hits), in the order they were met. */
+  cached: string[]
+  finished: boolean
+  failed: boolean
 }
 
 export interface SimResource {
@@ -110,6 +132,8 @@ export interface SimState {
   stdout: { offset: number; lines: string[] }
   log: SimLogState
   telemetry_file: string | null
+  /** The current project's model rebuild, or null when there is no record; every poll refreshes it. */
+  build: SimBuild | null
 }
 
 export interface SimStartResult {
@@ -121,11 +145,22 @@ function asSimOptions(payload: unknown): SimOptions | null {
   if (typeof payload !== 'object' || payload === null) return null
   const candidate = payload as Partial<SimOptions>
   if (!Array.isArray(candidate.controllers) || !candidate.controllers.every((name) => typeof name === 'string')) return null
+  if (typeof candidate.default_workers !== 'number' || typeof candidate.max_workers !== 'number') return null
   if (!Array.isArray(candidate.inav_configs)) return null
+  if (typeof candidate.defaults !== 'object' || candidate.defaults === null) return null
   if ((typeof candidate.scenarios !== "object" || candidate.scenarios === null) || !Array.isArray(candidate.starts) || !Array.isArray(candidate.start_options)) return null
   if (typeof candidate.launcher_defaults !== 'object' || candidate.launcher_defaults === null) return null
   if (typeof candidate.default_duration_s !== 'number') return null
   return candidate as SimOptions
+}
+
+function asSimBuild(value: unknown): SimBuild | null {
+  if (typeof value !== 'object' || value === null) return null
+  const candidate = value as Partial<SimBuild>
+  if (typeof candidate.stage !== 'string' || typeof candidate.detail !== 'string') return null
+  if (typeof candidate.done !== 'number' || typeof candidate.total !== 'number' || typeof candidate.workers !== 'number') return null
+  if (typeof candidate.elapsed_s !== 'number' || typeof candidate.finished !== 'boolean' || !Array.isArray(candidate.cached)) return null
+  return { ...candidate, failed: candidate.failed === true } as SimBuild
 }
 
 function asSimState(payload: unknown): SimState | null {
@@ -135,7 +170,7 @@ function asSimState(payload: unknown): SimState | null {
   if (typeof candidate.status !== 'string' || typeof candidate.command !== 'string') return null
   if (typeof candidate.stdout !== 'object' || candidate.stdout === null) return null
   if (typeof candidate.log !== 'object' || candidate.log === null) return null
-  return candidate as SimState
+  return { ...(candidate as SimState), build: asSimBuild(candidate.build) }
 }
 
 export async function simOptions(): Promise<SimOptions | null> {
@@ -175,6 +210,38 @@ export async function startSim(payload: SimStart): Promise<SimStartResult> {
     return { ok: false, message }
   }
   return { ok: true, message: '' }
+}
+
+/** One SIM command that answers {ok, message} (webapp.sim routes). */
+async function postSimCommand(url: string, body?: unknown): Promise<SimStartResult> {
+  let response: Response
+  try {
+    response = await fetch(url, {
+      method: 'POST',
+      ...(body === undefined ? {} : { headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }),
+    })
+  } catch {
+    return { ok: false, message: 'Server unreachable.' }
+  }
+  const text = await response.text()
+  let payload: unknown = null
+  try {
+    payload = text === '' ? null : JSON.parse(text)
+  } catch {
+    payload = null
+  }
+  const message =
+    typeof payload === 'object' && payload !== null && typeof (payload as { message?: unknown }).message === 'string'
+      ? (payload as { message: string }).message
+      : ''
+  if (!response.ok) return { ok: false, message: message || `Request failed (${response.status})` }
+  return { ok: true, message }
+}
+
+/** Remember this plane's controller and scenario (POST /api/sim/default, webapp.sim.save_default): writes the
+ *  project's sim.json. A refusal (400) carries the server's message. */
+export function setSimDefault(controller: string, scenario: string): Promise<SimStartResult> {
+  return postSimCommand('/api/sim/default', { controller, scenario })
 }
 
 /** SIGINT the live run; false when there was none (or one was already aborting). */

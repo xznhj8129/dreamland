@@ -3,13 +3,16 @@ import type { ReactElement } from 'react'
 import uPlot from 'uplot'
 import 'uplot/dist/uPlot.min.css'
 import { saveProject, useSnapshot } from '../store'
-import { abortSim, simOptions, simState, startSim } from '../simApi'
-import type { ScenarioOutline as Outline, SimOptions, SimStart } from '../simApi'
+import { abortSim, setSimDefault, simOptions, simState, startSim } from '../simApi'
+import type { ScenarioOutline as Outline, SimBuild, SimOptions, SimStart } from '../simApi'
+import { readMemory, writeMemory } from '../viewMemory'
 import { SimFileEditor } from './SimFileEditor'
+import type { SimFileEditorHandle } from './SimFileEditor'
 import { FlightScene } from './FlightScene'
 import { PerformanceResults } from './PerformanceResults'
 import { ScenarioOutline } from './ScenarioOutline'
 import { SplitPane } from '../components/SplitPane'
+import { DropdownMenu } from '../components/DropdownMenu'
 
 const INAV = 'inav'
 const GENERATED = 'generated'
@@ -19,6 +22,70 @@ const POLL_MS = 500
 
 type LogRows = (number | null)[][]
 type XZoom = readonly [number, number] | null
+type SimTab = 'plots' | '3d' | 'scenario' | 'diff' | 'performance'
+const SIM_TABS: readonly SimTab[] = ['plots', '3d', 'scenario', 'diff', 'performance']
+
+/** The SIM panel's setup as a project remembers it: what the panel opens with on the next visit (localStorage),
+ *  validated against the project's options. A null field leaves the view's own default in place. */
+interface SimSetup {
+  controller: string
+  scenario: string
+  start: string | null
+  conditions: Record<string, string> | null
+  inavConfig: string | null
+  duration: string | null
+  workers: string | null
+  clock: NonNullable<SimStart['clock']> | null
+  rate: string | null
+  msp: boolean | null
+  mavlink: boolean | null
+  tab: SimTab | null
+  xColumn: string | null
+  yColumns: string[] | null
+}
+
+function restoredSetup(project: string, options: SimOptions): SimSetup {
+  const stored = readMemory(`sim.${project}`)
+  const settings: Record<string, unknown> = typeof stored === 'object' && stored !== null ? (stored as Record<string, unknown>) : {}
+  const wanted = typeof settings.controller === 'string' && options.controllers.includes(settings.controller)
+    ? settings.controller
+    : options.defaults.controller ?? INAV
+  const controller = options.controllers.includes(wanted) ? wanted : INAV
+  const choices = options.scenarios[controller] ?? []
+  const wantedScenario =
+    typeof settings.scenario === 'string' && choices.includes(settings.scenario) ? settings.scenario
+      : controller === options.defaults.controller && options.defaults.scenario !== null && choices.includes(options.defaults.scenario) ? options.defaults.scenario
+        : choices[0] ?? ''
+  const text = (key: keyof SimSetup): string | null => {
+    const value = settings[key]
+    return typeof value === 'string' && value !== '' ? value : null
+  }
+  const flag = (key: keyof SimSetup): boolean | null => (typeof settings[key] === 'boolean' ? (settings[key] as boolean) : null)
+  const conditions: Record<string, string> = {}
+  if (typeof settings.conditions === 'object' && settings.conditions !== null) {
+    for (const [key, value] of Object.entries(settings.conditions as Record<string, unknown>)) {
+      if (typeof value === 'string') conditions[key] = value
+    }
+  }
+  return {
+    controller,
+    scenario: wantedScenario,
+    start: typeof settings.start === 'string' && options.starts.includes(settings.start) ? settings.start : null,
+    conditions: Object.keys(conditions).length > 0 ? conditions : null,
+    inavConfig: typeof settings.inavConfig === 'string' && (settings.inavConfig === GENERATED || options.inav_configs.some(config => config.file === settings.inavConfig))
+      ? settings.inavConfig
+      : null,
+    duration: text('duration'),
+    workers: text('workers'),
+    clock: settings.clock === 'realtime' || settings.clock === 'stepped' || settings.clock === 'stepped-faster' ? settings.clock : null,
+    rate: text('rate'),
+    msp: flag('msp'),
+    mavlink: flag('mavlink'),
+    tab: typeof settings.tab === 'string' && (SIM_TABS as readonly string[]).includes(settings.tab) ? (settings.tab as SimTab) : null,
+    xColumn: text('xColumn'),
+    yColumns: Array.isArray(settings.yColumns) && settings.yColumns.every(name => typeof name === 'string') ? (settings.yColumns as string[]) : null,
+  }
+}
 
 // FlightLogPlot: the retired Tk view's Plots tab (libs/views/sim_view.py: draw_series 389-430, on_scroll 433-441,
 // on_press/drag/release 443-470, SERIES_COLORS 35, ZOOM_STEP/DRAG_MIN_FRACTION 36-37).
@@ -318,6 +385,53 @@ function FlightLogPlot({ header, rows, xColumn, yColumns, xZoom, onXZoom }: Flig
  * the flight-log tail, and POSTs the run/abort requests directly (simApi bypasses the store's mutation queue).
  * The Plots tab draws the log tail with uPlot, the 3D View tab flies the airframe along it with three.js.
  */
+/** One line for the Build menu: what this project's model record says. */
+function modelLine(build: SimBuild | null): string {
+  if (build === null) return 'Model: no record yet'
+  if (!build.finished) return `Model: ${build.stage} \u00b7 ${build.done}/${build.total} tasks \u00b7 ${build.workers} workers`
+  if (build.failed) return `Model: ${build.stage} failed`
+  if (build.stage === 'model reused') return 'Model: reused, nothing to solve'
+  return `Model: ${build.stage} \u00b7 ${Math.floor(build.elapsed_s / 60)}:${String(Math.round(build.elapsed_s % 60)).padStart(2, '0')} \u00b7 ${build.workers} workers`
+}
+
+/** The model-build section: what a rebuild is solving, and what it reused, from the runner's progress record.
+ *  libs.jsbsim.BuildProgress writes it in the project's export directory; /api/sim/state carries it on every poll. */
+function BuildSection({ build }: { build: SimBuild }): ReactElement {
+  const percent = build.total > 0 ? Math.round((100 * build.done) / build.total) : 0
+  const minutes = Math.floor(build.elapsed_s / 60)
+  const seconds = Math.round(build.elapsed_s % 60)
+  const state = build.failed ? 'failed' : build.finished ? 'done' : 'solving'
+  return (
+    <div className={`build-card ${state}`}>
+      <div className="form-card-header">
+        <h3>Model build</h3>
+        <span className="build-state">{state}</span>
+      </div>
+      <p className="build-line">
+        {build.stage}
+        {build.detail ? ` — ${build.detail}` : ''}
+      </p>
+      {!build.finished && build.total > 0 && (
+        <div className="build-bar" role="progressbar" aria-valuenow={percent} aria-valuemin={0} aria-valuemax={100}>
+          <div className="build-bar-fill" style={{ width: `${percent}%` }} />
+        </div>
+      )}
+      {build.total > 0 && (
+        <p className="form-hint">
+          {build.done}/{build.total} tasks · {build.workers} worker{build.workers === 1 ? '' : 's'} · {minutes}:{String(seconds).padStart(2, '0')}
+        </p>
+      )}
+      {build.cached.length > 0 && (
+        <p className="form-hint">
+          reused {build.cached.length} task{build.cached.length === 1 ? '' : 's'}: {build.cached.slice(0, 4).join(', ')}
+          {build.cached.length > 4 ? `, +${build.cached.length - 4} more` : ''}
+        </p>
+      )}
+    </div>
+  )
+}
+
+
 export function SimView(): ReactElement {
   const snapshot = useSnapshot()
   const project = snapshot?.project ?? null
@@ -329,6 +443,7 @@ export function SimView(): ReactElement {
   const [conditions, setConditions] = useState<Record<string, string>>({})
   const [inavConfig, setInavConfig] = useState(GENERATED)
   const [duration, setDuration] = useState('')
+  const [workers, setWorkers] = useState('')
   const [status, setStatus] = useState('Idle')
   const [summary, setSummary] = useState<string[]>([])
   const [running, setRunning] = useState(false)
@@ -342,7 +457,7 @@ export function SimView(): ReactElement {
   const [xColumn, setXColumn] = useState(DEFAULT_X)
   const [yColumns, setYColumns] = useState<readonly string[]>(DEFAULT_Y)
   const [xZoom, setXZoom] = useState<XZoom>(null)
-  const [tab, setTab] = useState<'plots' | '3d' | 'scenario' | 'diff' | 'performance'>('plots')
+  const [tab, setTab] = useState<SimTab>('plots')
   const [pathSeen, setPathSeen] = useState(false)
   const [clock, setClock] = useState<NonNullable<SimStart['clock']>>('realtime')
   const [rate, setRate] = useState('200')
@@ -354,7 +469,12 @@ export function SimView(): ReactElement {
   const [scenarioDirty, setScenarioDirty] = useState(false)
   const [diffDirty, setDiffDirty] = useState(false)
   const [outline, setOutline] = useState<Outline | null>(null)
+  const [build, setBuild] = useState<SimBuild | null>(null)
+  const scenarioEditor = useRef<SimFileEditorHandle | null>(null)
+  const diffEditor = useRef<SimFileEditorHandle | null>(null)
   const appliedStartRef = useRef('')
+  const appliedProjectRef = useRef<string | null>(null)
+  const optionsProjectRef = useRef<string | null>(null)
   const scenarioFile = scenario === '__new__' ? '__new__' : scenario ? scenario + '.py' : null
 
 
@@ -381,6 +501,7 @@ export function SimView(): ReactElement {
       setLogFile(payload.log.file)
       setTelemetryFile(payload.telemetry_file ?? null)
       setRunning(payload.running)
+      setBuild(payload.build)
       if (runningRef.current && !payload.running) setDiffRevision(value => value + 1)
       runningRef.current = payload.running
       setSummary((lines) => {
@@ -422,6 +543,7 @@ export function SimView(): ReactElement {
     let alive = true
     void simOptions().then((next) => {
       if (!alive || next === null) return
+      optionsProjectRef.current = project // the options below belong to this project, not the one left behind
       setOptions(next)
       setController(current => next.controllers.includes(current) ? current : INAV)
       setScenario(current => Object.values(next.scenarios).some(names => names.includes(current)) ? current : next.scenarios[INAV]?.[0] ?? '')
@@ -429,6 +551,7 @@ export function SimView(): ReactElement {
         current === GENERATED || next.inav_configs.some((config) => config.file === current) ? current : GENERATED,
       )
       setDuration((current) => (current === '' ? String(next.default_duration_s) : current))
+      setWorkers((current) => (current === '' ? String(next.default_workers) : current))
       if (!runningRef.current && next.starts.length === 0) setStatus('No valid airframe')
     })
     return () => {
@@ -442,6 +565,36 @@ export function SimView(): ReactElement {
     const starts = options.starts
     setStart((current) => (starts.includes(current) ? current : (starts[0] ?? '')))
   }, [options, controller, scenario])
+
+  // Remember the setup per project (best effort) on every change, so switching to another tab and back — or
+  // reloading — returns to the controller, scenario and settings the run was left at. Declared before the effect
+  // below, which must apply a project's remembered setup before this one writes over it.
+  useEffect(() => {
+    if (project === null || appliedProjectRef.current !== project) return
+    writeMemory(`sim.${project}`, { controller, scenario, start, conditions, inavConfig, duration, workers, clock, rate, msp, mavlink, tab, xColumn, yColumns })
+  }, [project, controller, scenario, start, conditions, inavConfig, duration, workers, clock, rate, msp, mavlink, tab, xColumn, yColumns])
+
+  // Once per project, on the first options load: the setup this project was last left at, or its own default
+  // (sim.json, "Set as default") when this browser has none.
+  useEffect(() => {
+    if (project === null || options === null || optionsProjectRef.current !== project || appliedProjectRef.current === project) return
+    appliedProjectRef.current = project
+    const setup = restoredSetup(project, options)
+    setController(setup.controller)
+    setScenario(setup.scenario)
+    if (setup.start !== null) setStart(setup.start)
+    if (setup.conditions !== null) setConditions(setup.conditions)
+    if (setup.inavConfig !== null) setInavConfig(setup.inavConfig)
+    if (setup.duration !== null) setDuration(setup.duration)
+    if (setup.workers !== null) setWorkers(setup.workers)
+    if (setup.clock !== null) setClock(setup.clock)
+    if (setup.rate !== null) setRate(setup.rate)
+    if (setup.msp !== null) setMsp(setup.msp)
+    if (setup.mavlink !== null) setMavlink(setup.mavlink)
+    if (setup.tab !== null) setTab(setup.tab)
+    if (setup.xColumn !== null) setXColumn(setup.xColumn)
+    if (setup.yColumns !== null) setYColumns(setup.yColumns)
+  }, [project, options])
 
   // The 3D scene is initialized lazily on its first show and then stays mounted (hidden) so the orbit angle
   // survives tab switches; the plots live only while their tab is visible.
@@ -460,7 +613,10 @@ export function SimView(): ReactElement {
   const noAirframe = options !== null && options.starts.length === 0
   const aborting = status === 'Aborting...'
   const emptyCondition = options?.start_options.some(option => !conditionOff(option, start) && conditions[option.key]?.trim() === '') ?? false
-  const displayStatus = !running && status === 'Idle' && noAirframe ? 'No valid airframe' : status
+  const building = running && build !== null && !build.finished
+  const displayStatus = building
+    ? `Building model: ${build.stage}${build.total > 0 ? ` ${build.done}/${build.total}` : ''}`
+    : !running && status === 'Idle' && noAirframe ? 'No valid airframe' : status
 
   const setCondition = (key: string, value: string): void => {
     setConditions((current) => ({ ...current, [key]: value }))
@@ -491,7 +647,7 @@ export function SimView(): ReactElement {
     setStarting(true)
     try {
       await saveProject() // flush the queued edits; what flies is the file on disk
-      const body: SimStart = { controller, scenario, start, clock, rate, duration }
+      const body: SimStart = { controller, scenario, start, clock, rate, duration, workers: Number(workers) || undefined }
       if (controller === INAV) { body.inav_config = inavConfig; body.msp = msp; body.mavlink = mavlink }
       const picked: Record<string, string> = {}
       for (const option of options.start_options) {
@@ -512,6 +668,62 @@ export function SimView(): ReactElement {
     if (await abortSim()) setStatus('Aborting...')
   }
 
+  /** What the open editor edits and whether the Scenario menu's items apply to it. */
+  const activeEditor = tab === 'diff' ? diffEditor : scenarioEditor
+  const activeEditorDirty = tab === 'diff' ? diffDirty : scenarioDirty
+  const activeEditorSaveable = tab === 'diff' ? inavConfig !== '__new__' : scenarioFile !== null && scenarioFile !== '__new__'
+
+  /** Remember this controller and scenario as this plane's SIM default (the project's sim.json). */
+  const saveAsDefault = async (): Promise<void> => {
+    const answer = await setSimDefault(controller, scenario)
+    setStatus(answer.message || (answer.ok ? 'Default saved' : 'Could not save the default'))
+    if (answer.ok) setOptionsRevision((value) => value + 1) // the options carry the default; refresh the tooltip
+  }
+
+  /** The panel's menu row: Run, Scenario and Build as menus, not a row of loose buttons and fields. */
+  const menus = (
+    <div className="sim-menus">
+      <DropdownMenu label="Scenario">
+        {(close) => (<>
+          <button type="button" role="menuitem" disabled={options === null || running || scenarioDirty}
+            onClick={() => { close(); setScenario('__new__'); setTab('scenario') }}>
+            New scenario
+          </button>
+          <button type="button" role="menuitem" disabled={running || !activeEditorDirty}
+            onClick={() => { close(); activeEditor.current?.save(false) }}>
+            Save {tab === 'diff' ? 'diff' : 'scenario'}
+          </button>
+          <button type="button" role="menuitem" disabled={running || !activeEditorSaveable}
+            onClick={() => { close(); activeEditor.current?.save(true) }}>
+            Save copy
+          </button>
+          <button type="button" role="menuitem" disabled={running || !activeEditorDirty}
+            onClick={() => { close(); activeEditor.current?.discard() }}>
+            Discard edits
+          </button>
+        </>)}
+      </DropdownMenu>
+      <DropdownMenu label="Build">
+        <>
+          <div className="menu-line" role="menuitem">
+            <label htmlFor="sim-workers">Workers</label>
+            <input
+              id="sim-workers"
+              type="number"
+              min={1}
+              max={options?.max_workers ?? undefined}
+              value={workers}
+              disabled={running}
+              title="Processes solving the aero tables when the model rebuilds; 1 solves them one after another"
+              onChange={(event) => setWorkers(event.target.value)}
+            />
+          </div>
+          <div className="menu-info" role="menuitem" aria-disabled="true">{modelLine(build)}</div>
+        </>
+      </DropdownMenu>
+    </div>
+  )
+
   const starts = options?.starts ?? []
 
   return (
@@ -521,6 +733,7 @@ export function SimView(): ReactElement {
           <div className="form-card-header">
             <h3>Simulation run</h3>
           </div>
+          {menus}
           <div className="sim-field">
             <label htmlFor="sim-controller">Flight controller</label>
             <select
@@ -552,6 +765,16 @@ export function SimView(): ReactElement {
               {scenarioChoices.map(name => <option key={name} value={name}>{name} · Python</option>)}
             </select>
             <button type="button" disabled={options === null || running || scenarioDirty} onClick={() => { setScenario('__new__'); setTab('scenario') }}>New scenario</button>
+            <button
+              type="button"
+              disabled={options === null || running || scenario === '' || scenario === '__new__'}
+              title={options?.defaults.controller === null || options?.defaults.controller === undefined
+                ? 'Open this plane with this controller and scenario'
+                : `This plane opens with ${options.defaults.controller} / ${options.defaults.scenario ?? 'its first scenario'}`}
+              onClick={() => void saveAsDefault()}
+            >
+              Set as default
+            </button>
           </div>
           <div className="sim-field">
             <label htmlFor="sim-start">Start</label>
@@ -639,13 +862,20 @@ export function SimView(): ReactElement {
             >
               Run
             </button>
-            <button type="button" disabled={!running || aborting} onClick={() => void abort()}>
-              Abort
+            {/* A rebuild runs in this same process: this stops it, and the solved tables stay for the next run. */}
+            <button
+              type="button"
+              disabled={!running || aborting}
+              title={building ? 'Stop the model rebuild: the assembled export is dropped, the solved tables stay in the cache for the next run' : 'Stop the run'}
+              onClick={() => void abort()}
+            >
+              {building ? 'Abort build' : 'Abort'}
             </button>
             <span className="status sim-status" role="status">
               {displayStatus}
             </span>
           </div>
+          {build !== null && <BuildSection build={build} />}
         </div>
 
         <div className="form-card sim-summary-card">
@@ -673,7 +903,7 @@ export function SimView(): ReactElement {
           <button type="button" className={tab === 'diff' ? 'tab active' : 'tab'} onClick={() => setTab('diff')}>INAV diff</button>
           <button type="button" className={tab === 'performance' ? 'tab active' : 'tab'} onClick={() => setTab('performance')}>Performance</button>
         </div>
-        <SimFileEditor controller={controller} kind="scenario" name={scenarioFile} project={project} template={options?.scenario_templates[controller]?.source ?? ''} templateOutline={options?.scenario_templates[controller]?.scenario} running={running} visible={tab === 'scenario'} onDirty={setScenarioDirty} onDiscard={() => { if (scenario === '__new__') setScenario(options?.scenarios[controller]?.[0] ?? ''); setScenarioDirty(false) }}
+        <SimFileEditor ref={scenarioEditor} controller={controller} kind="scenario" name={scenarioFile} project={project} template={options?.scenario_templates[controller]?.source ?? ''} templateOutline={options?.scenario_templates[controller]?.scenario} running={running} visible={tab === 'scenario'} onDirty={setScenarioDirty} onDiscard={() => { if (scenario === '__new__') setScenario(options?.scenarios[controller]?.[0] ?? ''); setScenarioDirty(false) }}
           onLoad={resource => { setOutline(resource.scenario ?? null); setScenarioReady(!resource.error); applyScenarioStart(scenarioFile, resource.scenario) }}
           onSaved={(name, resource) => {
             setScenario(name.slice(0, -3)); setScenarioDirty(false); setScenarioReady(true)
@@ -681,7 +911,7 @@ export function SimView(): ReactElement {
             applyScenarioStart(name, resource.scenario)
             void simOptions().then(setOptions)
           }} />
-        <SimFileEditor controller={controller} kind="diff" name={inavConfig} project={project} template="" revision={diffRevision} running={running} visible={tab === 'diff'} onDirty={setDiffDirty} onDiscard={() => setDiffDirty(false)} onLoad={() => {}}
+        <SimFileEditor ref={diffEditor} controller={controller} kind="diff" name={inavConfig} project={project} template="" revision={diffRevision} running={running} visible={tab === 'diff'} onDirty={setDiffDirty} onDiscard={() => setDiffDirty(false)} onLoad={() => {}}
           onSaved={name => { setInavConfig(name); setDiffDirty(false); void simOptions().then(setOptions) }}
           onDeleted={() => { setInavConfig(GENERATED); setDiffDirty(false); setDiffRevision(value => value + 1); setOptionsRevision(value => value + 1) }} />
         {tab === 'plots' ? (

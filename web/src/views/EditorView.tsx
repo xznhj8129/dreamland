@@ -1,8 +1,8 @@
-import { useState } from 'react'
 import type { ReactElement } from 'react'
 import type { Snapshot } from '../types'
 import { recompute } from '../store'
 import { computeGeometry } from '../cadApi'
+import { useRememberedState } from '../viewMemory'
 import { ModelView } from '../components/ModelView'
 import { ReportPanel } from '../components/ReportPanel'
 import { SimpleView } from '../components/SimpleView'
@@ -42,7 +42,7 @@ export function EditorView({ snapshot }: { snapshot: Snapshot | null }): ReactEl
 }
 
 function DrawingTabs({ snapshot }: { snapshot: Snapshot | null }): ReactElement {
-  const [tab, setTab] = useState<'simple' | '3d'>('simple')
+  const [tab, setTab] = useRememberedState<'simple' | '3d'>('editor.drawing-tab', 'simple', value => value === 'simple' || value === '3d')
   return (
     <>
       <div className="tab-row">

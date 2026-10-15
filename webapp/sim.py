@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import math
 import os
 import signal
@@ -114,11 +115,48 @@ def delete_resource(state: AppState, kind: str, name: str, controller: str) -> N
     path.unlink()
 
 
+def default_config(project: Project) -> dict[str, str | None]:
+    """The project's SIM defaults (sim.json): the controller and scenario its SIM panel opens with. A value that is
+    no longer a valid controller or scenario for this project reads as None, never as a guess."""
+    from libs.scenario import CONTROLLERS, scenario_names
+    controller: str | None = None
+    scenario: str | None = None
+    path = project.sim_config_path
+    body: dict = {}
+    if path.is_file():
+        try:
+            candidate = json.loads(path.read_text())
+        except (OSError, ValueError):
+            candidate = None
+        if isinstance(candidate, dict):
+            body = candidate
+    if body.get("controller") in CONTROLLERS:
+        controller = body["controller"]
+        name = body.get("scenario")
+        if isinstance(name, str) and name in scenario_names(project.scenarios_dir, controller):
+            scenario = name
+    return {"controller": controller, "scenario": scenario}
+
+
+def save_default(state: AppState, body: dict[str, Any]) -> str:
+    """Write this project's SIM defaults; returns the confirmation line for the panel's status."""
+    from libs.scenario import CONTROLLERS, scenario_names
+    if state.resolved is None:
+        raise ValueError("No valid airframe; fix the definition first")
+    controller, scenario = body.get("controller"), body.get("scenario")
+    if controller not in CONTROLLERS:
+        raise ValueError(f"Choose a controller from {CONTROLLERS}")
+    if scenario not in scenario_names(state.project.scenarios_dir, controller):
+        raise ValueError(f"Choose a saved {controller} scenario")
+    state.project.sim_config_path.write_text(json.dumps({"controller": controller, "scenario": scenario}, indent=4) + "\n")
+    return f"Default for this plane: {controller} / {scenario}"
+
+
 def options(state: AppState) -> dict[str, Any]:
     from controllers.inav import DEFAULT_SITL_PATH, is_real_fc_diff
     from libs.scenario import CONTROLLERS, DEFAULT_LIMIT_S, scenario_names
     from libs.simrun import HOME, START_ALT_M, START_OPTIONS, launcher_defaults, start_reasons
-    from libs.jsbsim import AERO_PROVENANCE
+    from libs.jsbsim import AERO_PROVENANCE, DEFAULT_WORKERS, MAX_WORKERS
     project, resolved = state.project, state.resolved
     airframe = resolved.airframe if resolved is not None else None
     defaults = {"alt": START_ALT_M, "heading": 0.0, "lat": HOME[0], "lon": HOME[1], "pitch": 0.0,
@@ -127,6 +165,9 @@ def options(state: AppState) -> dict[str, Any]:
         defaults["speed"] = airframe.operating_point.airspeed_m_s
     return {
         "controllers": list(CONTROLLERS),
+        "defaults": default_config(project),
+        "default_workers": DEFAULT_WORKERS,
+        "max_workers": MAX_WORKERS,
         "scenarios": {controller: scenario_names(project.scenarios_dir, controller) if airframe is not None else []
                       for controller in CONTROLLERS},
         "scenario_templates": {controller: read_resource(state, "scenario", "stability.py" if controller == "mcu" else "experiment.py", controller)
@@ -148,6 +189,7 @@ def options(state: AppState) -> dict[str, Any]:
 def _plan(state: AppState, body: dict[str, Any]) -> tuple[list[str], str, str, Path]:
     from libs.scenario import CONTROLLERS, DEFAULT_LIMIT_S, ScenarioSpec, scenario_names, scenario_path
     from libs.flightlog import flight_log_path
+    from libs.jsbsim import DEFAULT_WORKERS, MAX_WORKERS
     from libs.simrun import DEFAULT_START, START_OPTIONS, start_reasons
     if state.resolved is None:
         raise _Refused("No valid airframe; fix the definition first.")
@@ -181,6 +223,14 @@ def _plan(state: AppState, body: dict[str, Any]) -> tuple[list[str], str, str, P
         if not math.isfinite(number) or number <= 0:
             raise _Refused(f"{label} must be finite and positive")
         command += [f"--{field}", f"{number:g}"]
+    workers = body.get("workers", DEFAULT_WORKERS)
+    try:
+        count = int(workers)
+    except (ValueError, TypeError):
+        raise _Refused("Build workers must be a whole number") from None
+    if count < 1:
+        raise _Refused("Build workers must be at least 1")
+    command += ["--workers", str(min(count, MAX_WORKERS))]
     conditions = body.get("conditions") or {}
     if not isinstance(conditions, dict):
         raise _Refused("conditions must be an object of start conditions")
@@ -276,6 +326,7 @@ class SimRun:
         self.aborting = False
         self.log_path: Path | None = None
         self.log_file: str | None = None
+        self.build_progress_path: Path | None = None  # the export directory of the run's project
         self.run_started = 0.0
 
     def start_run(self, state: AppState, body: dict[str, Any]) -> tuple[bool, str]:
@@ -306,6 +357,8 @@ class SimRun:
             self.aborting = False
             self.log_path = log_path
             self.log_file = _project_file(state.project, log_path)
+            from libs.jsbsim import EXPORT_PROGRESS_FILE
+            self.build_progress_path = state.project.jsbsim_dir / EXPORT_PROGRESS_FILE
             self.run_started = started
         threading.Thread(target=self._read_output, args=(process,), name="sim-stdout", daemon=True).start()
         return True, status
@@ -359,9 +412,11 @@ class SimRun:
                 "command": self.command,
                 "stdout": {"offset": stdout_total, "lines": list(self.stdout_lines[start:])},
             }
-            log_path, log_file, run_started = self.log_path, self.log_file, self.run_started
+            log_path, log_file, run_started, build_path = self.log_path, self.log_file, self.run_started, self.build_progress_path
         header, rows, next_offset = _read_log(log_path, run_started, 0 if reset else log_offset)
         payload["log"] = {"file": log_file, "reset": reset, "offset": next_offset, "header": header, "rows": rows}
+        from libs.jsbsim import read_build_progress
+        payload["build"] = None if build_path is None else read_build_progress(build_path)
         payload["telemetry_file"] = None
         if log_path is not None:
             from libs.flightlog import telemetry_path

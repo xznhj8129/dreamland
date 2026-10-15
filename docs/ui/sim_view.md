@@ -82,18 +82,33 @@ SITLRunPanel [arrange:column]
         maximum simulated seconds for any scenario; default 600
         a value that is not a number stops Run and says which
 
-    - Run [ui:button]
-        on:click -> save the airframe file, then run the scenario
-        disabled while a run is going
+    - MenuRow [top of the run card]: Scenario ▾ Build ▾ (the secondary actions, in the top bar's menu idiom)
 
-    - Abort [ui:button], next to Run
-        on:click -> stop the run: the flight log and plots so far are written, INAV's SITL is stopped, the summary ends
-                    with "Aborted."; a run still going a few seconds later is killed
-        enabled only while a run is going
+        Scenario ▾  acts on the open editor (the Scenario or INAV diff tab)
+            New scenario  copy the selected controller's example into scenarios/<controller>/<name>.py
+            Save <file>   save the open scenario or diff; needs unsaved edits
+            Save copy     save it under the toolbar's file name; needs a saved file
+            Discard edits drop the unsaved edits in the open editor
+
+        Build ▾
+            Workers      processes solving the aero tables when the model rebuilds (1 = sequential, one after
+                         another); default this machine's logical CPUs minus two, at most eight; a value below 1 stops
+                         Run and says which; the results do not depend on the count
+            Model: ...   the project's last build record: "no record yet", "reused, nothing to solve",
+                         "<stage> · m:ss · N workers", or a failure
+
+    - Run [ui:button]: save the airframe file, then run the scenario; disabled while a run is going
+    - Abort [ui:button], in the same row at the bottom of the run card: stop the run: the flight log and plots so far
+      are written, INAV's SITL is stopped, the summary ends with "Aborted."; a run still going a few seconds later is
+      killed; only while a run is going. While the run is solving a model rebuild (its first phase, shown as
+      "Building model: <stage> <done>/<total>") the button reads "Abort build": stopping it drops the assembled
+      export, keeps the solved tables in the cache for the next run, and marks the build record failed
 
     - StatusText [ui:text]
-        Idle | No valid airframe | Running <controller>: <scenario>... | Aborting... | Aborted |
-        Finished (exit code N)
+        Idle | No valid airframe | Building model: <stage> <done>/<total> (while the run is solving a rebuild, before
+        the flight starts) | Running <controller>: <scenario>... | Aborting... | Aborted | Finished (exit code N)
+        Abort stops the whole run process, which during that first phase is the model build: the assembled export is
+        dropped, the solved tables stay in the table cache for the next run, and the build record is marked failed
 ```
 
 ### Run behavior
@@ -113,6 +128,8 @@ Run
       that is not a finite number, an option that does not apply to its start) refuses the scenario
     - changing scenarios otherwise preserves the toolbar settings; run output shows the actual start conditions
     - New scenario copies the selected controller's example (INAV experiment, MCU stability) into scenarios/<controller>/<name>.py
+    - Set as default writes the chosen controller and scenario to the project's sim.json: another browser, or a
+      project this browser has nothing remembered for, opens with that pair; the button's tooltip shows the current one
     - one run(flight) sequence; import the selected controllers module for commands
     - optional PARAMETERS and TELEMETRY (fields and rate_hz, maximum 50) apply to every scenario
     - flight.phase(name, description) gives arbitrary labels in telemetry and the sidebar
@@ -138,7 +155,13 @@ Run
     - Performance separates the editor static estimate from measured JSBSim motion; range/endurance extrapolate measured power
     - stall, sustained turn and ceiling cards remain Not measured until a matching experiment supplies them
     - every run follows the selected clock; return, time limit, stop condition, ground impact or Abort ends it
+    - a Model build section (under the run card's menus) shows the model rebuild as it happens: stage, the task detail,
+      done/total tasks, workers, elapsed, and the tasks reused from the table cache; it stays as the record of the
+      last build, says "model reused" when nothing needed solving, and marks a failed build
     - the scenario, start and FC settings lists refresh whenever the view is shown and after Load
+    - the panel's setup (controller, scenario, start, conditions, clock, rate, duration, plot picks and the open tab)
+      is remembered per project in the browser: switching to another view and back, or reloading, returns to it; a
+      project with nothing remembered opens with its sim.json default (Set as default)
     - a run started on the ground, catapult or rail logs to its own file, next to the air-start one
     - logs/<controller>_<scenario>_<start>.csv; measurements and selected telemetry use the same stem
     - the run belongs to the server: every open tab shows it, and a page reload or a closed browser does not stop it

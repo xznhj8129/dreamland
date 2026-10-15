@@ -25,6 +25,7 @@ python sim_flight.py aircraft/example controls --controller inav # stick steps c
 python sim_flight.py aircraft/testglide glide --controller inav # motors off: smallest sink rate and best glide
 python sim_flight.py aircraft/example glide --controller inav --alt 600 --heading 90 --wind-from 270 --wind-speed 5
 python sim_flight.py aircraft/example acro_climb --controller inav --clock stepped-faster
+python sim_flight.py aircraft/example level --controller mcu --clock stepped --workers 2 # aero tables across 2 processes on a rebuild (2, the default, is also the maximum)
 python sim_flight.py aircraft/example configurator --controller inav # disarmed, TCP 5761
 python sim_flight.py aircraft/m62v1 experiment --controller inav
 python sim_flight.py aircraft/example stability --controller mcu --clock stepped

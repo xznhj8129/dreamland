@@ -37,6 +37,8 @@ POD_PROFILE_SAMPLES = 14
 PERIMETER_SAMPLES = 72
 SPAN_STRIPS = 64
 ROOT_CHORD_SAMPLES = 16  # body radius samples under a root chord for the equivalent aero root
+ROOT_EMBED_MARGIN_M = 0.001  # a lofted panel's root airfoil ends up this far inside the outer body (embedded_root_fraction)
+ROOT_EMBED_BISECTIONS = 24  # halvings of the inward search: a few nanometres on a 0.1 m panel
 PROP_SHAFT_LEN_M = 0.015
 CARRY_THROUGH_FLARE_SAMPLES = 24  # points along a carry-through flare or wall fillet
 MAX_RANGED_MASSES = 12  # CG range is found by enumerating min/max of every ranged mass
@@ -510,6 +512,52 @@ def body_surface_point(body: Body, x_m: float, angle_rad: float) -> tuple[Vec, f
     half_w, half_h = body_half_extents(body, x_m)
     radius = superellipse_radius(half_w, half_h, body_section_at(body, x_m).shape, angle_rad) if half_w > 0.0 and half_h > 0.0 else 0.0
     return (x_m, radius * math.cos(angle_rad), radius * math.sin(angle_rad)), radius
+
+
+def embedded_root_fraction(panel: Panel, coordinates, body: Body) -> float:
+    """Span fraction (<= 0) of the panel's own outline carried inward past its root (leading edge, chord and the
+    straight loft between root and tip extended alike) at which the root airfoil lies inside the outer body by
+    ROOT_EMBED_MARGIN_M. Lofting from there, the panel meets the body with no gap wherever the body tapers under the
+    root chord, and the part outside the body is exactly the designed panel. coordinates: the airfoil as chord
+    fractions (x, y). An airfoil point the body cannot contain (over a tapered tail end) is left where it is placed;
+    0 for an axis-rooted panel."""
+    root = panel.attach_le
+    if math.hypot(root[1], root[2]) <= 1e-9:
+        return 0.0
+    span = tuple(tip - point for tip, point in zip(panel.tip_le, root))
+    span_yz_squared = span[1] ** 2 + span[2] ** 2
+    if span_yz_squared <= 1e-24:
+        return 0.0
+    # Inward of where the leading-edge line passes closest to the fuselage axis the panel leaves the body again.
+    lowest = -(root[1] * span[1] + root[2] * span[2]) / span_yz_squared
+    if lowest >= 0.0:
+        return 0.0
+    chord_dir, thick_dir = chord_direction(panel), thickness_direction(panel)
+
+    def point(x: float, y: float, fraction: float) -> Vec:
+        chord = panel.chord_root_m + fraction * (panel.chord_tip_m - panel.chord_root_m)
+        return tuple(r + fraction * s + chord * (x * c + y * t) for r, s, c, t in zip(root, span, chord_dir, thick_dir))
+
+    def inside(p: Vec) -> bool:
+        half_w, half_h = body_half_extents(body, p[0])
+        if half_w <= 0.0 or half_h <= 0.0:
+            return False
+        radius = superellipse_radius(half_w, half_h, body_section_at(body, p[0]).shape, math.atan2(p[2], p[1]))
+        return math.hypot(p[1], p[2]) <= radius - ROOT_EMBED_MARGIN_M
+
+    fraction = 0.0
+    for x, y in coordinates:
+        if body_half_extents(body, point(x, y, 0.0)[0])[0] <= 0.0 or inside(point(x, y, 0.0)) or not inside(point(x, y, lowest)):
+            continue
+        outer, inner = 0.0, lowest
+        for _ in range(ROOT_EMBED_BISECTIONS):
+            middle = (outer + inner) / 2.0
+            if inside(point(x, y, middle)):
+                inner = middle
+            else:
+                outer = middle
+        fraction = min(fraction, inner)
+    return fraction
 
 
 def build_surface(surface: Surface, body: Body) -> SurfaceSet:

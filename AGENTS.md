@@ -28,7 +28,7 @@ Primary files:
 - `libs/batterydata.csv`: battery cell data (not read by any code)
 - `analyze_airframe.py`: non-GUI analysis, Compute Geometry and STEP/STL export entrypoint
 - `aero_check.py`: aero cross-check
-- `libs/jsbsim.py`: JSBSim aircraft export (AeroBuildup aero tables, control surfaces) and INAV mixer profiles and servo mix
+- `libs/jsbsim.py`: JSBSim aircraft export (lifting-line + AeroBuildup aero tables; on a quarter-turn-symmetric airframe sideslip is that pitch plane rolled, else AeroBuildup sideslip; control surfaces) and INAV mixer profiles and servo mix
 - `libs/propulsion.py`: motor + prop model on motorlib, wiring resistance from the design, throttle as ESC duty
 - `libs/rocketmotors.py`: solid rocket motors from `data/rocket_motors/` (RASP .eng): thrust curve, impulse, masses
 - `sim_flight.py`: one scenario runner for all controllers; scripts define `run(flight)`
@@ -51,6 +51,7 @@ Primary files:
 - Many different agents and people with very different styles might work on this at the same time. Write architecture, spec, styling and convention documents in docs/ and follow them.
 - If a field is required, put it in the airframe/2 schema (`libs/airframe.py`, `PLAN.md` section 1) or the part library `data/parts/` and then use it directly.
 - If required data is missing, let it fail visibly.
+- Centralize and reuse shared functions and classes whenever possible: search for an existing one before writing it; one definition, imported by every consumer, never a second copy.
 - Keep UI behavior documented in `docs/ui/` (one file per view). Update the matching doc when visible UI behavior changes.
 - Keep README about what Dreamland is, its features and vision. Commands and project layout go in `docs/usage.md`; result reading, calculation stages and limits in `docs/analysis.md`; widget details in `docs/ui/`.
 - Keep analysis usable headless: `libs/` and the analysis entry points must work without the web server or a browser.
@@ -73,7 +74,7 @@ Primary files:
 
 ## Current Caveats
 
-- The aero path (`libs/aero.py` `analyze_aero`) is lifting-line wings (AeroSandbox `LiftingLine` algorithm, batched over AoA in `lifting_line_sweep`) plus AeroBuildup bodies, with a Barrowman cross-check. Keep `lifting_line_sweep` equal to `asb.LiftingLine`.
+- The aero path (`libs/aero.py` `analyze_aero`) is lifting-line wings (AeroSandbox `LiftingLine` algorithm, batched over AoA in `lifting_line_sweep`) plus AeroBuildup bodies, with a Barrowman cross-check. Keep `lifting_line_sweep` equal to `asb.LiftingLine` for each surface set alone (`aero_check.py`); between surface sets it smooths trailing lines (`WAKE_CORE_FRACTION`).
 - The editor's centre tabs are Simple (the enriched recorded scene) and 3D (Three.js, meshes from `webapp/model3d.py`). The Tk ASB tab went with the Tk UI.
 - The VLM sweep engine (`libs/aero.py`) has no UI: the web VLM view is not built yet (placeholder). When it is, it renders the solved panel/streamline data in-browser (PyVista cannot run server-side), and the transient VLM cache stays display-only (never saved to disk).
 - Aero Analysis is ported: `web/src/views/AeroAnalysisView.tsx` with `webapp/airfoils.py` (library plus session imports, seeded from the airframe surfaces) runs the NeuralFoil-backed 2D airfoil comparison over the `libs/airfoil_analysis.py` functions; the same functions still run headless through `airfoil_analysis_example.py`.

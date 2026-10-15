@@ -121,6 +121,8 @@ CenterPane [arrange:column]
     * CenterTabs [ui:tabs]
         Simple
         3D
+
+    the open tab is remembered in the browser: leaving the view or reloading comes back to it
 ```
 
 ### Simple tab
@@ -211,6 +213,7 @@ OrthographicView [fill, switchable, pannable, zoomable]
     - Cuts & holes: pink cut-volume outlines for joint screws, motor bolts, head bores and shaft relief; on initially
     - NP = static estimate; camera retained through transparency changes
     - Three.js model from webapp/model3d.py
+    - body-rooted panels start inside the body where the CAD export starts them (no gap over a tapering body)
     - drag to orbit, wheel to zoom
     - camera survives tab switches and form edits
 ```
@@ -237,6 +240,9 @@ RightPane [arrange:column]
             Propulsion
             Parts
             Wiring
+
+    the group and the open section are remembered in the browser: leaving the view or reloading comes back to them
+    (a selection made in the drawing still switches to the tab that edits it)
 ```
 
 ## Fuselage tab

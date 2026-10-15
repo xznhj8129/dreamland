@@ -4,9 +4,10 @@ python aero_check.py
 python aero_check.py aircraft/m62v1 --aoa 0 5 10 --airspeed 20
 
 Checks the live aero's lifting line (libs/aero.py lifting_line_sweep, every AoA in one batch) against
-asb.LiftingLine solved per AoA on the same wings: they must agree to --tolerance (N, N m). Airframes with control
-surfaces are also checked with every control deflected CHECK_DEFLECTION_DEG, symmetrically and anti-symmetrically
-across XZ-mirror pairs. For each XZ-mirror pair with controls, AeroBuildup with each side deflected alone
+asb.LiftingLine solved per AoA, on each surface set alone: they must agree to --tolerance (N, N m). Alone is where the
+two kernels are the same; between surface sets the live kernel smooths trailing lines (WAKE_CORE_FRACTION), so the
+interacting total is printed against AeroSandbox's VLM for information. Surface sets with controls are also checked
+with every control deflected CHECK_DEFLECTION_DEG, symmetrically and anti-symmetrically across XZ-mirror pairs. For each XZ-mirror pair with controls, AeroBuildup with each side deflected alone
 (SideControlSurface, as the JSBSim control tables) must add up to both sides deflected (but for the aircraft-level
 induced drag, see side_split_differences), and SideControlSurface with opposite sides must equal ASB's own
 anti-symmetric control.
@@ -113,7 +114,7 @@ def main() -> None:
     args = parser.parse_args()
 
     parts_data = load_parts_data()
-    atmosphere = asb.Atmosphere(altitude=0.0)
+    atmosphere = asb.Atmosphere(altitude=0.0, method="isa")
     aoa_values = np.array(args.aoa, dtype=float)
     failures = []
     header = f"{'airframe':<14} {'AoA':>5}  {'surface':<18} {'layout':<6} {'live N':>8} {'alone N':>8} {'VLM thru':>9} {'VLM exposed':>11}"
@@ -123,32 +124,33 @@ def main() -> None:
         airframe = load_airframe(project.build_path, parts_data)
         operating_point = dataclasses.replace(airframe.operating_point, aoa_deg=float(aoa_values[0]), airspeed_m_s=args.airspeed, altitude_m=0.0)
         resolved, _problems = resolve_airframe(dataclasses.replace(airframe, operating_point=operating_point), parts_data)
-        hybrid = build_hybrid_airplanes(resolved)
+        hybrid = build_hybrid_airplanes(resolved, resolved.cg_m)
         wing_plane = hybrid.wings
         surface_count = len(resolved.surfaces)
         mesh = build_lifting_line_mesh(wing_plane, hybrid.owners, hybrid.controls)
         live = lifting_line_sweep(mesh, wing_plane.xyz_ref, surface_count, atmosphere, args.airspeed, aoa_values)
-        alone = []
-        for index in range(surface_count):
+        alone, cases = [], []  # per surface set: its lifting line alone, and the (label, plane, loads) checked against asb.LiftingLine
+        for index, surface_set in enumerate(resolved.surfaces):
             members = [(wing, controls) for wing, owner, controls in zip(wing_plane.wings, hybrid.owners, hybrid.controls) if owner == index]
             alone_plane = asb.Airplane(wings=[wing for wing, _ in members], xyz_ref=wing_plane.xyz_ref, s_ref=wing_plane.s_ref, c_ref=wing_plane.c_ref, b_ref=wing_plane.b_ref)
-            alone_mesh = build_lifting_line_mesh(alone_plane, (0,) * len(members), tuple(controls for _, controls in members))
+            alone_controls = tuple(controls for _, controls in members)
+            alone_mesh = build_lifting_line_mesh(alone_plane, (0,) * len(members), alone_controls)
             alone.append(lifting_line_sweep(alone_mesh, wing_plane.xyz_ref, 1, atmosphere, args.airspeed, aoa_values))
-        deflected_cases = []
-        for symmetric in ((True, False) if resolved.controls else ()):
-            deflected_plane = copy.deepcopy(wing_plane)
-            for wing in deflected_plane.wings:
-                for xsec in wing.xsecs:
-                    for surface in xsec.control_surfaces:
-                        surface.deflection, surface.symmetric = CHECK_DEFLECTION_DEG, symmetric
-            deflections = {}
-            for own, mirror in hybrid.controls:
-                deflections[own] = CHECK_DEFLECTION_DEG
-                deflections[mirror] = CHECK_DEFLECTION_DEG if symmetric else -CHECK_DEFLECTION_DEG
-            deflections.pop(0, None)
-            label = f"(controls {'+' if symmetric else '+/-'}{CHECK_DEFLECTION_DEG:g})"
-            deflected_cases.append((label, deflected_plane, lifting_line_sweep(mesh, wing_plane.xyz_ref, surface_count, atmosphere, args.airspeed, aoa_values, deflections)))
-        asb_airplane = build_asb_airplane(resolved)
+            cases.append((surface_set.name, alone_plane, alone[-1]))
+            for symmetric in ((True, False) if any(any(pair) for pair in alone_controls) else ()):
+                deflected_plane = copy.deepcopy(alone_plane)
+                for wing in deflected_plane.wings:
+                    for xsec in wing.xsecs:
+                        for surface in xsec.control_surfaces:
+                            surface.deflection, surface.symmetric = CHECK_DEFLECTION_DEG, symmetric
+                deflections = {}
+                for own, mirror in alone_controls:
+                    deflections[own] = CHECK_DEFLECTION_DEG
+                    deflections[mirror] = CHECK_DEFLECTION_DEG if symmetric else -CHECK_DEFLECTION_DEG
+                deflections.pop(0, None)
+                cases.append((f"{surface_set.name} {'+' if symmetric else '+/-'}{CHECK_DEFLECTION_DEG:g}", deflected_plane,
+                              lifting_line_sweep(alone_mesh, wing_plane.xyz_ref, 1, atmosphere, args.airspeed, aoa_values, deflections)))
+        asb_airplane = build_asb_airplane(resolved, resolved.cg_m)
         for wing_index, (own, mirror) in enumerate(hybrid.controls):
             if own and mirror:
                 for label, difference in zip(("sides add up", "+/- = anti-sym"), side_split_differences(asb_airplane, wing_index, aoa_values, atmosphere, args.airspeed)):
@@ -157,14 +159,16 @@ def main() -> None:
                         failures.append((project.name, f"C{own}/C{mirror} {label}", None, difference))
                     print(f"{project.name:<14} {'all':>5}  C{own}/C{mirror} {label:<16} AeroBuildup max diff {difference:.1e}  {status}")
         for column, aoa_deg in enumerate(aoa_values):
-            for label, plane, batched in (("(all wings)", wing_plane, live), *deflected_cases):
+            for label, plane, batched in cases:
                 total, difference = lifting_line_difference(plane, batched, column, float(aoa_deg), atmosphere, args.airspeed)
                 status = "ok" if difference <= args.tolerance else "FAIL"
                 if status == "FAIL":
                     failures.append((project.name, label, float(aoa_deg), difference))
-                print(f"{project.name:<14} {aoa_deg:5.1f}  {label:<18} {'':<6} {total:8.3f}  max diff to asb.LiftingLine {difference:.1e}  {status}")
+                print(f"{project.name:<14} {aoa_deg:5.1f}  {label:<18} {'alone':<6} {total:8.3f}  max diff to asb.LiftingLine {difference:.1e}  {status}")
+            print(f"{project.name:<14} {aoa_deg:5.1f}  {'(all wings)':<18} {'live':<6} {live.lift_n[:, column].sum():8.3f}  "
+                  f"VLM {vlm_lift_n(wing_plane, float(aoa_deg), args.airspeed):8.3f} (information)")
             for index, surface_set in enumerate(resolved.surfaces):
-                exposed_plane = build_asb_airplane(dataclasses.replace(resolved, surfaces=(surface_set,), motors=()))
+                exposed_plane = build_asb_airplane(dataclasses.replace(resolved, surfaces=(surface_set,), motors=()), resolved.cg_m)
                 exposed_plane.fuselages = []
                 through_text = f"{'n/a':>9}"
                 if len(surface_set.panels) == 2 and surface_set.panels[0].xz_mirror == "primary" and surface_set.definition.root == "body":

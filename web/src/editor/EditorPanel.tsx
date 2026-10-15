@@ -16,6 +16,7 @@ import { SurfacesTab } from './SurfacesTab'
 import { VolumesTab } from './VolumesTab'
 import { WiringTab } from './WiringTab'
 import { useSelection } from './selection'
+import { useRememberedState } from '../viewMemory'
 
 const DESIGN_TABS = ['Airframe', 'Fuselage', 'Sections', 'Surfaces', 'Access', 'Volumes', 'Motor mounts', 'Optimization'] as const
 const BUILD_TABS = ['Propulsion', 'Parts', 'Wiring'] as const
@@ -26,9 +27,11 @@ type Group = 'Design' | 'Build'
 /** Aircraft forms grouped into Design and Build; Optimization is a planned evaluator view. */
 export function EditorPanel({ snapshot }: { snapshot: Snapshot | null }): ReactElement {
   const { active, indices, select } = useSelection()
-  const [group, setGroup] = useState<Group>('Design')
-  const [designTab, setDesignTab] = useState<string>(DESIGN_TABS[0])
-  const [buildTab, setBuildTab] = useState<string>(BUILD_TABS[0])
+  // The open tab and group survive leaving the Editor view (or reloading): the view itself is not mounted while
+  // another tab is shown, and coming back to where the edit was left is the point of remembering them.
+  const [group, setGroup] = useRememberedState<Group>('editor.group', 'Design', value => value === 'Design' || value === 'Build')
+  const [designTab, setDesignTab] = useRememberedState<string>('editor.design-tab', DESIGN_TABS[0], value => typeof value === 'string' && (DESIGN_TABS as readonly string[]).includes(value))
+  const [buildTab, setBuildTab] = useRememberedState<string>('editor.build-tab', BUILD_TABS[0], value => typeof value === 'string' && (BUILD_TABS as readonly string[]).includes(value))
   const [context, setContext] = useState<EditorContext | null>(null)
 
   useEffect(() => {

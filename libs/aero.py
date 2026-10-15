@@ -5,8 +5,8 @@ result = analyze_aero(resolved)  # ~1-2 s
 
 Aerodynamics of a resolved airframe (libs/geometry.py). Geometry is read from the resolved model only.
 - analyze_aero: AeroSandbox's lifting line for all wings (downwash between surfaces, viscous NeuralFoil section
-  polars, stall), body-rooted panels carried through the body to the axis (lift carried across the body), plus
-  AeroBuildup for the bodies alone (fuselage, pods, motors). Neutral point from a dCm/dCL fit, Barrowman
+  polars, stall), body-rooted panels carried through the body (lift carried across it; carried_through_body), plus
+  body_loads for the bodies (fuselage, pods, motors: Jorgensen slender body and cross flow). Neutral point from a dCm/dCL fit, Barrowman
   rocket-style cross-check. The lifting line is asb.LiftingLine's algorithm solved for every AoA at once
   (lifting_line_sweep); aero_check.py verifies it against asb.LiftingLine. Control surfaces are asb.ControlSurface
   on the moving segment of each panel (AeroSandbox's model: an effective AoA change of deflection x (1 - hinge^2.75)
@@ -25,7 +25,9 @@ import aerosandbox as asb
 import aerosandbox.numpy as asb_np
 import numpy as np
 from threadpoolctl import threadpool_limits
+from aerosandbox.aerodynamics.aero_3D.aero_buildup_submodels.fuselage_aerodynamics_utilities import jorgensen_eta
 from aerosandbox.aerodynamics.aero_3D.singularities.uniform_strength_horseshoe_singularities import calculate_induced_velocity_horseshoe
+from aerosandbox.library.aerodynamics import Cd_cylinder
 
 from libs.airframe import ControlSurface
 from libs.geometry import STANDARD_GRAVITY_M_S2, Panel, ResolvedAirframe, control_cut_frames, control_hinge_fraction
@@ -37,12 +39,20 @@ AOA_SWEEP_DEG = range(-30, 31)
 STABILITY_MARGINAL_PCT = 5.0
 NEUTRAL_POINT_FIT_HALF_WINDOW_DEG = 4.0
 LIFTING_LINE_SPANWISE_RESOLUTION = 10
-LIFTING_LINE_CORE_RADIUS_M = 1e-3  # finite vortex core: panels carried to the axis meet there
+# asb.LiftingLine's default. A larger core switches off the root strips' own downwash where panels meet in the body:
+# 1 mm gave 20-45 % more fin lift than asb.VortexLatticeMethod, and positive eigenvalues that made the solve singular.
+LIFTING_LINE_CORE_RADIUS_M = 1e-8
+# A surface's trailing lines seen by another surface are smoothed over this fraction of the shedding strip's width:
+# each line stands for a strip of wake sheet, and a sheet crossing another surface (canards ahead of fins at the same
+# clock angle) induces a finite velocity there, where a bare line passes within microns of a control point and the
+# answer jumps with the mesh (snek: 7.5, 10.1, 8.8 N at 10/20/40 strips; 11.5, 11.1, 10.8 N with this core).
+WAKE_CORE_FRACTION = 0.25
 LIFTING_LINE_TRAILING_DIRECTION = np.array([1.0, 0.0, 0.0])  # asb.LiftingLine default: trailing legs along +x
 VLM_SETTING_KEYS = (
     "aoa_start", "aoa_end", "aoa_increment", "airspeed_start", "airspeed_end", "airspeed_increment",
     "altitude_start", "altitude_end", "altitude_increment", "vlm_threads", "vlm_span_res", "vlm_chord_res",
 )
+BODY_RATE_STEP = 1e-3  # nondimensional rate of body_rate_derivatives' central difference
 NOSE_CNA = 2.0
 NOSE_CP_FRACTION = 0.466  # of nose length (tangent ogive)
 
@@ -223,8 +233,38 @@ def with_side_deflections(airplane: asb.Airplane, wing: int, deflection: float, 
     return deflected
 
 
-def build_asb_airplane(resolved: ResolvedAirframe) -> asb.Airplane:
-    """Each motor bell is part of the body it is mounted on (its pod, else the fuselage end): one extra section at the
+def rotationally_symmetric(resolved: ResolvedAirframe) -> bool:
+    """Whether the airframe repeats every quarter turn about the body x axis: every body station as wide as it is
+    tall, and the panels (a primary's XZ mirror counted with it) closing under a quarter turn. A flow at any clock
+    angle then has the same answer as the pitch plane rolled, which is what the flight model uses for sideslip on
+    these airframes (FlightAero in libs/jsbsim.py): AeroBuildup's own sideslip answer is unstable where the
+    lifting-line pitch answer is stable, and it loses the fin-body interference the lifting line carries."""
+    def quarter_key(panel: Panel, turn: bool, mirror: bool) -> tuple:
+        """The panel's rounded geometry as a quarter turn and/or an XZ mirror carries it: the parts that must land on
+        another panel."""
+        def mapped(y: float, z: float) -> tuple[float, float]:
+            y, z = (-z, y) if turn else (y, z)
+            return (-y if mirror else y, z)
+        root_y, root_z = mapped(panel.root_le[1], panel.root_le[2])
+        tip_y, tip_z = mapped(panel.tip_le[1], panel.tip_le[2])
+        span_y, span_z = mapped(panel.span_dir[1], panel.span_dir[2])
+        return (round(panel.chord_root_m, 9), round(panel.chord_tip_m, 9), round(panel.span_m, 9),
+                round(panel.incidence_deg, 6), panel.airfoil, round(panel.root_le[0], 9), round(panel.tip_le[0], 9),
+                round(root_y, 6), round(root_z, 6), round(tip_y, 6), round(tip_z, 6), round(span_y, 6), round(span_z, 6))
+
+    if any(abs(station.width_m - station.height_m) > 1e-9 for station in resolved.body.stations):
+        return False
+    panels = [panel for surface_set in resolved.surfaces for panel in surface_set.panels if panel.xz_mirror != "copy"]
+    turned = set()
+    for panel in panels:
+        turned.add(quarter_key(panel, turn=False, mirror=False))
+        if panel.xz_mirror == "primary":
+            turned.add(quarter_key(panel, turn=False, mirror=True))
+    return all(quarter_key(panel, turn=True, mirror=False) in turned for panel in panels)
+
+
+def build_asb_airplane(resolved: ResolvedAirframe, moment_reference: tuple[float, float, float]) -> asb.Airplane:
+    """Moments are taken about moment_reference (geometry axes). Each motor bell is part of the body it is mounted on (its pod, else the fuselage end): one extra section at the
     bell's prop-side face. Alone, a bell is a 28 x 7 mm cylinder (stator size from motorlib, fineness 0.25), for
     which AeroBuildup's fuselage form factor gives more drag than a flat disc."""
     body = resolved.body
@@ -258,7 +298,7 @@ def build_asb_airplane(resolved: ResolvedAirframe) -> asb.Airplane:
     fuselages.insert(0, asb.Fuselage(name="Fuselage", xsecs=sorted(main_sections, key=lambda section: section.xyz_c[0])))
     reference = resolved.reference
     return asb.Airplane(
-        name=resolved.airframe.name, xyz_ref=list(resolved.cg_m), s_ref=reference.area_m2, c_ref=reference.chord_m,
+        name=resolved.airframe.name, xyz_ref=list(moment_reference), s_ref=reference.area_m2, c_ref=reference.chord_m,
         b_ref=reference.span_m, wings=wings, fuselages=fuselages, propulsors=propulsors,
     )
 
@@ -287,31 +327,34 @@ def barrowman(resolved: ResolvedAirframe) -> tuple[float, tuple[BarrowmanRow, ..
     return sum(row.cna * row.x_cp_m for row in rows) / total, tuple(rows)
 
 
-def carried_to_axis(wing: asb.Wing) -> asb.Wing:
-    """Copy of a body-rooted wing with an extra inner section where its span line comes closest to the fuselage axis,
-    so the lifting line carries its lift across the body. Sections may run tip first (build_asb_airplane flips them to
-    match the panel normal, e.g. a downward fin); the inner section goes on the root end either way."""
+def carried_through_body(wing: asb.Wing) -> asb.Wing:
+    """Copy of a body-rooted wing with an extra inner section along its span line, so the lifting line carries its lift
+    across the body: on the XZ plane for a mirrored pair (its two halves meet there; ending anywhere else overlaps or
+    parts them), else where the span line comes closest to the fuselage axis. Sections may run tip first
+    (build_asb_airplane flips them to match the panel normal, e.g. a downward fin); the inner section goes on the root
+    end either way."""
     sections = list(wing.xsecs)
     tip_first = np.linalg.norm(sections[0].xyz_le[1:]) > np.linalg.norm(sections[-1].xyz_le[1:])
     root, tip = (sections[-1], sections[0]) if tip_first else (sections[0], sections[-1])
     span = np.array(tip.xyz_le[1:], dtype=float) - np.array(root.xyz_le[1:], dtype=float)
     span /= np.linalg.norm(span)
     root_yz = np.array(root.xyz_le[1:], dtype=float)
-    inner = asb.WingXSec(xyz_le=[root.xyz_le[0], *(root_yz - float(root_yz @ span) * span)], chord=root.chord, twist=root.twist, airfoil=root.airfoil)
+    inward = root_yz[0] / span[0] if wing.symmetric else float(root_yz @ span)
+    inner = asb.WingXSec(xyz_le=[root.xyz_le[0], *(root_yz - inward * span)], chord=root.chord, twist=root.twist, airfoil=root.airfoil)
     return type(wing)(name=wing.name, symmetric=wing.symmetric, xsecs=[*sections, inner] if tip_first else [inner, *sections])
 
 
 @dataclass(frozen=True)
 class HybridAirplanes:
-    """The lifting line's wings and AeroBuildup's bodies, sharing references and the CG moment reference."""
+    """The lifting line's wings and AeroBuildup's bodies, sharing references and the moment reference."""
     wings: asb.Airplane
     bodies: asb.Airplane
     owners: tuple[int, ...]  # resolved.surfaces index of each wing
     controls: tuple[tuple[int, int], ...]  # per wing: control number of its panel and of its XZ-mirror copy (0 = none)
 
 
-def build_hybrid_airplanes(resolved: ResolvedAirframe) -> HybridAirplanes:
-    airplane = build_asb_airplane(resolved)
+def build_hybrid_airplanes(resolved: ResolvedAirframe, moment_reference: tuple[float, float, float]) -> HybridAirplanes:
+    airplane = build_asb_airplane(resolved, moment_reference)
     numbers = {(control.surface, control.panel_index): control.number for control in resolved.controls}
     # airplane.wings holds one wing per panel that is not an XZ-mirror copy, in resolved.surfaces order; a copy mirrors
     # its primary's span direction across XZ.
@@ -326,7 +369,7 @@ def build_hybrid_airplanes(resolved: ResolvedAirframe) -> HybridAirplanes:
                                   and abs(other.span_dir[1] + panel.span_dir[1]) < 1e-9 and abs(other.span_dir[2] - panel.span_dir[2]) < 1e-9)
             owners.append(index)
             controls.append((numbers.get((surface_set.name, panel.index), 0), numbers.get((surface_set.name, copy_index), 0)))
-    wings = [carried_to_axis(wing) if resolved.surfaces[owner].definition.root == "body" else wing for wing, owner in zip(airplane.wings, owners)]
+    wings = [carried_through_body(wing) if resolved.surfaces[owner].definition.root == "body" else wing for wing, owner in zip(airplane.wings, owners)]
     references = dict(xyz_ref=airplane.xyz_ref, s_ref=airplane.s_ref, c_ref=airplane.c_ref, b_ref=airplane.b_ref)
     return HybridAirplanes(
         wings=asb.Airplane(name=f"{airplane.name} wings", wings=wings, fuselages=[], **references),
@@ -424,11 +467,14 @@ def build_lifting_line_mesh(wing_plane: asb.Airplane, owners: tuple[int, ...], w
     right = 0.75 * front_right + 0.25 * back_right
     bound_legs = right - left
     centers = (left + right) / 2.0
+    owner_array = np.array(panel_owners)
+    widths = np.linalg.norm(bound_legs, axis=1)
+    cores = np.where(owner_array[:, None] == owner_array[None, :], LIFTING_LINE_CORE_RADIUS_M, WAKE_CORE_FRACTION * widths[None, :])
     induced = np.array(calculate_induced_velocity_horseshoe(
         x_field=centers[:, :1], y_field=centers[:, 1:2], z_field=centers[:, 2:3],
         x_left=left[None, :, 0], y_left=left[None, :, 1], z_left=left[None, :, 2],
         x_right=right[None, :, 0], y_right=right[None, :, 1], z_right=right[None, :, 2],
-        trailing_vortex_direction=LIFTING_LINE_TRAILING_DIRECTION, gamma=1.0, vortex_core_radius=LIFTING_LINE_CORE_RADIUS_M,
+        trailing_vortex_direction=LIFTING_LINE_TRAILING_DIRECTION, gamma=1.0, vortex_core_radius=cores,
     ))
     groups: dict[str, tuple[asb.Airfoil, list[int]]] = {}
     for index, airfoil in enumerate(airfoils):
@@ -513,22 +559,115 @@ def lifting_line_sweep(
     return loads
 
 
+@dataclass(frozen=True)
+class BodyLoads:
+    """The bodies' loads per operating point: about the moment reference in body axes (x forward, y right, z down), and
+    lift and drag in wind axes."""
+    force_body_n: np.ndarray  # (3, points)
+    moment_body_nm: np.ndarray  # (3, points)
+    lift_n: np.ndarray
+    drag_n: np.ndarray
+
+
+def body_loads(fuselages, atmosphere: asb.Atmosphere, speed_m_s, alpha_deg, beta_deg, moment_reference,
+               rates_rad_s=(0.0, 0.0, 0.0)) -> BodyLoads:
+    """Fuselages and pods as bodies of revolution at any flow angle, nose or tail first, after Jorgensen (NASA TR R-474,
+    1977), slice by slice: each slice sees the free stream plus its own motion from the body rates (body axes p, q, r,
+    about moment_reference), at the angle sigma between its axis and that local flow.
+    - Slender-body (potential) force: rho V^2 sin sigma cos sigma sqrt((1 + |cos sigma|) / 2) times the slice's area
+      change, across the flow: sin 2 sigma, zero side-on and reversed tail first, with Jorgensen's cos(sigma / 2) for
+      large angles. A closed body gets no net force from it, only the couple that destabilises it nose and tail first.
+    - Cross-flow drag: each slice a cylinder in its own cross flow, eta (jorgensen_eta) x Cd_cylinder at the cross-flow
+      Reynolds and Mach numbers, on its diameter and length.
+    - Axial drag: AeroBuildup's own drag of the body at zero angle (skin friction, base and wave drag), times
+      cos sigma |cos sigma| along the axis, at the body's middle.
+    The slices' moments come from where they act, so rotating the body makes its nose and tail sweep through the air:
+    rate damping comes out of the same model."""
+    speed, alpha, beta = (np.ravel(value).astype(float) for value in np.broadcast_arrays(speed_m_s, alpha_deg, beta_deg))
+    rates = [np.broadcast_to(np.asarray(rate, dtype=float), speed.shape) for rate in rates_rad_s]
+    op_point = asb.OperatingPoint(atmosphere=atmosphere, velocity=speed, alpha=alpha, beta=beta)
+    flow = np.stack(op_point.convert_axes(-np.ones_like(speed), np.zeros_like(speed), np.zeros_like(speed), from_axes="wind", to_axes="geometry"), axis=1)
+    omega = np.stack((-rates[0], rates[1], -rates[2]), axis=1)  # body p, q, r in geometry axes (x aft, z up)
+    density, viscosity, sound = atmosphere.density(), atmosphere.dynamic_viscosity(), atmosphere.speed_of_sound()
+    reference = np.asarray(moment_reference, dtype=float)
+    force = np.zeros((len(speed), 3))
+    moment = np.zeros((len(speed), 3))
+    for fuselage in fuselages:
+        centres = np.array([xsec.xyz_c for xsec in fuselage.xsecs], dtype=float)
+        areas = np.array([xsec.xsec_area() for xsec in fuselage.xsecs], dtype=float)
+        lengths = np.linalg.norm(np.diff(centres, axis=0), axis=1)
+        keep = lengths > 0.0  # a station repeated at the same x (a motor bell's face) adds no slice
+        axes = np.diff(centres, axis=0)[keep] / lengths[keep, None]
+        middles = ((centres[:-1] + centres[1:]) / 2.0)[keep]
+        area_change = np.diff(areas)[keep]
+        mean_areas = ((areas[:-1] + areas[1:] + np.sqrt(areas[:-1] * areas[1:])) / 3.0)[keep]
+        diameters = 2.0 * np.sqrt(mean_areas / np.pi)
+        eta = jorgensen_eta(fuselage.fineness_ratio())
+        arms = middles - reference
+        local = speed[None, :, None] * flow[None] - np.cross(omega[None], arms[:, None, :])  # (slices, points, 3) air past each slice
+        local_speed = np.linalg.norm(local, axis=-1)
+        axial = np.einsum("spk,sk->sp", local, axes)
+        crossing = local - axial[..., None] * axes[:, None, :]
+        cross_speed = np.linalg.norm(crossing, axis=-1)
+        across = crossing / np.maximum(cross_speed, 1e-30)[..., None]
+        cos_sigma = axial / np.maximum(local_speed, 1e-30)
+        sin_sigma = cross_speed / np.maximum(local_speed, 1e-30)
+        potential = density * local_speed ** 2 * sin_sigma * cos_sigma * np.sqrt((1.0 + np.abs(cos_sigma)) / 2.0) * area_change[:, None]
+        cylinder = Cd_cylinder(Re_D=density * cross_speed * diameters[:, None] / viscosity, mach=cross_speed / sound)
+        crossflow = 0.5 * density * cross_speed ** 2 * eta * cylinder * diameters[:, None] * lengths[keep, None]
+        slice_force = (potential + crossflow)[..., None] * across
+        force += slice_force.sum(axis=0)
+        moment += np.cross(arms[:, None, :], slice_force).sum(axis=0)
+        # Axial drag at zero angle, per airspeed, from AeroBuildup's skin-friction, base and wave models of this body.
+        body_axis = (centres[-1] - centres[0]) / np.linalg.norm(centres[-1] - centres[0])
+        alone = asb.Airplane(name=fuselage.name, xyz_ref=list(reference), fuselages=[fuselage])
+        speeds, inverse = np.unique(speed, return_inverse=True)
+        zero_angle = asb.AeroBuildup(airplane=alone, op_point=asb.OperatingPoint(atmosphere=atmosphere, velocity=speeds, alpha=0.0 * speeds),
+                                     model_size=AERO_MODEL_SIZE).run()
+        drag_zero = np.ravel(np.asarray(zero_angle["D"], dtype=float))[inverse]
+        cos_body = flow @ body_axis
+        axial_force = (drag_zero * cos_body * np.abs(cos_body))[:, None] * body_axis
+        force += axial_force
+        moment += np.cross((centres[0] + centres[-1]) / 2.0 - reference, axial_force)
+    force_body = np.array(op_point.convert_axes(*force.T, from_axes="geometry", to_axes="body"))
+    moment_body = np.array(op_point.convert_axes(*moment.T, from_axes="geometry", to_axes="body"))
+    force_wind = op_point.convert_axes(*force.T, from_axes="geometry", to_axes="wind")
+    return BodyLoads(force_body_n=force_body, moment_body_nm=moment_body, lift_n=-np.asarray(force_wind[2]), drag_n=-np.asarray(force_wind[0]))
+
+
+def body_rate_derivatives(fuselages, atmosphere: asb.Atmosphere, speed_m_s, alpha_deg, moment_reference, reference) -> dict[str, np.ndarray]:
+    """Clp, Cmq and Cnr of the bodies (body_loads) about moment_reference, nondimensional as AeroBuildup's (per rate x
+    b / 2V for roll and yaw, x c / 2V for pitch; reference: geometry.Reference), by a central difference of
+    BODY_RATE_STEP at sideslip 0."""
+    speed, alpha = (np.ravel(value).astype(float) for value in np.broadcast_arrays(speed_m_s, alpha_deg))
+    force_scale = 0.5 * atmosphere.density() * speed ** 2 * reference.area_m2
+    derivatives = {}
+    for name, axis, length in (("Clp", 0, reference.span_m), ("Cmq", 1, reference.chord_m), ("Cnr", 2, reference.span_m)):
+        rate = BODY_RATE_STEP * 2.0 * speed / length
+        moments = []
+        for sign in (1.0, -1.0):
+            rates = [np.zeros_like(speed)] * 3
+            rates[axis] = sign * rate
+            moments.append(body_loads(fuselages, atmosphere, speed, alpha, 0.0, moment_reference, rates).moment_body_nm[axis])
+        derivatives[name] = (moments[0] - moments[1]) / (2.0 * BODY_RATE_STEP) / (force_scale * length)
+    return derivatives
+
+
 class ForwardAero:
-    """Shared editor/export loads: interacting lifting-line panels plus AeroBuildup bodies.
+    """Shared editor/export loads: interacting lifting-line panels plus the bodies (body_loads).
 
     Alpha is limited to the editor's -30..30 degree domain; sideslip/rate effects belong to the export envelope.
     Mesh construction is paid once for speed sweeps and control-deflection tables.
     """
 
-    def __init__(self, resolved: ResolvedAirframe):
+    def __init__(self, resolved: ResolvedAirframe, moment_reference: tuple[float, float, float]):
         self.resolved = resolved
-        self.hybrid = build_hybrid_airplanes(resolved)
+        self.hybrid = build_hybrid_airplanes(resolved, moment_reference)
         self.mesh = build_lifting_line_mesh(self.hybrid.wings, self.hybrid.owners, self.hybrid.controls)
 
     @threadpool_limits.wrap(limits=1, user_api="blas")
     def run(self, atmosphere, speed_m_s, alpha_deg, deflections=None):
-        point = asb.OperatingPoint(atmosphere=atmosphere, velocity=speed_m_s, alpha=alpha_deg)
-        body = asb.AeroBuildup(airplane=self.hybrid.bodies, op_point=point, model_size=AERO_MODEL_SIZE).run()
+        body = body_loads(self.hybrid.bodies.fuselages, atmosphere, speed_m_s, alpha_deg, 0.0, self.hybrid.bodies.xyz_ref)
         wings = lifting_line_sweep(self.mesh, self.hybrid.wings.xyz_ref, len(self.resolved.surfaces),
                                    atmosphere, speed_m_s, np.asarray(alpha_deg), deflections)
         return wings, body
@@ -542,8 +681,8 @@ def analyze_aero(resolved: ResolvedAirframe) -> AeroResult:
         raise OperatingPointError(f"aero covers AoA {AOA_SWEEP_DEG.start} to {AOA_SWEEP_DEG.stop - 1} deg; operating point AoA is {operating_point.aoa_deg} deg")
     cg_x = resolved.cg_m[0]
     reference = resolved.reference
-    atmosphere = asb.Atmosphere(altitude=operating_point.altitude_m)
-    model = ForwardAero(resolved)
+    atmosphere = asb.Atmosphere(altitude=operating_point.altitude_m, method="isa")
+    model = ForwardAero(resolved, resolved.cg_m)
 
     # The sweep plus the operating point appended at eval_index, in one pass of each model.
     sweep_aoa = np.array(AOA_SWEEP_DEG, dtype=float)
@@ -552,9 +691,9 @@ def analyze_aero(resolved: ResolvedAirframe) -> AeroResult:
     wings, body = model.run(atmosphere, operating_point.airspeed_m_s, aoa_values)
     dynamic_pressure = float(asb.OperatingPoint(atmosphere=atmosphere, velocity=operating_point.airspeed_m_s).dynamic_pressure())
     force_scale = dynamic_pressure * reference.area_m2
-    lift_all = wings.lift_n.sum(axis=0) + np.asarray(body["L"])
-    drag_all = wings.drag_n.sum(axis=0) + np.asarray(body["D"])
-    moment_all = wings.pitch_moment_nm.sum(axis=0) + np.asarray(body["M_b"][1])
+    lift_all = wings.lift_n.sum(axis=0) + body.lift_n
+    drag_all = wings.drag_n.sum(axis=0) + body.drag_n
+    moment_all = wings.pitch_moment_nm.sum(axis=0) + body.moment_body_nm[1]
     cl_all = lift_all / force_scale
     cd_all = drag_all / force_scale
     cm_all = moment_all / (force_scale * reference.chord_m)
@@ -592,7 +731,7 @@ def analyze_aero(resolved: ResolvedAirframe) -> AeroResult:
         cm=float(cm_all[eval_index]),
         lift_center_x_m=cg_x - float(moment_all[eval_index]) / lift if abs(lift) > 1e-9 else float("nan"),
         surfaces=tuple(surfaces),
-        body_lift_n=float(body["L"][eval_index]), body_drag_n=float(body["D"][eval_index]),
+        body_lift_n=float(body.lift_n[eval_index]), body_drag_n=float(body.drag_n[eval_index]),
         x_np_m=cg_x - dcm_dcl * reference.chord_m, sweep=tuple(sweep),
         barrowman_cp_m=barrowman_cp, barrowman=barrowman_rows,
     )
@@ -677,7 +816,7 @@ def run_vlm_sweep(resolved: ResolvedAirframe, settings: dict, progress_callback=
     aoa_values = range_values(settings["aoa_start"], settings["aoa_end"], settings["aoa_increment"], "AoA")
     airspeed_values = range_values(settings["airspeed_start"], settings["airspeed_end"], settings["airspeed_increment"], "Airspeed")
     altitude_values = range_values(settings["altitude_start"], settings["altitude_end"], settings["altitude_increment"], "Altitude")
-    airplane = build_asb_airplane(resolved)
+    airplane = build_asb_airplane(resolved, resolved.cg_m)
     reference = resolved.reference
     cg_x = resolved.cg_m[0]
     weight_n = sum(resolved.mass_kg) / 2.0 * STANDARD_GRAVITY_M_S2
@@ -700,7 +839,7 @@ def run_vlm_sweep(resolved: ResolvedAirframe, settings: dict, progress_callback=
 
     rows = []
     for altitude_m in altitude_values:
-        density = float(asb.Atmosphere(altitude=altitude_m).density())
+        density = float(asb.Atmosphere(altitude=altitude_m, method="isa").density())
         for aoa_deg in aoa_values:
             _vlm, coefficients = solved[aoa_deg]
             cl, cdi, cm = float(coefficients["CL"]), float(coefficients["CD"]), float(coefficients["Cm"])

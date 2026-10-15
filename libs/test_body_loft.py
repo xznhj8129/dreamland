@@ -11,8 +11,8 @@ from pathlib import Path
 import cadquery as cq
 
 from libs.airframe import load_airframe, load_parts_data
-from libs.cad import _airfoil_section_coordinates, _root_le, build_body_solid
-from libs.geometry import body_section_at, resolve_airframe
+from libs.cad import _airfoil_section_coordinates, build_body_solid
+from libs.geometry import body_section_at, embedded_root_fraction, resolve_airframe
 from libs.project import open_project
 
 CAD_ENVELOPE_TOLERANCE_M = 0.0001
@@ -33,7 +33,7 @@ def main() -> None:
     for surface in resolved.surfaces:
         coordinates = _airfoil_section_coordinates(surface.definition.airfoil)
         for panel in surface.panels:
-            depth = math.dist(_root_le(panel, coordinates, body), panel.attach_le)
+            depth = -embedded_root_fraction(panel, coordinates, body) * math.dist(panel.attach_le, panel.tip_le)
             message = f"{surface.name}[{panel.index}]: CAD root embed {depth * 1000:.3f} mm, body envelope {limit * 1000:.3f} mm"
             print(message)
             measurements.append(message)

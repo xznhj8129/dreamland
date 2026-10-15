@@ -15,7 +15,7 @@ from controllers.inav import SITL_BASE_PORT
 from libs.airframe import load_airframe, load_parts_data
 from libs.flightlog import flight_log_path, flight_snapshot
 from libs.computed_geometry import resolve_project
-from libs.jsbsim import reuse_or_export
+from libs.jsbsim import DEFAULT_WORKERS, MAX_WORKERS, reuse_or_export
 from libs.project import open_project
 from libs.scenario import CONTROLLERS, DEFAULT_LIMIT_S, Flight, ScenarioSpec, ScenarioStopped, load_scenario, scenario_path
 from libs.sensors import Hardware
@@ -30,6 +30,8 @@ def main():
     parser.add_argument("--clock", choices=("realtime", "stepped", "stepped-faster"), default="realtime")
     parser.add_argument("--rate", type=float, default=200.0)
     parser.add_argument("--duration", type=float, default=DEFAULT_LIMIT_S, help="maximum simulated seconds")
+    parser.add_argument("--workers", type=int, default=DEFAULT_WORKERS,
+                        help=f"processes solving the aero tables when the model rebuilds, up to {MAX_WORKERS:g} (1 = sequential)")
     parser.add_argument("--pack-voltage", type=float)
     parser.add_argument("--sitl", type=Path)
     parser.add_argument("--sitl-port", type=int, default=SITL_BASE_PORT, help="the SITL's first TCP port (it uses 8: MSP = +1, MAVLink = +2)")
@@ -42,6 +44,9 @@ def main():
         value = getattr(args, name)
         if not math.isfinite(value) or value <= 0:
             parser.error(f"--{name} must be finite and positive")
+    if args.workers < 1:
+        parser.error("--workers must be at least 1")
+    args.workers = min(args.workers, MAX_WORKERS)
     if args.controller != "inav" and (args.sitl or args.inav_config or args.no_msp or args.no_mavlink or args.sitl_port != SITL_BASE_PORT):
         parser.error("SITL, INAV settings, MSP and MAVLink options require the INAV controller")
     project = open_project(args.project)
@@ -57,7 +62,7 @@ def main():
     if reason is not None:
         parser.error(f"start {args.start}: {reason}")
     state = resolve_start(parser, args, args.start, START_ALT_M, airframe.operating_point.airspeed_m_s)
-    export, reused = reuse_or_export(resolved, parts, project.jsbsim_dir, project.name, args.pack_voltage)
+    export, reused = reuse_or_export(resolved, parts, project.jsbsim_dir, project.name, args.pack_voltage, args.workers)
     print(f"{airframe.name}: {len(export.motor_properties)} motors, {len(export.servo_properties)} servo outputs; model {'reused' if reused else 'exported'}")
     print(f"Flight aero: lifting line through ±{export.forward_alpha_limit_deg:.2f} deg AoA; "
           f"fades to AeroBuildup by ±{export.envelope_alpha_end_deg:.2f} deg; tables solved up to {export.top_table_speed_m_s:g} m/s (held beyond)")

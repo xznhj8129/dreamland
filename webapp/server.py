@@ -79,6 +79,7 @@ def create_app(state: AppState, dist_dir: Path) -> web.Application:
     app.router.add_post("/api/sim/resource", handle_sim_resource)
     app.router.add_post("/api/sim/resource/delete", handle_sim_resource_delete)
     app.router.add_get("/api/sim/options", handle_sim_options)
+    app.router.add_post("/api/sim/default", handle_sim_default)
     app.router.add_post("/api/sim/run", handle_sim_run)
     app.router.add_post("/api/sim/abort", handle_sim_abort)
     app.router.add_get("/api/sim/state", handle_sim_state)
@@ -636,6 +637,19 @@ async def handle_sim_resource_delete(request: web.Request) -> web.Response:
 async def handle_sim_options(request: web.Request) -> web.Response:
     """GET /api/sim/options: what the SIM panel offers for the current project (webapp.sim.options)."""
     return web.json_response(sim_backend.options(_state(request)))
+
+
+async def handle_sim_default(request: web.Request) -> web.Response:
+    """POST /api/sim/default: remember this plane's controller and scenario for the SIM panel (webapp.sim.save_default).
+
+    Writes the project's sim.json; a value the project cannot run is 400 with the message.
+    """
+    body = await _json_object(request)
+    try:
+        message = sim_backend.save_default(_state(request), body)
+    except (ValueError, OSError) as error:
+        return web.json_response({"ok": False, "message": str(error)}, status=400)
+    return web.json_response({"ok": True, "message": message})
 
 
 async def handle_sim_run(request: web.Request) -> web.Response:

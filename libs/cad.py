@@ -23,7 +23,7 @@ from libs.body_solids import (
 )
 from libs.geometry import (
     Body, CarryThroughArm, Panel, ResolvedAirframe, body_half_extents, body_section_at, carry_through_front_profile, carry_through_side_profile,
-    chord_direction, control_cut_frames, section_index, superellipse_radius, thickness_direction,
+    chord_direction, control_cut_frames, embedded_root_fraction, section_index, thickness_direction,
 )
 from libs.print_features import joint_hole_stations, joint_holes_at, motor_mount_openings
 from libs.solid_cache import cached
@@ -32,7 +32,6 @@ AIRFOIL_POINTS_PER_SIDE = 40
 PROP_DISC_THICKNESS_MM = 1.0
 FLAT_PLATE_SECTION = ((0.0, 0.01), (1.0, 0.01), (1.0, -0.01), (0.0, -0.01))  # chord fractions, for an airfoil with no thickness
 CARRY_THROUGH_WALL_EMBED = 0.5  # of the wall: carry-through arms reach this far into the tube wall, fusing to it
-ROOT_EMBED_MARGIN_M = 0.001  # the root airfoil ends up this far inside the outer body surface
 SOCKET_BORE_COUNTERBORE_M = 0.00005  # a socket cutter clears the bore surface: a coincident boolean leaves a zero-thickness face
 SPIGOT_WALL_EMBED = 0.5  # of the wall: a male spigot's root ring reaches this far into the carrying section's wall, fusing to it
 
@@ -50,63 +49,13 @@ def _airfoil_section_coordinates(airfoil_name: str):
     return [(float(x), float(y)) for x, y in coordinates]
 
 
-def _root_le(panel: Panel, coordinates, body: Body) -> tuple[float, float, float]:
-    """The panel's root leading edge with the root airfoil slid inward along the panel axis (root to tip) until no
-    part of the section pokes through the outer body (plus ROOT_EMBED_MARGIN_M). The panel stays a straight loft
-    between this root and the tip, so the body boolean crosses its surfaces instead of meeting the root at a
-    tangential seam. Axis-rooted panels sit on the fuselage axis already; a root the body cannot contain (over a
-    tapered tip) keeps its placed position; a chord overhanging the body keeps the points outside it as they are.
-    """
-    root = panel.attach_le
-    if math.hypot(root[1], root[2]) <= 1e-9:
-        return root
-    axis = tuple(tip - point for tip, point in zip(panel.tip_le, root))
-    axis_length = math.sqrt(sum(value * value for value in axis))
-    if axis_length <= 1e-12:
-        return root
-    axis = tuple(value / axis_length for value in axis)
-    chord_dir = chord_direction(panel)
-    thick_dir = thickness_direction(panel)
-    section = [tuple(point + panel.chord_root_m * (x * cd + y * td) for point, cd, td in zip(root, chord_dir, thick_dir))
-               for x, y in coordinates]
-    section = [point for point in section if body_half_extents(body, point[0])[0] > 0.0]
-    if not section:
-        return root
-
-    def inside(point, depth: float) -> bool:
-        x, y, z = (value - depth * direction for value, direction in zip(point, axis))
-        half_w, half_h = body_half_extents(body, x)
-        if half_w <= 0.0 or half_h <= 0.0:
-            return False
-        return math.hypot(y, z) <= superellipse_radius(half_w, half_h, body_section_at(body, x).shape, math.atan2(z, y)) - ROOT_EMBED_MARGIN_M
-
-    def depth_for(point) -> float:
-        low = 0.0
-        if inside(point, low):
-            return 0.0
-        # Stop where this span line passes closest to the fuselage axis. A radial-distance bound can
-        # overshoot the entire interior of an offset/dihedral root; doubling it then runs off indefinitely.
-        high = (point[1] * axis[1] + point[2] * axis[2]) / (axis[1] ** 2 + axis[2] ** 2)
-        if high <= 0.0 or not inside(point, high):
-            return 0.0  # this root point cannot be contained: keep its placed geometry
-        for _ in range(40):
-            middle = (low + high) / 2.0
-            if inside(point, middle):
-                high = middle
-            else:
-                low = middle
-        return high
-
-    depth = max(depth_for(point) for point in section)
-    return tuple(value - depth * direction for value, direction in zip(root, axis))
-
-
 def build_wing_solid(panel: Panel, body: Body):
     """Loft one panel between its root and tip airfoil sections, in the panel's own chord/normal frame.
 
-    A body-rooted panel's root airfoil is slid inward along the panel axis until it lies inside the outer body
-    (_root_le), so the loft runs straight through the skin and a boolean against the body crosses the panel's
-    surfaces instead of meeting the root at a tangential seam. Axis-rooted panels already start on the axis.
+    A body-rooted panel is lofted from its own outline carried inward until the root airfoil lies inside the outer body
+    (embedded_root_fraction): no gap where the body tapers under the root chord, a boolean against the body crosses
+    the panel's surfaces instead of meeting the root at a tangential seam, and the part outside the body is the
+    designed panel. Axis-rooted panels already start on the axis.
     """
     import cadquery as cq
 
@@ -129,7 +78,10 @@ def build_wing_solid(panel: Panel, body: Body):
             points = points[:-1]
         return cq.Wire.assembleEdges([cq.Edge.makeSpline(points), cq.Edge.makeLine(points[-1], points[0])])
 
-    wires = [section_wire(_root_le(panel, coordinates, body), panel.chord_root_m), section_wire(panel.tip_le, panel.chord_tip_m)]
+    root = embedded_root_fraction(panel, coordinates, body)
+    root_le = tuple(a + root * (b - a) for a, b in zip(panel.attach_le, panel.tip_le))
+    root_chord = panel.chord_root_m + root * (panel.chord_tip_m - panel.chord_root_m)
+    wires = [section_wire(root_le, root_chord), section_wire(panel.tip_le, panel.chord_tip_m)]
     return cq.Workplane("XY").newObject([cq.Solid.makeLoft(wires, ruled=True)])
 
 

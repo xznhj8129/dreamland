@@ -33,9 +33,11 @@ Model choices (best estimates where no data exists):
 - Prop: static Ct and Cp from motorlib's full-throttle point (constant: JSBSim has no RPM dependence, motorlib's
   thrust and power exponents are ~2 and ~3); Ct(J) and Cp(J) shaped like JSBSim's bundled APC 9x4.5E table, J scaled
   by the pitch ratio over the APC's (zero thrust at J = 1.46 x pitch / diameter). Rotor inertia = prop only.
-- Aerodynamics: the editor's lifting line + bodies at forward zero-sideslip points; AeroBuildup sideslip increments,
-  outer envelope and rate damping (FlightAero documents the blend). Tables cover AoA -180..180, sideslip -90..90 and
-  the solved airspeeds (aero_speeds_m_s). Matching models are consistency, not independent aerodynamic validation.
+- Aerodynamics: the editor's lifting line + bodies at forward zero-sideslip points; on a rotationally symmetric
+  airframe (every tail; rotationally_symmetric) sideslip is the pitch-plane answer rolled, on others AeroBuildup
+  sideslip increments; AeroBuildup outer envelope and rate damping (FlightAero documents the blend). Tables cover AoA
+  -180..180, sideslip -90..90 and the solved airspeeds (aero_speeds_m_s). Matching models are consistency, not
+  independent aerodynamic validation.
 - Control surfaces: each control's increments from the same blended model at sideslip 0, the base AoA/speed grids
   and CONTROL_DEFLECTION_GRID_DEG. The forward model includes interacting-wing response to the actual deflection;
   the outer AeroBuildup envelope uses finite_wing_factor. Separate control increments add up in JSBSim, omitting
@@ -57,10 +59,12 @@ import ast
 import copy
 import dataclasses
 import hashlib
+import json
 import math
 import pickle
 import shutil
 import xml.etree.ElementTree as ElementTree
+from concurrent.futures import ProcessPoolExecutor, as_completed
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -71,7 +75,7 @@ import numpy as np
 import time
 from threadpoolctl import threadpool_limits
 
-from libs.aero import AERO_MODEL_SIZE, ForwardAero, build_asb_airplane, with_side_deflections
+from libs.aero import AERO_MODEL_SIZE, BodyLoads, ForwardAero, body_loads, body_rate_derivatives, build_asb_airplane, rotationally_symmetric, with_side_deflections
 from libs.airframe import INCH_M, ElectricPropulsion, motor_repo, motorlib_motor
 from libs.geometry import STANDARD_GRAVITY_M_S2, Inertia, ResolvedAirframe, RocketPlacement, Vec, dry_mass_properties
 from libs.propulsion import MotorModel, motor_models, rpm_for_thrust, static_points
@@ -82,7 +86,11 @@ EXPORT_ROOT = "export_jsbsim"  # the code an export runs is what this function r
 EXPORT_FINGERPRINT_FILE = "export.fingerprint"  # in the export directory, next to the export it describes
 EXPORT_CACHE_FILE = "export.pickle"  # the JSBSimExport of that export
 TABLE_CACHE_FILE = "tables.pickle"  # the solved tables in the export directory, each under its own input fingerprint
-TABLE_CACHE_LIMIT = 64  # entries kept: the oldest are dropped once another airframe's tables push past this
+EXPORT_PROGRESS_FILE = "export.progress.json"  # the live rebuild's stage, task counts and reuse, for the SIM panel
+# Solve processes on a rebuild. The owner's machine freezes under sustained all-core load, so never more than two.
+MAX_WORKERS = 2
+DEFAULT_WORKERS = 2
+WORKER_SOLVES = ("body aero tables", "control tables")  # the progress stages a rebuild reports
 PROP_J_TABLE_POINTS = 25
 PROP_J_TABLE_END = 1.2  # of the zero-thrust advance ratio
 APC_REFERENCE_PROP = "DJI_9450"  # JSBSim's bundled APC 9x4.5E table, for the Ct(J) and Cp(J) shapes
@@ -98,11 +106,20 @@ FT_M = 0.3048
 ALPHA_RAD_ROWS = ("aero/alpha-rad", np.radians(AERO_ALPHA_DEG))  # table_xml (property, breakpoints)
 AIRSPEED_PROPERTY = "velocities/vt-fps"
 CONTROL_COEFFICIENTS = ("CX", "CY", "CZ", "Cl", "Cm", "Cn")
+# AeroBuildup adds an aircraft-level induced drag, (L^2 + Y^2) / (q pi b^2), to its force with no lever arm: it acts at
+# whatever moment reference AeroBuildup is given. FlightAero carries it beside CONTROL_COEFFICIENTS (body axes) so that
+# moments_about moves it through the CG, as a solve about the CG has it.
+INDUCED_COEFFICIENTS = ("CX_induced", "CY_induced", "CZ_induced")
+SOLVED_COEFFICIENTS = CONTROL_COEFFICIENTS + INDUCED_COEFFICIENTS
+# The static and control tables are solved with moments about this point (geometry axes: the nose tip, on the body x
+# axis, which the rolled sideslip needs), so a design whose masses move keeps its solved tables; moments_about moves
+# them to the CG exactly. The rate damping depends on where the body rotates and is solved about the CG.
+TABLE_MOMENT_REFERENCE_M = (0.0, 0.0, 0.0)
 FORWARD_ALPHA_LIMIT_DEG = 30.0
 ENVELOPE_ALPHA_END_DEG = 45.0
 FORWARD_BETA_LIMIT_DEG = 10.0
 ENVELOPE_BETA_END_DEG = 20.0
-AERO_PROVENANCE = "Lifting line + bodies in forward flight; AeroBuildup sideslip/rate effects and outer envelope"
+AERO_PROVENANCE = "Lifting line + bodies in forward flight; a rotationally symmetric airframe's sideslip is its pitch plane rolled; outer envelope and rate damping from AeroBuildup wings and Jorgensen slender bodies (body_loads)"
 # Deflections the control tables are solved at, each way. Dense near neutral: a section stalls past ~15-20 deg (and
 # AeroSandbox's flap drag grows with deflection squared), so a coarse grid interpolates small deflections from a
 # stalled column (half of +-45 deg gave 90x the real adverse yaw and a ninth of the roll at 5 deg).
@@ -260,30 +277,56 @@ def table_rows(rows, digits: int = 6) -> str:
     return "\n".join("        " + "  ".join(f"{value:.{digits}g}" for value in row) for row in rows)
 
 
-def body_coefficients(aero: dict, op_point: asb.OperatingPoint, resolved: ResolvedAirframe) -> np.ndarray:
-    """(6, points) CONTROL_COEFFICIENTS of an AeroBuildup result, body axes."""
+def buildup_loads(aero: dict, op_point: asb.OperatingPoint) -> dict:
+    """An AeroBuildup result as body-axis loads: force F_b, moment M_b and the induced-drag part of the force Fi_b."""
+    drag = np.asarray(aero["D_induced"], dtype=float)
+    return {"F_b": aero["F_b"], "M_b": aero["M_b"],
+            "Fi_b": op_point.convert_axes(-drag, np.zeros_like(drag), np.zeros_like(drag), from_axes="wind", to_axes="body")}
+
+
+def body_coefficients(loads: dict, op_point: asb.OperatingPoint, resolved: ResolvedAirframe) -> np.ndarray:
+    """(9, points) SOLVED_COEFFICIENTS of body-axis loads (buildup_loads, or a sum of such)."""
     reference = resolved.reference
     force_scale = np.asarray(op_point.dynamic_pressure()) * reference.area_m2
-    lengths = (1.0, 1.0, 1.0, reference.span_m, reference.chord_m, reference.span_m)
-    loads = [*aero["F_b"], *aero["M_b"]]
-    return np.array([np.asarray(load) / (force_scale * length) for load, length in zip(loads, lengths)])
+    lengths = (1.0, 1.0, 1.0, reference.span_m, reference.chord_m, reference.span_m, 1.0, 1.0, 1.0)
+    rows = [*loads["F_b"], *loads["M_b"], *loads["Fi_b"]]
+    return np.array([np.asarray(load, dtype=float) / (force_scale * length) for load, length in zip(rows, lengths)])
+
+
+def forward_loads(wings, body: BodyLoads) -> dict:
+    """The editor's forward model as body-axis loads: the lifting line's panels (their induced drag is panel forces with
+    their own arms) plus the bodies (body_loads, no lumped induced drag)."""
+    return {"F_b": wings.force_body_n + body.force_body_n, "M_b": wings.moment_body_nm + body.moment_body_nm,
+            "Fi_b": np.zeros_like(body.force_body_n)}
 
 
 class FlightAero:
     """Full flight envelope with the editor's interacting-wing model at forward, zero-sideslip points.
 
-    AeroBuildup supplies sideslip increments and damping. Normally the forward-model correction fades continuously
-    outside ±30 alpha / ±10 beta, reaching pure AeroBuildup at ±45 alpha / ±20 beta. Swept strips that reverse flow
-    inside ±30 alpha move the alpha blend earlier. The correction is held at its forward boundary before fading;
-    lifting line is never solved in backwards flow.
+    Outside the forward model, AeroBuildup answers the wings and body_loads the bodies (fuselage, pods, motor bells),
+    in the outer envelope and the rate damping alike (envelope_loads). Normally the forward-model correction fades continuously
+    outside ±30 alpha / ±10 beta, reaching pure AeroBuildup at ±45 alpha / ±20 beta: this suits airframes whose
+    response really is asymmetric (a wing and a fin). Swept strips that reverse flow inside ±30 alpha move the alpha
+    blend earlier. The correction is held at its forward boundary before fading; lifting line is never solved in
+    backwards flow.
+
+    On an airframe that repeats every quarter turn about x (rotationally_symmetric), sideslip is instead answered as
+    the pitch plane rolled: the flow at (alpha, beta) has the total angle sigma from x and the clock angle phi about
+    x, and the model's pitch-plane answer at sigma, rolled by phi, is what the flow sees. AeroBuildup's own sideslip
+    answer would be used otherwise, and on these airframes it is unstable at flight speeds where the lifting-line
+    pitch answer is stable (the same airframe rolled must be stable too) and lacks the fin-body interference. At
+    beta = 0 this is exactly the pitch-plane blend below, so pitch is unchanged.
     """
 
     def __init__(self, resolved: ResolvedAirframe):
         self.resolved = resolved
         self.speeds_m_s = aero_speeds_m_s(resolved)
-        self.forward = ForwardAero(resolved)
-        self.airplane = build_asb_airplane(resolved)
-        self.atmosphere = asb.Atmosphere(altitude=resolved.airframe.operating_point.altitude_m)
+        self.forward = ForwardAero(resolved, TABLE_MOMENT_REFERENCE_M)
+        full = build_asb_airplane(resolved, TABLE_MOMENT_REFERENCE_M)
+        self.airplane = asb.Airplane(name=full.name, xyz_ref=full.xyz_ref, s_ref=full.s_ref, c_ref=full.c_ref, b_ref=full.b_ref, wings=full.wings)
+        self.fuselages = full.fuselages
+        self.atmosphere = asb.Atmosphere(altitude=resolved.airframe.operating_point.altitude_m, method="isa")
+        self.rotationally_symmetric = rotationally_symmetric(resolved)
         self.forward_alpha_limit_deg = FORWARD_ALPHA_LIMIT_DEG
         self.envelope_alpha_end_deg = ENVELOPE_ALPHA_END_DEG
         strip_forward = self.forward.mesh.forward
@@ -304,39 +347,193 @@ class FlightAero:
             for wing, numbers in enumerate(self.forward.hybrid.controls):
                 if any(number in deflections for number in numbers):
                     airplane = with_side_deflections(airplane, wing, *(envelope_deflections.get(number, 0.0) for number in numbers))
+        if self.rotationally_symmetric:
+            return self.rolled_by_sideslip(airplane, speed, alpha, beta, deflections).reshape(len(SOLVED_COEFFICIENTS), *shape)
         weight = (np.clip((self.envelope_alpha_end_deg - np.abs(alpha)) / (self.envelope_alpha_end_deg - self.forward_alpha_limit_deg), 0, 1)
                   * np.clip((ENVELOPE_BETA_END_DEG - np.abs(beta)) / (ENVELOPE_BETA_END_DEG - FORWARD_BETA_LIMIT_DEG), 0, 1))
         exact = (weight == 1) & (beta == 0)
-        values = np.empty((6, len(speed)))
+        values = np.empty((len(SOLVED_COEFFICIENTS), len(speed)))
         outer = ~exact
         if np.any(outer):
             point = asb.OperatingPoint(atmosphere=self.atmosphere, velocity=speed[outer], alpha=alpha[outer], beta=beta[outer])
-            values[:, outer] = body_coefficients(asb.AeroBuildup(airplane=airplane, op_point=point, model_size=AERO_MODEL_SIZE).run(), point, self.resolved)
+            values[:, outer] = body_coefficients(self.envelope_loads(airplane, point, speed[outer], alpha[outer], beta[outer]), point, self.resolved)
         for velocity in np.unique(speed[weight > 0]):
             indices = np.flatnonzero((speed == velocity) & (weight > 0))
             angles, inverse = np.unique(np.clip(alpha[indices], -self.forward_alpha_limit_deg, self.forward_alpha_limit_deg), return_inverse=True)
             wings, body = self.forward.run(self.atmosphere, velocity, angles, deflections)
             forward_point = asb.OperatingPoint(atmosphere=self.atmosphere, velocity=velocity, alpha=angles)
-            forward_loads = {"F_b": wings.force_body_n + np.asarray(body["F_b"]), "M_b": wings.moment_body_nm + np.asarray(body["M_b"])}
-            corrected = body_coefficients(forward_loads, forward_point, self.resolved)
+            corrected = body_coefficients(forward_loads(wings, body), forward_point, self.resolved)
             direct = exact[indices]
             values[:, indices[direct]] = corrected[:, inverse[direct]]
             if np.any(~direct):
                 used, mapping = np.unique(inverse[~direct], return_inverse=True)
                 point = asb.OperatingPoint(atmosphere=self.atmosphere, velocity=velocity, alpha=angles[used])
-                baseline = body_coefficients(asb.AeroBuildup(airplane=airplane, op_point=point, model_size=AERO_MODEL_SIZE).run(), point, self.resolved)
+                baseline = body_coefficients(self.envelope_loads(airplane, point, velocity, angles[used], 0.0), point, self.resolved)
                 values[:, indices[~direct]] += (corrected[:, used] - baseline)[:, mapping] * weight[indices[~direct]]
-        return values.reshape(6, *shape)
+        return values.reshape(len(SOLVED_COEFFICIENTS), *shape)
+
+    def envelope_loads(self, airplane: asb.Airplane, op_point: asb.OperatingPoint, speed, alpha, beta) -> dict:
+        """Body-axis loads (buildup_loads form) of the outer model at op_point: AeroBuildup on airplane's wings plus
+        body_loads on the bodies, both about TABLE_MOMENT_REFERENCE_M."""
+        wings = buildup_loads(asb.AeroBuildup(airplane=airplane, op_point=op_point, model_size=AERO_MODEL_SIZE).run(), op_point)
+        bodies = body_loads(self.fuselages, self.atmosphere, speed, alpha, beta, TABLE_MOMENT_REFERENCE_M)
+        return {"F_b": np.asarray(wings["F_b"], dtype=float) + bodies.force_body_n, "M_b": np.asarray(wings["M_b"], dtype=float) + bodies.moment_body_nm,
+                "Fi_b": np.asarray(wings["Fi_b"], dtype=float)}
+
+    def rolled_by_sideslip(self, airplane: asb.Airplane, speed, alpha, beta, deflections) -> np.ndarray:
+        """(9, points) SOLVED_COEFFICIENTS of a rotationally symmetric airframe at (alpha, beta), from its pitch plane.
+
+        The flow at (alpha, beta) is (cos a cos b, sin b, sin a cos b): the total angle sigma from the x axis, at the
+        clock angle phi = atan2(-sin beta, sin alpha cos beta) from the pitch-plane flow at the same sigma. The
+        airframe's answer to that flow is its pitch-plane answer at sigma (AeroBuildup plus the lifting line's
+        correction, fading at the same limits sigma reaches), rolled by phi. Checked against AeroBuildup itself on a
+        body of revolution: the rolled pitch-plane loads match the direct ones exactly.
+        """
+        alpha_radians, beta_radians = np.radians(alpha), np.radians(beta)
+        sigma = np.degrees(np.arccos(np.clip(np.cos(alpha_radians) * np.cos(beta_radians), -1.0, 1.0)))
+        phi = np.arctan2(-np.sin(beta_radians), np.sin(alpha_radians) * np.cos(beta_radians))
+        weight = np.clip((self.envelope_alpha_end_deg - np.abs(sigma)) / (self.envelope_alpha_end_deg - self.forward_alpha_limit_deg), 0, 1)
+        point = asb.OperatingPoint(atmosphere=self.atmosphere, velocity=speed, alpha=sigma)
+        aero = self.envelope_loads(airplane, point, speed, sigma, 0.0)
+        loads = np.array([*aero["F_b"], *aero["M_b"], *aero["Fi_b"]], dtype=float)
+        for velocity in np.unique(speed[weight > 0]):
+            indices = np.flatnonzero((speed == velocity) & (weight > 0))
+            angles, inverse = np.unique(np.clip(sigma[indices], -self.forward_alpha_limit_deg, self.forward_alpha_limit_deg), return_inverse=True)
+            wings, body = self.forward.run(self.atmosphere, velocity, angles, deflections)
+            base_point = asb.OperatingPoint(atmosphere=self.atmosphere, velocity=velocity, alpha=angles)
+            ahead = forward_loads(wings, body)
+            forward = np.array([*ahead["F_b"], *ahead["M_b"], *ahead["Fi_b"]], dtype=float)
+            base = self.envelope_loads(airplane, base_point, velocity, angles, 0.0)
+            baseline = np.array([*base["F_b"], *base["M_b"], *base["Fi_b"]], dtype=float)
+            loads[:, indices] += (forward[:, inverse] - baseline[:, inverse]) * weight[indices]
+        cos_phi, sin_phi = np.cos(phi), np.sin(phi)
+        for first, second in ((1, 2), (4, 5), (7, 8)):  # the y/z force axes, the pitch/yaw moment axes, the induced drag's y/z
+            y, z = loads[first].copy(), loads[second].copy()
+            loads[first], loads[second] = cos_phi * y - sin_phi * z, sin_phi * y + cos_phi * z
+        return body_coefficients({"F_b": loads[:3], "M_b": loads[3:6], "Fi_b": loads[6:]}, point, self.resolved)
+
+
+class BuildProgress:
+    """A rebuild's stage, task counts and reuse, as a small JSON in the export directory: the SIM panel shows it as
+    its model-build section while the runner next to it solves, and what the last build reused."""
+
+    def __init__(self, path: Path, workers: int):
+        self.path, self.workers = path, workers
+        self.started = time.monotonic()
+        self.stage, self.detail, self.done, self.total = "starting", "", 0, 0
+        self.cached: list[str] = []
+        self.finished = self.failed = False
+        self._write()
+
+    def stage_started(self, stage: str, total: int) -> None:
+        self.stage, self.detail, self.done, self.total = stage, "", 0, total
+        self._write()
+
+    def step(self, detail: str) -> None:
+        self.done += 1
+        self.detail = detail
+        self._write()
+
+    def reused(self, detail: str) -> None:
+        self.cached.append(detail)
+        self.detail = detail
+        self._write()
+
+    def skipped(self) -> None:
+        """The assembled export matched its fingerprint: nothing needed solving at all."""
+        self.stage, self.detail, self.finished = "model reused", "nothing to solve", True
+        self._write()
+
+    def finish(self, failed: bool = False) -> None:
+        self.finished, self.failed, self.detail = True, failed, ""
+        self._write()
+
+    def _write(self) -> None:
+        payload = {"stage": self.stage, "detail": self.detail, "done": self.done, "total": self.total,
+                   "workers": self.workers, "elapsed_s": round(time.monotonic() - self.started, 1),
+                   "cached": list(self.cached), "finished": self.finished, "failed": self.failed}
+        self.path.parent.mkdir(parents=True, exist_ok=True)
+        temporary = self.path.with_suffix(".tmp")
+        temporary.write_text(json.dumps(payload) + "\n")
+        temporary.replace(self.path)
+
+
+def read_build_progress(path: Path) -> dict | None:
+    """The export directory's build record, for the SIM panel; None when there is none or it is unreadable."""
+    if not path.is_file():
+        return None
+    try:
+        payload = json.loads(path.read_text())
+    except (OSError, ValueError):
+        return None
+    return payload if isinstance(payload, dict) else None
+
+
+WORKER: dict[str, object] = {}  # this process's own FlightAero (and base pass): a pool worker's, or the sequential path's
+
+
+def worker_start(resolved: ResolvedAirframe, base: tuple | None = None) -> None:
+    """A solve process's own FlightAero, and for control solves the shared undeflected base pass."""
+    WORKER["model"] = FlightAero(resolved)
+    if base is not None:
+        WORKER["base"] = base
+
+
+def solve_body_slice(speed, alpha, beta):
+    """One airspeed slice of the body grid: the pool task, and what the sequential path calls too."""
+    return WORKER["model"].run(speed, alpha, beta)
+
+
+def solve_control(number: int, deflection: float, solved: float):
+    """One control's increment array at one deflection over the shared base: the pool task, or the sequential call."""
+    speed, alpha, base = WORKER["base"]
+    if not deflection:
+        return np.zeros_like(base)
+    return WORKER["model"].run(speed, alpha, deflections={number: float(deflection)}, envelope_deflections={number: solved}) - base
+
+
+def solve_factor(wing: int) -> float:
+    """One wing's finite-wing factor: the pool task, or the sequential call (the probe is built from the model)."""
+    model = WORKER["model"]
+    probe_point = asb.OperatingPoint(atmosphere=model.atmosphere, velocity=model.speeds_m_s,
+                                     alpha=np.full(len(model.speeds_m_s), CONTROL_FACTOR_AOA_DEG))
+    return finite_wing_factor(model.airplane, wing, lambda plane: body_coefficients(
+        buildup_loads(asb.AeroBuildup(airplane=plane, op_point=probe_point, model_size=AERO_MODEL_SIZE).run(), probe_point), probe_point, model.resolved))
+
+
+def solve_tasks(kind: str, tasks: list[tuple], workers: int, resolved: ResolvedAirframe, progress: BuildProgress | None,
+                labels: list[str]) -> list:
+    """Solve tasks ('factor' or 'control') in worker processes when workers > 1, else here. Both paths call the very
+    same solve functions, so the results never depend on the worker count."""
+    solve = solve_factor if kind == "factor" else solve_control
+    if workers > 1 and len(tasks) > 1:
+        with ProcessPoolExecutor(max_workers=min(workers, len(tasks)), initializer=worker_start,
+                                 initargs=(resolved, WORKER.get("base"))) as pool:
+            futures = {pool.submit(solve, *args): index for index, args in enumerate(tasks)}
+            results: list = [None] * len(tasks)
+            for future in as_completed(futures):
+                index = futures[future]
+                results[index] = future.result()
+                if progress is not None:
+                    progress.step(labels[index])
+        return results
+    results = []
+    for index, args in enumerate(tasks):
+        results.append(solve(*args))
+        if progress is not None:
+            progress.step(labels[index])
+    return results
 
 
 class TableCache:
     """The solved aero tables kept next to the export, each under a fingerprint of exactly what that solve reads
     (aero_fingerprint plus the control, deflection and solved value): an edit recomputes the solves that read it and
-    reuses the rest, instead of all of them because one field somewhere in the airframe moved."""
+    reuses the rest. A save keeps the entries this build read or wrote, nothing else."""
 
     def __init__(self, path: Path):
         self.path = path
         self.entries: dict[str, object] = {}
+        self.used: set[str] = set()
         if path.is_file():
             try:
                 with path.open("rb") as file:
@@ -345,18 +542,20 @@ class TableCache:
                 print(f"  table cache {path.name} unreadable ({error}); solving everything again", flush=True)
 
     def get(self, key: str):
-        return self.entries.get(key)
+        value = self.entries.get(key)
+        if value is not None:
+            self.used.add(key)
+        return value
 
     def put(self, key: str, value) -> None:
-        while key not in self.entries and len(self.entries) >= TABLE_CACHE_LIMIT:
-            del self.entries[next(iter(self.entries))]  # oldest entry first
         self.entries[key] = value
+        self.used.add(key)
 
     def save(self) -> None:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         temporary = self.path.with_suffix(".tmp")
         with temporary.open("wb") as file:
-            pickle.dump(self.entries, file)
+            pickle.dump({key: value for key, value in self.entries.items() if key in self.used}, file)
         temporary.replace(self.path)  # atomic: a run cut short leaves the old cache, never half of a new one
 
 
@@ -371,16 +570,15 @@ def aero_surface(definition):
 
 
 def aero_fingerprint(resolved: ResolvedAirframe) -> str:
-    """Hash of what a solved table reads: the body, the surfaces as the aero sees them (aero_surface), the motor bells,
-    the CG the moments are taken about, the reference lengths, whether rocket motors add speed bands, the operating
-    altitude, the library versions and the export code. Nothing else reaches these solves: masses, parts, the printed
-    structure, access and the electric system arrive only through cg_m."""
+    """Hash of what the static and control tables read: the body, the surfaces as the aero sees them (aero_surface), the
+    motor bells, the reference lengths, whether rocket motors add speed bands, the operating altitude, the library
+    versions and the export code. Their moments are about TABLE_MOMENT_REFERENCE_M, so masses and the CG do not reach
+    them."""
     digest = hashlib.sha256()
     digest.update(f"asb {asb.__version__} neuralfoil {neuralfoil.__version__}".encode())
     feed_canonical(digest, resolved.body)
     feed_canonical(digest, tuple(aero_surface(surface_set.definition) for surface_set in resolved.surfaces))
     feed_canonical(digest, resolved.motors)
-    feed_canonical(digest, resolved.cg_m)
     feed_canonical(digest, resolved.reference)
     digest.update(f"rockets {bool(resolved.rockets)}".encode())
     feed_canonical(digest, resolved.airframe.operating_point.altitude_m)
@@ -388,27 +586,79 @@ def aero_fingerprint(resolved: ResolvedAirframe) -> str:
     return digest.hexdigest()
 
 
+def moments_about(values: np.ndarray, from_point, to_point, resolved: ResolvedAirframe) -> np.ndarray:
+    """(9, ...) SOLVED_COEFFICIENTS with the moments moved from from_point to to_point (geometry axes): M_to = M_from +
+    r x F, r = from_point - to_point in body axes (x forward, y right, z down), F without AeroBuildup's induced drag,
+    which stays acting through to_point. Forces are unchanged."""
+    reference = resolved.reference
+    rx, ry, rz = -(from_point[0] - to_point[0]), from_point[1] - to_point[1], -(from_point[2] - to_point[2])
+    cx, cy, cz, cl, cm, cn, ix, iy, iz = values
+    fx, fy, fz = cx - ix, cy - iy, cz - iz
+    return np.array([cx, cy, cz,
+                     cl + (ry * fz - rz * fy) / reference.span_m,
+                     cm + (rz * fx - rx * fz) / reference.chord_m,
+                     cn + (rx * fy - ry * fx) / reference.span_m,
+                     ix, iy, iz])
+
+
 def aero_tables(resolved: ResolvedAirframe, model: FlightAero | None = None, cache: TableCache | None = None,
-                key: str | None = None) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
-    """Body-axis coefficients on the airspeed x AoA x sideslip grid, and the damping derivatives on the airspeed x AoA
-    grid at sideslip 0. cache and key (aero_fingerprint): an unchanged body reuses the solved tables."""
-    entry = None if cache is None or key is None else cache.get(f"{key}:body")
-    if entry is not None:
-        print("  body aero tables reused", flush=True)
-        return entry
+                key: str | None = None, workers: int = 1, progress: BuildProgress | None = None) -> tuple[dict[str, np.ndarray], dict[str, np.ndarray]]:
+    """Body-axis coefficients on the airspeed x AoA x sideslip grid with moments about the CG, and the damping
+    derivatives about the CG on the airspeed x AoA grid at sideslip 0. cache and key (aero_fingerprint): the static grid
+    is kept about TABLE_MOMENT_REFERENCE_M and reused by any design with the same aero; the damping is kept under the
+    key plus the CG. workers > 1 solves the airspeed slices in parallel processes (the results do not depend on the
+    worker count); progress: the build record the SIM panel shows."""
     model = model or FlightAero(resolved)
-    print("  body aero tables...", flush=True)
-    stage = time.monotonic()
-    airplane, atmosphere = model.airplane, model.atmosphere
     speeds = model.speeds_m_s
-    speed, alpha, beta = np.meshgrid(speeds, AERO_ALPHA_DEG, AERO_BETA_DEG, indexing="ij")
-    values = model.run(speed, alpha, beta)
-    tables = {name: values[index].reshape(speed.shape) for index, name in enumerate(CONTROL_COEFFICIENTS)}
-    speed, alpha = np.meshgrid(speeds, AERO_ALPHA_DEG, indexing="ij")
-    rates = asb.AeroBuildup(
-        airplane=airplane, op_point=asb.OperatingPoint(atmosphere=atmosphere, velocity=speed.ravel(), alpha=alpha.ravel()), model_size=AERO_MODEL_SIZE,
-    ).run_with_stability_derivatives(alpha=False, beta=False, p=True, q=True, r=True)
-    dampers = {name: np.asarray(rates[name]).reshape(speed.shape) for name in ("Clp", "Cmq", "Cnr")}
+    values = None if cache is None or key is None else cache.get(f"{key}:body")
+    if values is not None:
+        print("  body aero tables reused", flush=True)
+        if progress is not None:
+            progress.reused("body aero tables")
+    else:
+        print("  body aero tables...", flush=True)
+        stage = time.monotonic()
+        speed, alpha, beta = np.meshgrid(speeds, AERO_ALPHA_DEG, AERO_BETA_DEG, indexing="ij")
+        boundaries = np.linspace(0, len(speeds), min(max(workers, 1), len(speeds)) + 1).astype(int)
+        slices = [(speed[start:end], alpha[start:end], beta[start:end]) for start, end in zip(boundaries[:-1], boundaries[1:])]
+        if progress is not None:
+            progress.stage_started("body aero tables", len(slices))
+        if workers > 1 and len(slices) > 1:
+            results: list = [None] * len(slices)
+            with ProcessPoolExecutor(max_workers=len(slices), initializer=worker_start, initargs=(resolved,)) as pool:
+                futures = {pool.submit(solve_body_slice, *chunk): index for index, chunk in enumerate(slices)}
+                for future in as_completed(futures):
+                    index = futures[future]
+                    results[index] = future.result()
+                    if progress is not None:
+                        progress.step(f"airspeeds {speeds[boundaries[index]]:g}-{speeds[boundaries[index + 1] - 1]:g} m/s")
+            values = np.concatenate(results, axis=1).reshape(len(SOLVED_COEFFICIENTS), *speed.shape)
+        else:
+            WORKER["model"] = model
+            values = solve_body_slice(speed, alpha, beta).reshape(len(SOLVED_COEFFICIENTS), *speed.shape)
+            if progress is not None:
+                progress.step(f"airspeeds {speeds[0]:g}-{speeds[-1]:g} m/s")
+        print(f"  body aero tables done ({time.monotonic() - stage:.0f} s)", flush=True)
+        if cache is not None and key is not None:
+            cache.put(f"{key}:body", values)
+            cache.save()
+    about_cg = moments_about(values, TABLE_MOMENT_REFERENCE_M, resolved.cg_m, resolved)
+    tables = {name: about_cg[index] for index, name in enumerate(CONTROL_COEFFICIENTS)}
+
+    damping_key = None if key is None else f"{key}:damping:{hashlib.sha256(repr(tuple(resolved.cg_m)).encode()).hexdigest()}"
+    dampers = None if cache is None or damping_key is None else cache.get(damping_key)
+    if dampers is None:
+        speed, alpha = np.meshgrid(speeds, AERO_ALPHA_DEG, indexing="ij")
+        about_cg = build_asb_airplane(resolved, resolved.cg_m)
+        wings = asb.Airplane(name=about_cg.name, xyz_ref=about_cg.xyz_ref, s_ref=about_cg.s_ref, c_ref=about_cg.c_ref, b_ref=about_cg.b_ref, wings=about_cg.wings)
+        rates = asb.AeroBuildup(
+            airplane=wings, model_size=AERO_MODEL_SIZE,
+            op_point=asb.OperatingPoint(atmosphere=model.atmosphere, velocity=speed.ravel(), alpha=alpha.ravel()),
+        ).run_with_stability_derivatives(alpha=False, beta=False, p=True, q=True, r=True)
+        bodies = body_rate_derivatives(about_cg.fuselages, model.atmosphere, speed.ravel(), alpha.ravel(), resolved.cg_m, resolved.reference)
+        dampers = {name: (np.asarray(rates[name], dtype=float) + bodies[name]).reshape(speed.shape) for name in ("Clp", "Cmq", "Cnr")}
+        if cache is not None and damping_key is not None:
+            cache.put(damping_key, dampers)
     for name, table in (*tables.items(), *dampers.items()):
         if not np.all(np.isfinite(table)):
             invalid = np.argwhere(~np.isfinite(table))
@@ -416,10 +666,6 @@ def aero_tables(resolved: ResolvedAirframe, model: FlightAero | None = None, cac
             sideslip = f", sideslip {AERO_BETA_DEG[index[2]]:g} deg" if table.ndim == 3 else ""
             raise ValueError(f"Flight aero returned non-finite {name} at {speeds[index[0]]:g} m/s, "
                              f"AoA {AERO_ALPHA_DEG[index[1]]:g} deg{sideslip}; {len(invalid)} invalid grid points")
-    print(f"  body aero tables done ({time.monotonic() - stage:.0f} s)", flush=True)
-    if cache is not None and key is not None:
-        cache.put(f"{key}:body", (tables, dampers))
-        cache.save()
     return tables, dampers
 
 
@@ -439,76 +685,127 @@ def finite_wing_factor(airplane: asb.Airplane, wing: int, run) -> float:
 
 
 def control_tables(resolved: ResolvedAirframe, model: FlightAero | None = None, cache: TableCache | None = None,
-                   key: str | None = None) -> list[ControlTable]:
+                   key: str | None = None, workers: int = 1, progress: BuildProgress | None = None) -> list[ControlTable]:
     """Each control's increments over the undeflected aircraft, shared FlightAero at sideslip 0.
     Only the outer-envelope AeroBuildup deflection uses finite_wing_factor. An XZ-mirrored pair is one ASB wing, each side deflected alone
     (SideControlSurface). cache and key (aero_fingerprint): the undeflected pass, each wing's factor and each deflection's
-    solved increments are kept separately, so changed deflection limits re-solve only the deflections they added."""
+    solved increments are kept separately (moments about TABLE_MOMENT_REFERENCE_M), so changed deflection limits re-solve
+    only the deflections they added; the tables returned have their moments about the CG. workers > 1 solves the missing tasks in parallel processes (the results do not depend on the worker count);
+    progress: the build record the SIM panel shows."""
     if not resolved.controls:
         return []
     model = model or FlightAero(resolved)
     hybrid = model.forward.hybrid
-    probe_point = asb.OperatingPoint(atmosphere=model.atmosphere, velocity=model.speeds_m_s, alpha=np.full(len(model.speeds_m_s), CONTROL_FACTOR_AOA_DEG))
     speed, alpha = np.meshgrid(model.speeds_m_s, AERO_ALPHA_DEG, indexing="ij")
-    base = None if cache is None or key is None else cache.get(f"{key}:control-base")
+    base_key = None if key is None else f"{key}:control-base"
+    base = None if cache is None or base_key is None else cache.get(base_key)
     if base is None:
         base = model.run(speed, alpha)
-        if cache is not None and key is not None:
-            cache.put(f"{key}:control-base", base)
+        if cache is not None and base_key is not None:
+            cache.put(base_key, base)
+            cache.save()
+    WORKER["model"] = model  # the sequential path solves in this process; pool workers build their own in worker_start
+    WORKER["base"] = (speed, alpha, base)
     near = np.abs(AERO_ALPHA_DEG) <= CONTROL_DERIVATIVE_AOA_DEG
     placements = {control.number: control for control in resolved.controls}
-    tables = []
     print(f"  control tables ({len(resolved.controls)} controls)...", flush=True)
+
+    # What each wing solves at (the ladder), and its finite-wing factor: a deflection's envelope deflection is the
+    # factor times the deflection, so the factors come first.
+    ladders: dict[int, np.ndarray] = {}
+    factors: dict[int, float] = {}
+    missing_factors: list[int] = []
     for wing, (owner, numbers) in enumerate(zip(hybrid.owners, hybrid.controls)):
         if not any(numbers):
             continue
-        surface_set = resolved.surfaces[owner]
-        definition = surface_set.definition.control
-        factor = None if cache is None or key is None else cache.get(f"{key}:wing{wing}-factor")
-        if factor is None:
-            factor = finite_wing_factor(model.airplane, wing, lambda plane: body_coefficients(
-                asb.AeroBuildup(airplane=plane, op_point=probe_point, model_size=AERO_MODEL_SIZE).run(), probe_point, resolved))
+        definition = resolved.surfaces[owner].definition.control
+        ladders[wing] = np.unique([0.0, definition.deflection_min_deg, definition.deflection_max_deg,
+                                   *(-d for d in CONTROL_DEFLECTION_GRID_DEG if -d > definition.deflection_min_deg),
+                                   *(d for d in CONTROL_DEFLECTION_GRID_DEG if d < definition.deflection_max_deg)])
+        factor_key = None if key is None else f"{key}:wing{wing}-factor"
+        cached = None if cache is None or factor_key is None else cache.get(factor_key)
+        if cached is None:
+            missing_factors.append(wing)
+        else:
+            factors[wing] = cached
+            if progress is not None:
+                progress.reused(f"wing {wing} finite-wing factor")
+    if missing_factors:
+        if progress is not None:
+            progress.stage_started("control factors", len(missing_factors))
+        solved_factors = solve_tasks("factor", [(wing,) for wing in missing_factors], workers, resolved, progress,
+                                     [f"wing {wing} finite-wing factor" for wing in missing_factors])
+        for wing, value in zip(missing_factors, solved_factors):
+            factors[wing] = value
             if cache is not None and key is not None:
-                cache.put(f"{key}:wing{wing}-factor", factor)
-        deflections = np.unique([0.0, definition.deflection_min_deg, definition.deflection_max_deg,
-                                 *(-d for d in CONTROL_DEFLECTION_GRID_DEG if -d > definition.deflection_min_deg),
-                                 *(d for d in CONTROL_DEFLECTION_GRID_DEG if d < definition.deflection_max_deg)])
-        sides: list[list[np.ndarray]] = [[], []]  # own, mirror: (6, points) per deflection
-        reused = 0
-        for deflection in deflections:
-            solved = float(deflection * factor)
-            entry_key = None if key is None else f"{key}:wing{wing}-deflection{deflection:g}-solved{solved:.9g}"
-            entry = None if cache is None or entry_key is None else cache.get(entry_key)
-            if entry is None:
-                entry = tuple(model.run(speed, alpha, deflections={number: float(deflection)}, envelope_deflections={number: solved}) - base
-                              if number and deflection else (np.zeros_like(base) if number else None)
-                              for number in numbers)
-                if cache is not None and entry_key is not None:
-                    cache.put(entry_key, entry)
-            else:
-                reused += 1
-            for side, column in enumerate(entry):
-                if numbers[side]:
-                    sides[side].append(column)
+                cache.put(f"{key}:wing{wing}-factor", value)
         if cache is not None and key is not None:
             cache.save()
+
+    # The deflections the cache does not hold: one task per panel and deflection, independent of each other.
+    def deflection_key(wing: int, deflection: float) -> str | None:
+        return None if key is None else f"{key}:wing{wing}-deflection{deflection:g}-solved{float(deflection * factors[wing]):.9g}"
+
+    entries: dict[tuple[int, float], list] = {}  # (wing, deflection) -> own and mirror column, None where no control
+    reused_deflections: dict[int, int] = {}
+    pending: list[tuple] = []
+    pending_cells: list[tuple[int, float, int]] = []
+    for wing in sorted(ladders):
+        for value in ladders[wing]:
+            deflection = float(value)
+            cached = None if cache is None or key is None else cache.get(deflection_key(wing, deflection))
+            if cached is not None:
+                entries[(wing, deflection)] = list(cached)
+                reused_deflections[wing] = reused_deflections.get(wing, 0) + 1
+                if progress is not None:
+                    progress.reused(f"wing {wing} deflection {deflection:g} deg")
+                continue
+            entries[(wing, deflection)] = [None, None]
+            for side, number in enumerate(hybrid.controls[wing]):
+                if number:
+                    pending.append((number, deflection, float(deflection * factors[wing])))
+                    pending_cells.append((wing, deflection, side))
+    if pending:
+        if progress is not None:
+            progress.stage_started("control tables", len(pending))
+        labels = [f"C{number} wing {wing} at {deflection:g} deg"
+                  for (number, deflection, _solved), (wing, _d, _side) in zip(pending, pending_cells)]
+        for (wing, deflection, side), value in zip(pending_cells, solve_tasks("control", pending, workers, resolved, progress, labels)):
+            entries[(wing, deflection)][side] = value
+        if cache is not None and key is not None:
+            for wing, deflection in {(wing, deflection) for wing, deflection, _side in pending_cells}:
+                cache.put(deflection_key(wing, deflection), tuple(entries[(wing, deflection)]))
+            cache.save()
+
+    tables = []
+    for wing in sorted(ladders):
+        numbers = hybrid.controls[wing]
+        definition = resolved.surfaces[hybrid.owners[wing]].definition.control
+        deflections = ladders[wing]
+        sides: list[list[np.ndarray]] = [[], []]  # own, mirror: (6, points) per deflection
+        for value in deflections:
+            for side, column in enumerate(entries[(wing, float(value))]):
+                if numbers[side]:
+                    sides[side].append(column)
         neutral = int(np.flatnonzero(deflections == 0.0)[0])
         low, high = max(neutral - 1, 0), min(neutral + 1, len(deflections) - 1)  # the columns either side of neutral
         for number, columns in zip(numbers, sides):
             if not number:
                 continue
-            stacked = np.stack(columns, axis=-1).reshape(6, *speed.shape, len(deflections))  # (6, speed, AoA, deflection)
+            stacked = np.stack(columns, axis=-1).reshape(len(SOLVED_COEFFICIENTS), *speed.shape, len(deflections))  # (9, speed, AoA, deflection)
+            stacked = moments_about(stacked, TABLE_MOMENT_REFERENCE_M, resolved.cg_m, resolved)
             if not np.all(np.isfinite(stacked)):
                 raise ValueError(f"Flight aero returned non-finite control increments for C{number}")
             control = placements[number]
             tables.append(ControlTable(
                 number=number, label=f"C{number} {control.surface} panel {control.panel_index + 1}", servo=int(control.servo[1:]) - 1,
                 roles=definition.roles, deflection_min_deg=definition.deflection_min_deg, deflection_max_deg=definition.deflection_max_deg,
-                rate_deg_s=definition.rate_deg_s, finite_wing_factor=factor, deflection_deg=deflections,
+                rate_deg_s=definition.rate_deg_s, finite_wing_factor=factors[wing], deflection_deg=deflections,
                 increments={name: stacked[index] for index, name in enumerate(CONTROL_COEFFICIENTS)},
                 derivatives={name: float(np.mean(stacked[index][:, near, high] - stacked[index][:, near, low]) / (deflections[high] - deflections[low]))
                              for index, name in enumerate(CONTROL_COEFFICIENTS)},
             ))
+            reused = reused_deflections.get(wing, 0)
             if reused == len(deflections):
                 status = "reused"
             elif reused:
@@ -886,10 +1183,10 @@ def export_fingerprint(resolved: ResolvedAirframe, parts_data: dict, out_dir: Pa
 
 
 def reuse_or_export(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, model_name: str,
-                    pack_voltage_v: float | None = None) -> tuple[JSBSimExport, bool]:
+                    pack_voltage_v: float | None = None, workers: int = DEFAULT_WORKERS) -> tuple[JSBSimExport, bool]:
     """(export, reused): the export already in out_dir when nothing it depends on changed (export_fingerprint), otherwise
     the model re-emitted there with every solved table whose own inputs (aero_fingerprint) did not change taken from the
-    table cache."""
+    table cache. workers > 1 solves the missing tables in parallel processes."""
     electric = None if resolved.airframe.propulsion is None else resolved.airframe.propulsion.electric
     if electric is not None and electric.esc is None:
         raise ExportError(f"{resolved.airframe.name}: the electric system has no ESC part placed; the simulation needs one (Propulsion tab, ESC)")
@@ -897,7 +1194,9 @@ def reuse_or_export(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path,
     fingerprint_path, cache_path = out_dir / EXPORT_FINGERPRINT_FILE, out_dir / EXPORT_CACHE_FILE
     if fingerprint_path.is_file() and fingerprint_path.read_text() == fingerprint and cache_path.is_file():
         with open(cache_path, "rb") as file:
-            return pickle.load(file), True
+            export = pickle.load(file)
+        BuildProgress(out_dir / EXPORT_PROGRESS_FILE, workers).skipped()
+        return export, True
     # everything left over from an earlier model name, except the solved tables: those are reused whenever their own
     # input fingerprints match (TableCache, aero_fingerprint)
     out_dir.mkdir(parents=True, exist_ok=True)
@@ -908,10 +1207,10 @@ def reuse_or_export(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path,
             shutil.rmtree(stale, ignore_errors=True)
         else:
             stale.unlink(missing_ok=True)
-    print("JSBSim model: rebuilding for the current airframe and code; solving the tables whose own inputs changed, "
-          "the rest come from the table cache (this can take minutes)", flush=True)
+    print(f"JSBSim model: rebuilding for the current airframe and code with {workers} worker(s); solving the tables "
+          "whose own inputs changed, the rest come from the table cache (this can take minutes)", flush=True)
     started = time.monotonic()
-    export = export_jsbsim(resolved, parts_data, out_dir, model_name, pack_voltage_v)
+    export = export_jsbsim(resolved, parts_data, out_dir, model_name, pack_voltage_v, workers)
     print(f"JSBSim model: exported in {time.monotonic() - started:.0f} s", flush=True)
     with open(cache_path, "wb") as file:
         pickle.dump(export, file)
@@ -920,9 +1219,11 @@ def reuse_or_export(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path,
 
 
 @threadpool_limits.wrap(limits=1, user_api="blas")
-def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, model_name: str, pack_voltage_v: float | None = None) -> JSBSimExport:
+def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, model_name: str, pack_voltage_v: float | None = None,
+                  workers: int = DEFAULT_WORKERS) -> JSBSimExport:
     """pack_voltage_v: battery voltage for the motors (default: nominal). The motor command is the duty, so a lower pack
-    gives proportionally less motor voltage per command, as an ESC."""
+    gives proportionally less motor voltage per command, as an ESC. workers > 1 solves the aero tables in parallel
+    processes; the build's stage and counts are written next to the export (EXPORT_PROGRESS_FILE) as they go."""
     airframe = resolved.airframe
     if airframe.vtol and not airframe.tailsitter:
         raise ExportError(f"{airframe.name}: INAV export of VTOL types other than tailsitter is not implemented")
@@ -970,9 +1271,15 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
     </contact>""" for index, (x, y, z) in enumerate(contacts))
     aero_model = FlightAero(resolved)
     cache, key = TableCache(out_dir / TABLE_CACHE_FILE), aero_fingerprint(resolved)
-    tables, rates = aero_tables(resolved, aero_model, cache, key)
-    controls = control_tables(resolved, aero_model, cache, key)
-    cache.save()
+    progress = BuildProgress(out_dir / EXPORT_PROGRESS_FILE, workers)
+    try:
+        tables, rates = aero_tables(resolved, aero_model, cache, key, workers, progress)
+        controls = control_tables(resolved, aero_model, cache, key, workers, progress)
+        cache.save()
+    except BaseException:
+        progress.finish(failed=True)  # the SIM panel shows the failure; the error itself is re-raised untouched
+        raise
+    progress.finish()
     servos = servo_mix(resolved, controls)
     speeds = aero_model.speeds_m_s
     forces = {"X": "CX", "Y": "CY", "Z": "CZ"}
@@ -986,7 +1293,7 @@ def export_jsbsim(resolved: ResolvedAirframe, parts_data: dict, out_dir: Path, m
     for axis, (name, length) in moments.items():
         damper, damper_length, rate_scale, rate = dampers[axis]
         damping_xml = coefficient_xml(
-            damper, f"{damper} (AeroBuildup, sideslip 0)",
+            damper, f"{damper} (AeroBuildup wings plus body_loads bodies, sideslip 0)",
             f"<property>aero/qbar-area</property> <property>{damper_length}</property> <property>{rate_scale}</property> <property>{rate}</property>",
             table_xml(ALPHA_RAD_ROWS, airspeed_fps(speeds), rates[damper].T),
         )

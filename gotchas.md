@@ -30,3 +30,7 @@
 - Never run a full JSBSim export (minutes) for a throwaway or fixture copy, and never two at once. If a build is needed, build the real aircraft project and leave its export in place.
 - Before any sim run, CLI flight or suite on a project, check its JSBSim fingerprint is current (export_fingerprint vs jsbsim/export.fingerprint, a cheap check). If it would rebuild, stop and ask; never start a run that rebuilds, and never kill one mid-export: the export deletes the old fingerprint first, so an interrupted rebuild throws the old model away.
 - Any edit to code the export reaches (libs/jsbsim.py, geometry, aero, airframe, propulsion, rocketmotors, motorlib), even a variable rename, invalidates every aircraft's model. Avoid such edits unless they are the task.
+- A spinning rocket (fin cant, ~1000 deg/s roll) is intended, not a fault. Ask before treating a design behaviour as a defect.
+- A wild sim result after burnout: check the mechanical energy budget (translational + potential + rotational) first. In still air it can only fall; a rise means the model does work (swagger: a near-singular lifting-line solve at ~14 deg, spikes in the static tables).
+- Never run asb.VortexLatticeMethod finer than 24x8 here: its dense matrix grows with the panel count squared; 48x12 on a four-fin airframe took 41 GB and was OOM-killed.
+- webapp.test_sim flies the real aircraft/example: after any export-code change it rebuilds example's JSBSim model (~4 min on 2 CPUs). Check the fingerprint before running it.

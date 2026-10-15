@@ -30,6 +30,7 @@ if str(ROOT) not in sys.path:  # runnable from anywhere
 
 from aiohttp.test_utils import TestClient, TestServer  # noqa: E402
 
+from libs.jsbsim import DEFAULT_WORKERS, MAX_WORKERS  # noqa: E402
 from libs.project import Project  # noqa: E402
 from libs.simrun import KNOT_M_S, add_start_arguments, apply_start_defaults, resolve_start, start_line  # noqa: E402
 from webapp import sim  # noqa: E402
@@ -83,15 +84,25 @@ def check_argv(state: AppState) -> None:
     """Both controllers select scripts through the same CLI and scheduler arguments."""
     command, status, shown, log_path = sim._plan(state, {
         "controller": "mcu", "scenario": "level", "clock": "stepped", "start": "air",
-        "conditions": {"alt": "100", "roll": "5"}, "duration": "2",
+        "conditions": {"alt": "100", "roll": "5"}, "duration": "2", "workers": 1,
     })
     assert command == [
         sys.executable, "-u", str(ROOT / "sim_flight.py"), str(state.project.root), "level",
-        "--controller", "mcu", "--start", "air", "--clock", "stepped", "--rate", "200", "--duration", "2",
+        "--controller", "mcu", "--start", "air", "--clock", "stepped", "--rate", "200", "--duration", "2", "--workers", "1",
         "--alt", "100", "--roll", "5",
     ], command
     assert status == "Running mcu: level..." and log_path == state.project.logs_dir / "mcu_level_air.csv"
-    assert shown == f"python sim_flight.py {os.path.relpath(state.project.root, ROOT)} level --controller mcu --start air --clock stepped --rate 200 --duration 2 --alt 100 --roll 5", shown
+    assert shown == f"python sim_flight.py {os.path.relpath(state.project.root, ROOT)} level --controller mcu --start air --clock stepped --rate 200 --duration 2 --workers 1 --alt 100 --roll 5", shown
+
+    command, _, _, _ = sim._plan(state, {"controller": "mcu", "scenario": "level", "start": "air"})
+    assert command[command.index("--workers") + 1] == str(DEFAULT_WORKERS), command
+    command, _, _, _ = sim._plan(state, {"controller": "mcu", "scenario": "level", "start": "air", "workers": MAX_WORKERS + 1})
+    assert command[command.index("--workers") + 1] == str(MAX_WORKERS), command  # more than the cap is clamped to it
+    try:
+        sim._plan(state, {"controller": "mcu", "scenario": "level", "start": "air", "workers": 0})
+        raise AssertionError("workers 0 was accepted")
+    except sim._Refused as refused:
+        assert "at least 1" in str(refused), refused
 
     command, status, shown, log_path = sim._plan(state, {
         "controller": "inav", "scenario": "efficiency", "start": "air",
@@ -100,6 +111,7 @@ def check_argv(state: AppState) -> None:
     assert command == [
         sys.executable, "-u", str(ROOT / "sim_flight.py"), str(state.project.root), "efficiency",
         "--controller", "inav", "--start", "air", "--clock", "realtime", "--rate", "200", "--duration", "600",
+        "--workers", str(DEFAULT_WORKERS),
         "--alt", "100", "--wind-from", "270", "--inav-config", str(state.project.inav_dir / SITL_DIFF),
     ], command
     assert status == "Running inav: efficiency..." and log_path == state.project.logs_dir / "inav_efficiency_air.csv"
@@ -114,9 +126,10 @@ def check_launch_plan(state: AppState) -> None:
         })
         assert command == [
             sys.executable, "-u", str(ROOT / "sim_flight.py"), str(state.project.root), "controls", "--controller", "inav", "--start", start, "--clock", "realtime", "--rate", "200", "--duration", "600",
+            "--workers", str(DEFAULT_WORKERS),
         ], command
         assert status == "Running inav: controls..." and log_path == state.project.logs_dir / f"inav_controls_{start}.csv", (status, log_path)
-        assert shown == f"python sim_flight.py {os.path.relpath(state.project.root, ROOT)} controls --controller inav --start {start} --clock realtime --rate 200 --duration 600", shown
+        assert shown == f"python sim_flight.py {os.path.relpath(state.project.root, ROOT)} controls --controller inav --start {start} --clock realtime --rate 200 --duration 600 --workers {DEFAULT_WORKERS}", shown
 
     # launcher overrides pass through in START_OPTIONS order
     command, *_ = sim._plan(state, {
@@ -125,6 +138,7 @@ def check_launch_plan(state: AppState) -> None:
     })
     assert command == [
         sys.executable, "-u", str(ROOT / "sim_flight.py"), str(state.project.root), "controls", "--controller", "inav", "--start", "catapult", "--clock", "realtime", "--rate", "200", "--duration", "600",
+        "--workers", str(DEFAULT_WORKERS),
         "--launch-pitch", "12", "--launch-speed", "20",
     ], command
 
@@ -133,6 +147,7 @@ def check_launch_plan(state: AppState) -> None:
         command, *_ = sim._plan(state, {"controller": "inav", "scenario": "controls", "start": start, "conditions": conditions})
         assert command == [
             sys.executable, "-u", str(ROOT / "sim_flight.py"), str(state.project.root), "controls", "--controller", "inav", "--start", start, "--clock", "realtime", "--rate", "200", "--duration", "600",
+            "--workers", str(DEFAULT_WORKERS),
         ], (start, command)
 
     parser = argparse.ArgumentParser()

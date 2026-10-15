@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { forwardRef, useEffect, useImperativeHandle, useState } from 'react'
 import type { ReactElement } from 'react'
 import { deleteSimResource, simResource } from '../simApi'
 import type { ScenarioOutline, SimResource } from '../simApi'
@@ -21,7 +21,16 @@ interface Props {
   onDeleted?: (name: string) => void
 }
 
-export function SimFileEditor({controller, kind, name, project, template, templateOutline, running, visible, revision, onDirty, onLoad, onSaved, onDiscard, onDeleted}: Props): ReactElement {
+/** What the SIM panel's Scenario menu drives in the open editor. */
+export interface SimFileEditorHandle {
+  save: (copy: boolean) => void
+  discard: () => void
+}
+
+export const SimFileEditor = forwardRef<SimFileEditorHandle, Props>(function SimFileEditor(
+  {controller, kind, name, project, template, templateOutline, running, visible, revision, onDirty, onLoad, onSaved, onDiscard, onDeleted}: Props,
+  ref,
+): ReactElement {
   const [source, setSource] = useState('')
   const [saved, setSaved] = useState('')
   const [filename, setFilename] = useState('')
@@ -69,6 +78,12 @@ export function SimFileEditor({controller, kind, name, project, template, templa
     finally { setBusy(false) }
   }
 
+  // The Scenario menu drives the same actions as the toolbar's buttons.
+  useImperativeHandle(ref, () => ({
+    save: (copy: boolean) => void save(copy),
+    discard: () => { setSource(saved); onDiscard() },
+  }), [save, saved, onDiscard])
+
   const remove = async (): Promise<void> => {
     if (name === null || name === '__new__') return
     if (!window.confirm(`Delete ${name}?`)) return
@@ -103,4 +118,4 @@ export function SimFileEditor({controller, kind, name, project, template, templa
         }
       }} />
   </div>
-}
+})

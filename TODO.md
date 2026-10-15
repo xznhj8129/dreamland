@@ -9,6 +9,7 @@ User added TODOs (do not remove/change unless done)
     * Performance flash card: efficiency, stall speed, sustained turn rate, acceleration/speed per axis, range, maximum altitude.
     * Optimization tab: optimize for X within user ranges on part values; big outlines and features first.
     * remember scenario and settings when switching to other tabs
+    * Add *actual progress details* for long JSBsim rebuilds, not just in the run output, but actual dedicated section
         
 **INAV**
     * Current default configs bad to configure

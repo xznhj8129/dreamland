@@ -8,6 +8,7 @@ An aircraft project: one directory per aircraft holding everything about it.
 
 aircraft/<project>/
     aircraft.json   airframe/2 build file
+    sim.json        SIM defaults: the controller and scenario the SIM panel opens with (written by the web SIM panel)
     inav/           INAV diffs: real FC diffs, SITL diffs flown as written
       generated/    SITL diffs written from the design or a real FC diff on every run from them
     sitl/           eeprom.bin, sitl.log: the bench's workdir
@@ -28,6 +29,7 @@ from pathlib import Path
 
 PROJECTS_DIR = Path(__file__).resolve().parent.parent / "aircraft"
 BUILD_FILE = "aircraft.json"
+SIM_CONFIG_FILE = "sim.json"  # this project's SIM defaults (controller and scenario); absent = none chosen yet
 
 
 class ProjectError(Exception):
@@ -81,6 +83,10 @@ class Project:
     @property
     def scenarios_dir(self) -> Path:
         return self.root / "scenarios"
+
+    @property
+    def sim_config_path(self) -> Path:
+        return self.root / SIM_CONFIG_FILE
 
 
 def open_project(path: Path) -> Project:

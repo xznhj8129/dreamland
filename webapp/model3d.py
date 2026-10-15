@@ -22,7 +22,7 @@ import numpy as np
 from libs.airframe import BATTERY_PART_NAME, BOX_SHAPES
 from libs.geometry import (
     PROP_SHAFT_LEN_M, BodyStation, ResolvedAirframe, body_section_at, chord_direction, control_cut_frames, cross, dot,
-    superellipse_radius, thickness_direction, unit,
+    embedded_root_fraction, superellipse_radius, thickness_direction, unit,
 )
 from libs.graphics import FEATURE_COLOR, LOFT_COLOR, PROP_SHAFT_DIAM_M, marker_positions, part_corners
 from libs.print_features import joint_holes, motor_mount_openings
@@ -81,7 +81,7 @@ def build_model3d(resolved: ResolvedAirframe, aero: Any | None) -> dict[str, Any
         placements = {control.panel_index: control for control in resolved.controls if control.surface == surface_set.name}
         for panel in surface_set.panels:
             placement = placements.get(panel.index)
-            _try_meshes(meshes, lambda panel=panel, color=color, definition=definition, placement=placement: _panel_meshes(panel, color, definition, placement))
+            _try_meshes(meshes, lambda panel=panel, color=color, definition=definition, placement=placement: _panel_meshes(panel, color, definition, placement, resolved.body))
     for volume in resolved.airframe.volumes:
         _try_mesh(meshes, lambda volume=volume: _mesh(volume.name, "volume", *_volume_mesh(resolved, volume), VOLUME_COLOR, VOLUME_OPACITY))
     part_names = set()
@@ -375,8 +375,10 @@ def _clip_triangle(positions: list, triangle: tuple[int, int, int], plane_point,
     return moving, fixed
 
 
-def _panel_meshes(panel, color: str, definition, placement) -> list[dict[str, Any]]:
+def _panel_meshes(panel, color: str, definition, placement, body) -> list[dict[str, Any]]:
     """The panel skin as one closed shell, split into a panel mesh and, when the panel carries one, its control mesh.
+    It starts where libs.cad's printed panel starts (embedded_root_fraction), inside the body, so a body tapering under
+    the root chord shows no gap.
 
     The profile loop wraps and the root/tip ends are closed by triangle fans from the section centroids, so the
     shell has no opening. A split panel inserts sections at the control's span bounds and gives each skin triangle
@@ -390,6 +392,8 @@ def _panel_meshes(panel, color: str, definition, placement) -> list[dict[str, An
     thickness = thickness_direction(panel)
     kind = definition.kind if definition is not None and placement is not None else None
     spans = _split_spans(definition) if kind == "split" else (0.0, 1.0)
+    root = embedded_root_fraction(panel, coordinates, body)
+    spans = ((root,) if root < 0.0 else ()) + spans
     rings = [_panel_section(panel, coordinates, direction, thickness, span) for span in spans]
     count = len(coordinates)
     positions = [point for ring in rings for point in ring]

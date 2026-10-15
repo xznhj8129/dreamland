@@ -180,6 +180,35 @@ input[type="radio"] {
   text-align: left;
 }
 
+.menu-line {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 4px 8px;
+}
+
+.menu-line input {
+  width: 5em;
+  padding: 2px 6px;
+  color: inherit;
+  background: var(--ui-panel);
+  border: 1px solid var(--ui-border);
+  border-radius: 6px;
+}
+
+.menu-info {
+  padding: 4px 8px;
+  color: var(--ui-muted, var(--muted));
+  font-size: 0.9em;
+}
+
+.menu-hint {
+  margin-left: 10px;
+  color: var(--ui-muted, var(--muted));
+  font-size: 0.9em;
+}
+
 .panel {
   background: var(--ui-panel);
   border: 1px solid var(--ui-border);
@@ -1497,8 +1526,67 @@ button.part-chevron:hover:not(:disabled) {
   padding-top: 3px;
 }
 
+.sim-buttons .sim-status {
+  margin-left: auto;
+}
+
+.sim-menus {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px;
+  padding-top: 3px;
+}
+
+.sim-menus .sim-status {
+  margin-left: auto;
+}
+
 .sim-status {
   min-width: 0;
+}
+
+.build-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 4px;
+  background: var(--panel-alt, rgba(127, 127, 127, 0.06));
+}
+
+.build-card.done {
+  border-left-color: var(--ok, #4c9a4c);
+}
+
+.build-card.failed {
+  border-left-color: var(--danger, #b3413f);
+}
+
+.build-state {
+  color: var(--muted);
+  font-size: 0.85em;
+  text-transform: lowercase;
+}
+
+.build-line {
+  margin: 0;
+  font-variant-numeric: tabular-nums;
+}
+
+.build-bar {
+  height: 6px;
+  border-radius: 3px;
+  background: rgba(127, 127, 127, 0.25);
+  overflow: hidden;
+}
+
+.build-bar-fill {
+  height: 100%;
+  background: var(--accent);
+  transition: width 200ms linear;
 }
 
 .sim-summary-card {

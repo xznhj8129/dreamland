@@ -41,6 +41,7 @@ Environment notes: the project runs in the conda env `drone` (AeroSandbox 4.2.8,
 - **Measured (m62v1 qrwing, 5°):** lift 2.2815 N at 1e-3 vs 1.9434 N at 1e-8 (17%); drag 0.203 vs 0.222. `aero_check.py` passes the *same modified radius* to the reference `asb.LiftingLine`, so the check proves only that the batched code reproduces asb *with this modification* — it is blind to the deviation from stock semantics that the module docstring implies.
 - **Fix direction:** verify against stock 1e-8 (handling the meeting-point singularity differently, e.g. not carrying four strips to one point), or document that the reference model is asb.LiftingLine-with-a-1-mm-core and show the sensitivity.
 - **Status: open 2026-10-02.** Sensitivity reproduced (m62v1 wing 2.281 → 1.943 N at 1e-8; simpleplane main wing 11.162 → 10.979 N). Decided together with S2-1.
+- **Status: fixed 2026-10-15.** Core back to stock 1e-8. Mirrored halves are carried to the XZ plane (ending where the span line nears the axis overlapped them). Between surface sets, trailing lines are smoothed over 0.25 × the shedding strip width (`WAKE_CORE_FRACTION`). The 1 mm core read 20–45 % above `asb.VortexLatticeMethod` on four-fin rockets and made swagger's solve near-singular. `aero_check.py` compares each surface set alone to stock `asb.LiftingLine`.
 
 ### S2-3. simlib2 silently synthesizes data below the lowest measured row and presents it as measured
 
