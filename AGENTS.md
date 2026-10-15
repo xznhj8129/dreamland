@@ -18,7 +18,8 @@ Primary files:
 - `libs/body_solids.py`: low-level fuselage and volume solids (body lofts, bores, printed section material) below `libs/cad.py`
 - `libs/access.py`: Access holes and hatches as physical cuts on the printed section material; hatch pieces H01..
 - `libs/solid_cache.py`: every CAD solid built once per design in memory (in the CAD worker process for the web) and shared by all exports and Compute Geometry; never on disk
-- `libs/computed_geometry.py`: Compute Geometry: builds every solid, measures the exact printed mass (`cad/exact_mass.json`, numbers only), applied by `resolve_airframe`
+- `libs/computed_geometry.py`: Compute Geometry: builds every solid, measures the exact printed mass from the section build ledgers (`cad/exact_mass.json`, numbers only), applied by `resolve_airframe`
+- `libs/volume_moments.py`: volume moments of solids (mass, first and second moments), shared by the section build ledger and the exact mass
 - `libs/drawings.py`: blueprint drawings (SVG/PNG) of the printable parts: side cutaway (cut faces hatched), three-view, x-ray (skin see-through)
 - `libs/varsets.py`: FreeCAD varsets, one JSON per varset (Varset_FROM_JSON.FCMacro); every value in exactly one varset
 - `libs/graphics.py`: orthographic drawing on a duck-typed canvas (recorded server-side for the web)
@@ -65,6 +66,7 @@ Primary files:
 - Keep the headless suites (`webapp/test_draw_drag.py`, `webapp/test_editor_sync.py`, `webapp/test_library.py`) passing when touching drawing, editor or library paths.
 - NEVER add live CAD recomputation in the Editor. Anything computational goes behind an explicit button (Compute Geometry, the CAD exports); the editor has zero lag.
 - CAD solids are built once per design through `libs/solid_cache.py` and reused by every consumer; never rebuild a solid another consumer already built, and never read CAD geometry files back.
+- CAD is built like machining: the stock first (every root, arm and protrusion carried into the solid mass, so nothing meets at a seam, a gap or a coincident face), then every cut, each cutter overshooting its material. Never build a solid only to measure: masses come from the volume changes the build recorded (`libs/volume_moments.py`, `SectionLedger`) and the volumes of finished parts.
 
 ## Save / Load Contract
 

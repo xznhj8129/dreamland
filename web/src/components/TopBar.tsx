@@ -2,8 +2,8 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { FormEvent, ReactElement } from 'react'
 import { listProjects, newProject, openProject, saveProject, saveProjectAs } from '../store'
 import type { CommandResult } from '../store'
-import { cadProgress } from '../cadApi'
-import type { CadProgress } from '../cadApi'
+import { cadState } from '../cadApi'
+import type { CadRun } from '../cadApi'
 import type { GeometryStatus } from '../types'
 import { Modal } from './Modal'
 
@@ -146,20 +146,20 @@ const GEOMETRY_TEXT: Record<Exclude<GeometryStatus, 'computing'>, string> = {
   current: 'Geometry current',
 }
 
-/** Compute Geometry for the current design; while it runs, the CAD worker's progress (GET /api/cad/progress). */
+/** Compute Geometry for the current design; while it runs, the CAD worker's latest step (GET /api/cad/state). */
 function GeometryIndicator({ geometry }: { geometry: GeometryStatus }): ReactElement {
-  const [progress, setProgress] = useState<CadProgress | null>(null)
+  const [run, setRun] = useState<CadRun | null>(null)
   const computing = geometry === 'computing'
 
   useEffect(() => {
     if (!computing) {
-      setProgress(null)
+      setRun(null)
       return undefined
     }
     let cancelled = false
     const poll = async (): Promise<void> => {
-      const answer = await cadProgress()
-      if (!cancelled && answer !== null) setProgress(answer)
+      const answer = await cadState()
+      if (!cancelled && answer !== null) setRun(answer.run)
     }
     const timer = window.setInterval(() => void poll(), PROGRESS_INTERVAL_MS)
     void poll()
@@ -172,9 +172,9 @@ function GeometryIndicator({ geometry }: { geometry: GeometryStatus }): ReactEle
   if (!computing) {
     return <span className={geometry === 'stale' ? 'top-status attention' : 'top-status'} role="status">{GEOMETRY_TEXT[geometry]}</span>
   }
-  const running = progress !== null && progress.task === 'geometry' && progress.label !== null
-  const count = running && progress.total > 0 ? ` (${progress.done}/${progress.total})` : ''
-  return <span className="top-status" role="status">{running ? `Computing geometry: ${progress.label}${count}` : 'Computing geometry'}</span>
+  const step = run !== null && run.task === 'geometry' && run.state === 'running' ? run.steps.at(-1) ?? null : null
+  const count = step !== null && step.total > 0 ? ` (${step.done}/${step.total})` : ''
+  return <span className="top-status" role="status">{step !== null ? `Computing geometry: ${step.label}${count}` : 'Computing geometry'}</span>
 }
 
 interface NameModalProps {

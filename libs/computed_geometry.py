@@ -5,7 +5,9 @@ drawing projections) into libs.solid_cache, so the exports of that design only w
 the printed structure on the built solids (exact_structure). resolve_airframe takes the result in place of its
 analytic estimates.
 
-Exact mass, by the estimate each piece replaces and with the density that estimate uses:
+Exact mass, by the estimate each piece replaces and with the density that estimate uses, from the volume moments
+the section builds recorded as they fused and cut (libs.cad.SectionLedger) and the volumes of the separate parts: no
+solid is built only to be measured.
 - fuselage section n: its printable part S0n less the surface roots outside the fuselage skin, plus its hatch pieces.
   Everything inside the skin is the section's. In a hollow section the material inside the bore (carry-through arms,
   spigot roots) is print bulk density and the rest (the wall) material density; a solid section is bulk density
@@ -26,74 +28,15 @@ from pathlib import Path
 
 from libs.access import access_composition
 from libs.airframe import Airframe
-from libs.body_solids import CUT_OVERSHOOT_MM, build_body_solid, section_bounds
-from libs.cad import Progress, airframe_pieces, build_printable_parts, fused_airframe, panel_attachments
+from libs.body_solids import section_bounds
+from libs.cad import Progress, airframe_pieces, build_printable_parts, fused_airframe, panel_attachments, section_build
 from libs.drawings import drawing_geometry
-from libs.geometry import ExactPiece, ExactStructure, Inertia, ResolvedAirframe, Vec, resolve_airframe
+from libs.geometry import ExactPiece, ExactStructure, ResolvedAirframe, resolve_airframe
 from libs.solid_cache import cached, design_digest, is_built
+from libs.volume_moments import NO_MOMENTS, Moments, volume_moments
 
-M_TO_MM = 1000.0
 EXACT_MASS_FILE = "exact_mass.json"
 EXACT_MASS_FORMAT = "exact_mass/1"
-
-
-@dataclass(frozen=True)
-class Moments:
-    """Mass moments about the origin: mass (kg), first moments (kg m) and raw second moments (kg m^2: sum m xx, yy,
-    zz, xy, xz, yz). Additive, so pieces of one part can be added and subtracted before densities differ."""
-    mass: float
-    first: Vec
-    second: tuple[float, float, float, float, float, float]
-
-    def __add__(self, other: Moments) -> Moments:
-        return Moments(self.mass + other.mass, tuple(a + b for a, b in zip(self.first, other.first)),
-                       tuple(a + b for a, b in zip(self.second, other.second)))
-
-    def __sub__(self, other: Moments) -> Moments:
-        return Moments(self.mass - other.mass, tuple(a - b for a, b in zip(self.first, other.first)),
-                       tuple(a - b for a, b in zip(self.second, other.second)))
-
-    def scaled(self, factor: float) -> Moments:
-        return Moments(self.mass * factor, tuple(value * factor for value in self.first), tuple(value * factor for value in self.second))
-
-    def piece(self, name: str) -> ExactPiece:
-        """Mass, centroid and inertia about it per kg (tensor entries, as libs.geometry.Inertia)."""
-        if self.mass <= 0.0:
-            raise ValueError(f"{name}: the built solids hold no material for it")
-        x, y, z = (value / self.mass for value in self.first)
-        sxx, syy, szz, sxy, sxz, syz = (value / self.mass for value in self.second)
-        cxx, cyy, czz, cxy, cxz, cyz = sxx - x * x, syy - y * y, szz - z * z, sxy - x * y, sxz - x * z, syz - y * z
-        inertia: Inertia = (cyy + czz, cxx + czz, cxx + cyy, -cxy, -cxz, -cyz)
-        return ExactPiece(self.mass, (x, y, z), inertia)
-
-
-NO_MOMENTS = Moments(0.0, (0.0, 0.0, 0.0), (0.0,) * 6)
-
-
-def volume_moments(shape) -> Moments:
-    """The shape's volume moments (density 1 kg/m^3: mass = volume in m^3), from OpenCascade's volume properties."""
-    from OCP.BRepGProp import BRepGProp
-    from OCP.GProp import GProp_GProps
-
-    if shape is None or not shape.Solids():
-        return NO_MOMENTS
-    props = GProp_GProps()
-    BRepGProp.VolumeProperties_s(shape.wrapped, props)
-    volume_mm3 = props.Mass()
-    if volume_mm3 <= 0.0:
-        return NO_MOMENTS
-    centre = props.CentreOfMass()
-    centroid = (centre.X() / M_TO_MM, centre.Y() / M_TO_MM, centre.Z() / M_TO_MM)
-    matrix = props.MatrixOfInertia()  # about the centroid, tensor entries (products negative), mm^5
-    ixx, iyy, izz = matrix.Value(1, 1), matrix.Value(2, 2), matrix.Value(3, 3)
-    ixy, ixz, iyz = matrix.Value(1, 2), matrix.Value(1, 3), matrix.Value(2, 3)
-    per_volume = 1.0 / volume_mm3 / M_TO_MM ** 2  # mm^5 / mm^3 -> m^2
-    covariance = ((iyy + izz - ixx) / 2.0, (ixx + izz - iyy) / 2.0, (ixx + iyy - izz) / 2.0, -ixy, -ixz, -iyz)
-    x, y, z = centroid
-    products = (x * x, y * y, z * z, x * y, x * z, y * z)
-    volume = volume_mm3 / M_TO_MM ** 3
-    return Moments(volume, (volume * x, volume * y, volume * z),
-                   tuple(volume * (value * per_volume + product) for value, product in zip(covariance, products)))
 
 
 def densities(resolved: ResolvedAirframe, parts_data: dict) -> tuple[float, float | None]:
@@ -116,54 +59,36 @@ def exact_structure(resolved: ResolvedAirframe, parts_data: dict, *, progress: P
 
 
 def _measure(resolved: ResolvedAirframe, material: float, bulk: float | None, progress: Progress | None) -> ExactStructure:
+    """The exact structure from the printable parts and their section ledgers (libs.cad.SectionLedger): sums and
+    differences of volume moments the builds recorded, and the volumes of separate parts. No solid is built here."""
     airframe = resolved.airframe
     parts = {name: shape for name, shape, _notes in build_printable_parts(resolved, progress=progress)}
-    fixed, segments, controls = panel_attachments(resolved)
+    _fixed, segments, controls = panel_attachments(resolved)
     hatches = {piece.part_id: index for index, section in access_composition(resolved).items() for piece in section.retained}
-    sections = [NO_MOMENTS] * len(section_bounds(resolved))
+    count = len(section_bounds(resolved))
+    sections = [NO_MOMENTS] * count
     surfaces = {surface_set.name: NO_MOMENTS for surface_set in resolved.surfaces}
     couplers: dict[int, Moments] = {}
-    wall = airframe.fuselage.section.wall_radial_m
-    overshoot = CUT_OVERSHOOT_MM / M_TO_MM
-    outer_body = build_body_solid(resolved, 0.0, resolved.airframe.fuselage.length_m).val()
 
-    for count, (name, shape) in enumerate(parts.items(), start=1):
+    for index in range(count):
+        name = f"S{index + 1:02d}"
         if progress is not None:
-            progress(f"measuring {name}", count, len(parts))
-        if name.startswith("S"):
-            index = int(name[1:]) - 1
-            x0, x1 = section_bounds(resolved)[index]
-            hollow = not airframe.sections.per_section[index].solid
-            bore = build_body_solid(resolved, x0 - overshoot, x1 + overshoot, inset_m=wall) if hollow else None
-            bore = None if bore is None else bore.val()
-            box = shape.BoundingBox()
-            owners: dict[str | None, list] = {}
-            for _label, solid, owner in fixed:
-                other = solid.BoundingBox()
-                if other.xmax >= box.xmin and other.xmin <= box.xmax:
-                    owners.setdefault(owner, []).append(solid)
-            taken = None
-            attached = NO_MOMENTS
-            for owner, solids in owners.items():  # each owner's material outside the skin, once (both panels' roots fused)
-                region = (solids[0] if len(solids) == 1 else solids[0].fuse(*solids[1:])).cut(outer_body)
-                if taken is not None:
-                    region = region.cut(taken)
-                taken = region if taken is None else taken.fuse(region)
-                moments = volume_moments(shape.intersect(region))
-                attached = attached + moments
-                if owner is None:  # a body pod: the section's own, printed solid
-                    sections[index] = sections[index] + moments.scaled(_bulk(bulk, f"the pod in {name}"))
-                else:
-                    surfaces[owner] = surfaces[owner] + moments.scaled(_bulk(bulk, f"surface {owner!r}"))
-            inside = NO_MOMENTS if bore is None else volume_moments(shape.intersect(bore))
-            rest = volume_moments(shape) - attached - inside
-            if hollow:
-                sections[index] = sections[index] + rest.scaled(material)
-                if inside.mass > 0.0:
-                    sections[index] = sections[index] + inside.scaled(_bulk(bulk, f"the carry-through in {name}"))
-            else:
-                sections[index] = sections[index] + rest.scaled(_bulk(bulk, f"solid section {name}"))
-        elif name.startswith("H"):
+            progress(f"measuring {name}", index + 1, count)
+        ledger = section_build(resolved, index).ledger
+        roots = NO_MOMENTS
+        for owner, moments in ledger.surfaces.items():
+            surfaces[owner] = surfaces[owner] + moments.scaled(_bulk(bulk, f"surface {owner!r}"))
+            roots = roots + moments
+        rest = ledger.total - roots - ledger.pods
+        sections[index] = ledger.pods.scaled(_bulk(bulk, f"the pod in {name}")) if ledger.pods.mass > 0.0 else NO_MOMENTS
+        if airframe.sections.per_section[index].solid:
+            sections[index] = sections[index] + rest.scaled(_bulk(bulk, f"solid section {name}"))
+        else:
+            sections[index] = sections[index] + (rest - ledger.spared).scaled(material)
+            if ledger.spared.mass > 0.0:
+                sections[index] = sections[index] + ledger.spared.scaled(_bulk(bulk, f"the carry-through in {name}"))
+    for name, shape in parts.items():
+        if name.startswith("H"):
             index = hatches[name]
             density = _bulk(bulk, f"hatch {name}") if airframe.sections.per_section[index].solid else material
             sections[index] = sections[index] + volume_moments(shape).scaled(density)

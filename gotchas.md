@@ -34,3 +34,4 @@
 - A wild sim result after burnout: check the mechanical energy budget (translational + potential + rotational) first. In still air it can only fall; a rise means the model does work (swagger: a near-singular lifting-line solve at ~14 deg, spikes in the static tables).
 - Never run asb.VortexLatticeMethod finer than 24x8 here: its dense matrix grows with the panel count squared; 48x12 on a four-fin airframe took 41 GB and was OOM-killed.
 - webapp.test_sim flies the real aircraft/example: after any export-code change it rebuilds example's JSBSim model (~4 min on 2 CPUs). Check the fingerprint before running it.
+- UX drives UI, not code: show what the owner needs to see and do, in plain words; never code internals (constant names, file paths, CPU ids, nice values). Copy the reference component the owner names (e.g. the SIM build box) instead of inventing styles; a count is a plain number field.

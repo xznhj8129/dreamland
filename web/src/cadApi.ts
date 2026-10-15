@@ -22,13 +22,58 @@ export interface CadAnswer {
   message: string
 }
 
-/** GET /api/cad/progress: the one CAD export in flight, as the view's progress line shows it. */
-export interface CadProgress {
-  running: boolean
-  task: string | null
-  label: string | null
+/** One progress message the CAD worker sent, and when it arrived (seconds since the run started). */
+export interface CadStep {
+  label: string
   done: number
   total: number
+  at_s: number
+}
+
+/** The time left in the current phase at the pace of its steps so far (webapp.cad._estimate). */
+export interface CadEstimate {
+  phase: string
+  left_s: number
+  per_step_s: number
+}
+
+/** The current or last CAD run, owned by the server: it goes on whether or not a view is open. */
+export interface CadRun {
+  task: string
+  options: Record<string, unknown>
+  started_at: number
+  steps: CadStep[]
+  state: 'running' | 'done' | 'failed'
+  message: string
+  elapsed_s: number
+  estimate: CadEstimate | null
+}
+
+/** The last result of one export, kept by the server for that export's row (message: the result line, or the step a
+ *  failure happened at). */
+export interface CadOutcome {
+  project: string
+  ok: boolean
+  message: string
+  files: string[]
+  notes: string[]
+  finished_at: number
+}
+
+/** The CAD worker's CPUs (settable up to max_cpus) and its fixed priority. */
+export interface CadWorkerSettings {
+  cpus: number
+  max_cpus: number
+  cpu_ids: number[]
+  nice: number
+  alive: boolean
+}
+
+/** GET /api/cad/state. */
+export interface CadState {
+  run: CadRun | null
+  outcomes: Record<string, CadOutcome>
+  worker: CadWorkerSettings
 }
 
 function lastLogMessage(payload: unknown): string | null {
@@ -54,20 +99,13 @@ function asCadResult(payload: unknown): CadResult | null {
   }
 }
 
-function asCadProgress(payload: unknown): CadProgress | null {
+function asCadState(payload: unknown): CadState | null {
   if (typeof payload !== 'object' || payload === null) return null
-  const candidate = payload as Partial<CadProgress>
-  if (typeof candidate.running !== 'boolean') return null
-  if (candidate.task != null && typeof candidate.task !== 'string') return null
-  if (candidate.label != null && typeof candidate.label !== 'string') return null
-  if (typeof candidate.done !== 'number' || typeof candidate.total !== 'number') return null
-  return {
-    running: candidate.running,
-    task: candidate.task ?? null,
-    label: candidate.label ?? null,
-    done: candidate.done,
-    total: candidate.total,
-  }
+  const candidate = payload as Partial<CadState>
+  if (candidate.run === undefined || typeof candidate.outcomes !== 'object' || candidate.outcomes === null) return null
+  if (typeof candidate.worker !== 'object' || candidate.worker === null) return null
+  if (candidate.run !== null && (typeof candidate.run.task !== 'string' || !Array.isArray(candidate.run.steps))) return null
+  return candidate as CadState
 }
 
 async function post(url: string, body?: unknown): Promise<CadAnswer> {
@@ -130,18 +168,42 @@ export async function computeGeometry(): Promise<boolean> {
   }
 }
 
-/** The one export in flight, polled while an export's request is open; null when unreachable or malformed. */
-export async function cadProgress(): Promise<CadProgress | null> {
+/** The current or last CAD run, each export's last outcome and the worker settings; null when unreachable or malformed. */
+export async function cadState(): Promise<CadState | null> {
   try {
-    const response = await fetch('/api/cad/progress')
+    const response = await fetch('/api/cad/state')
     if (!response.ok) return null
-    return asCadProgress(await response.json())
+    return asCadState(await response.json())
   } catch {
     return null
   }
 }
 
-/** The read-only URL for a project-relative output path (GET /files/<tail>). */
-export function filesUrl(relative: string): string {
-  return '/files/' + relative.split('/').map(encodeURIComponent).join('/')
+/** POST /api/cad/worker: how many CPUs the CAD worker may use, applied at once; the new state, or null on failure. */
+export async function setWorkerCpus(cpus: number): Promise<CadState | null> {
+  try {
+    const response = await fetch('/api/cad/worker', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ cpus }),
+    })
+    if (!response.ok) return null
+    return asCadState(await response.json())
+  } catch {
+    return null
+  }
+}
+
+/** POST /api/cad/open: open an export's output folder in the file manager; false when the server refused. */
+export async function openFolder(task: string): Promise<boolean> {
+  try {
+    const response = await fetch('/api/cad/open', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ task }),
+    })
+    return response.ok
+  } catch {
+    return false
+  }
 }

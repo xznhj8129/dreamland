@@ -1368,102 +1368,107 @@ button.part-chevron:hover:not(:disabled) {
   gap: 4px;
 }
 
-/* CAD view (web/src/views/CadView.tsx, libs/views/cad_view.py) */
+/* CAD view (web/src/views/CadView.tsx, docs/ui/cad_view.md): one row per export, its progress or result under it. */
 .cad-view {
   height: 100%;
   overflow: auto;
-  padding: 8px 20px;
+  padding: 12px 20px;
   display: flex;
   flex-direction: column;
+  gap: 12px;
+}
+
+.cad-list {
+  max-width: 900px;
+  display: flex;
+  flex-direction: column;
+}
+
+.cad-row {
+  display: grid;
+  grid-template-columns: 160px minmax(0, 1fr) auto;
   gap: 6px 16px;
+  align-items: center;
+  padding: 12px 0;
+  border-bottom: 1px solid var(--ui-border);
 }
 
-.cad-view .form-card {
-  flex: 0 0 auto;
+.cad-row-name {
+  font-weight: 600;
 }
 
-.cad-mode {
+.cad-row-options {
   display: flex;
   flex-wrap: wrap;
-  gap: 6px;
+  align-items: center;
+  gap: 16px;
 }
 
-.cad-mode-option {
-  text-align: left;
-}
-
-.cad-mode-option.active {
-  color: var(--ui-accent);
-  border-color: var(--ui-accent);
-  background: var(--ui-hover);
-}
-
-.cad-result {
+.cad-row-status {
+  grid-column: 2 / -1;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding-top: 4px;
-  border-top: 1px solid var(--ui-border);
+  gap: 6px;
+  color: var(--ui-dim);
 }
 
-.cad-detail {
-  color: var(--ui-accent);
-  overflow-wrap: anywhere;
+.cad-status-line {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
 }
 
-/* The failure summary is longer than the status bar's one-line slot: wrap it instead of clipping it. */
-.cad-error {
-  white-space: normal;
-  overflow: visible;
-  overflow-wrap: anywhere;
-}
-
-.cad-files,
-.cad-notes {
-  margin: 0;
-  padding-left: 18px;
-  line-height: 1.45;
-}
-
-.cad-notes {
+.cad-status-line.failed,
+.cad-problems {
   color: var(--ui-warning);
-}
-
-.cad-files a {
-  color: var(--ui-fg);
-  overflow-wrap: anywhere;
 }
 
 .cad-progress {
   display: flex;
   align-items: center;
+  gap: 12px;
+  font-variant-numeric: tabular-nums;
+}
+
+.cad-progress .build-bar {
+  flex: 0 1 320px;
+}
+
+.cad-steps summary {
+  cursor: pointer;
+}
+
+.cad-steps ol {
+  max-height: 200px;
+  overflow: auto;
+  margin: 4px 0 0;
+  padding: 0;
+  list-style: none;
+  font-family: var(--ui-mono);
+  font-size: 12px;
+}
+
+.cad-steps li {
+  display: flex;
+  gap: 16px;
+}
+
+.cad-footer {
+  display: flex;
+  align-items: center;
+  gap: 24px;
+  color: var(--ui-dim);
+}
+
+.cad-footer label {
+  display: flex;
+  align-items: center;
   gap: 8px;
 }
 
-.cad-progress-track {
-  flex: 0 1 160px;
-  height: 4px;
-  border-radius: 2px;
-  background: var(--ui-raised);
-  overflow: hidden;
-}
-
-.cad-progress-fill {
-  display: block;
-  height: 100%;
-  background: var(--ui-accent);
-  transition: width 0.2s linear;
-}
-
-.cad-files a:hover {
-  color: var(--ui-accent);
-}
-
-.cad-preview {
-  display: block;
-  max-width: 100%;
-  border: 1px solid var(--ui-border);
-  background: #ffffff;
+.cad-footer input {
+  width: 56px;
 }
 
 /* SIM view (web/src/views/SimView.tsx, webapp/sim.py; docs/ui/sim_view.md) */
@@ -1551,22 +1556,22 @@ button.part-chevron:hover:not(:disabled) {
   flex-direction: column;
   gap: 4px;
   padding: 8px 10px;
-  border: 1px solid var(--line);
-  border-left: 3px solid var(--accent);
+  border: 1px solid var(--ui-border);
+  border-left: 3px solid var(--ui-accent);
   border-radius: 4px;
-  background: var(--panel-alt, rgba(127, 127, 127, 0.06));
+  background: var(--ui-panel);
 }
 
 .build-card.done {
-  border-left-color: var(--ok, #4c9a4c);
+  border-left-color: var(--ui-info);
 }
 
 .build-card.failed {
-  border-left-color: var(--danger, #b3413f);
+  border-left-color: var(--ui-problem);
 }
 
 .build-state {
-  color: var(--muted);
+  color: var(--ui-dim);
   font-size: 0.85em;
   text-transform: lowercase;
 }
@@ -1585,7 +1590,7 @@ button.part-chevron:hover:not(:disabled) {
 
 .build-bar-fill {
   height: 100%;
-  background: var(--accent);
+  background: var(--ui-accent);
   transition: width 200ms linear;
 }
 
@@ -1936,8 +1941,6 @@ button.part-chevron:hover:not(:disabled) {
 .top-status.attention { color: var(--ui-warning); }
 .last-valid-note { margin: 0; padding: 10px 16px; color: var(--ui-warning); font-size: 12px; }
 .sim-start-details .sim-conditions { border: 0; padding: 0; }
-.cad-view { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); align-content: start; align-items: start; }
-@media (max-width: 1000px) { .cad-view { grid-template-columns: minmax(0, 1fr); } }
 
 .sim-path { position: relative; }
 .sim-path-tools { position: absolute; z-index: 1; top: 12px; left: 12px; display: flex; flex-direction: column; align-items: flex-start; gap: 6px; padding: 6px; background: var(--ui-panel); border-radius: 6px; }

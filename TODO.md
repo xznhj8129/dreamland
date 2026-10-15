@@ -7,9 +7,7 @@ User added TODOs (do not remove/change unless done)
     * MSP/Mavlink commands (maybe complicated, not right now)
     * SIM priority: flexibility and realism; editor stability estimate versus JSBSim flight response.
     * Performance flash card: efficiency, stall speed, sustained turn rate, acceleration/speed per axis, range, maximum altitude.
-    * Optimization tab: optimize for X within user ranges on part values; big outlines and features first.
-    * remember scenario and settings when switching to other tabs
-    * Add *actual progress details* for long JSBsim rebuilds, not just in the run output, but actual dedicated section
+    * Hatch not showing in 3d sim
         
 **INAV**
     * Current default configs bad to configure
@@ -19,6 +17,7 @@ User added TODOs (do not remove/change unless done)
     - Add direction arrow triangles to prop circle to show direction of spin (from front)
     - "plain ass plate" as airfoil, with or without thickness-diameter rounded edges
     - ducts, NACA ducts and intake ducts
+    * Optimization tab: optimize for X within user ranges on part values; big outlines and features first.
 
 **Wiring**
     * Wire placement (straight horizontal/vertical, only 90deg bends for now)
@@ -28,8 +27,10 @@ User added TODOs (do not remove/change unless done)
     - left pane buttons (Summary, Mass, Aero, etc) are wider apart than on the right pane; create one consistent universal "button row" element
     - Look for visual weirdness and inconsistencies, create consistent universal styling/functional elements for reuse across UI
     - Remember open tab/section in editor to return to
+    - CAD tab sections: "Fuselage sections S01…, couplers C01…, fixed wing segments W… and controls CS… as STEP into cad/sections/. Independent of the STEP mode above." Who the fuck writes like this
     
 **Construction**
+    - Rocket motor mount an actual cylindrical opening
     - Allow non 3D-printed shell construction methods (such as fiberglass or carbon fiber molding), different materials (what that excludes TBD)
     - Allow one section to be considered a monolithic carbon fiber, fiberglass or metal plate, allowing different material for CNC rather than 3D print. This would be used for thin (1-10mm) reinforcement sections
     - Actual real wing, hatch, section joint/closure mechanisms
@@ -41,7 +42,9 @@ User added TODOs (do not remove/change unless done)
     - Why do them CAD exports have all these loft lines anyway?
     - Swifting off CAD tab interrupts
     - Thicken fuselage line on xray export
-    - Tell me we're not exporting parts in CAD
+    - actual progress box with per-part progress (like sim build box), all i see is "Sections…", thanks, very useful (???)
+    - Tell me we're not exporting parts (ie: cam) in CAD
+    - [open defect, 2026-10-15] CNC-order section build (libs/cad.py build_section_solid): example S02 has 16.6 cm^3 more material than the committed build (57.06 vs 40.47 cm^3; nothing missing), suspect the bore tool (bore less arms/spigots) or access tool boolean. Locate it (bbox of new.cut(committed)) and fix before relying on S02 or committing. Every other part of swagger, minirocket, m62v2 and example matches the committed build.
 
 **3D view**
     - turn Cuts & Holes off by default

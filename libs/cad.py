@@ -14,12 +14,13 @@ cadquery is imported lazily so the GUI starts light. FreeCAD varsets: libs/varse
 
 import math
 from collections.abc import Callable
+from dataclasses import dataclass, replace
 
 from libs.access import ACCESS_EPS_MM3, access_composition
 from libs.airframe import ControlSurface
 from libs.body_solids import (
     CUT_OVERSHOOT_MM, GEOM_EPS_MM, M_TO_MM, _prism, _revolve_profile_solid, _ring, _taper,
-    build_body_solid, hollowed_section, printed_section_material, section_bounds,
+    build_body_solid, printed_section_material, section_bounds, section_cavity,
 )
 from libs.geometry import (
     Body, CarryThroughArm, Panel, ResolvedAirframe, body_half_extents, body_section_at, carry_through_front_profile, carry_through_side_profile,
@@ -27,6 +28,7 @@ from libs.geometry import (
 )
 from libs.print_features import joint_hole_stations, joint_holes_at, motor_mount_openings
 from libs.solid_cache import cached
+from libs.volume_moments import NO_MOMENTS, Moments, volume_moments
 
 AIRFOIL_POINTS_PER_SIDE = 40
 PROP_DISC_THICKNESS_MM = 1.0
@@ -415,8 +417,8 @@ def _screw_holes(resolved: ResolvedAirframe, x_m: float, cut_index: int) -> list
 
 
 def _through_holes(resolved: ResolvedAirframe, x0_m: float, x1_m: float) -> list:
-    """Every screw hole station, longitudinal rod and fin spar reaching between two stations, each opened by the fit
-    clearance."""
+    """Every screw hole station and longitudinal rod reaching between two stations, each opened by the fit clearance
+    (the fin spars: _spar_holes)."""
     airframe = resolved.airframe
     clearance = airframe.sections.joints.fit_clearance_m
     holes = []
@@ -430,9 +432,16 @@ def _through_holes(resolved: ResolvedAirframe, x0_m: float, x1_m: float) -> list
         if high > low:
             diameter = reinforcement.pattern.diameter_m + 2.0 * clearance
             holes += [_rod((low, y, z), (high, y, z), diameter) for y, z in reinforcement.pattern.positions_m()]
+    return holes
+
+
+def _spar_holes(resolved: ResolvedAirframe, x0_m: float, x1_m: float) -> dict[str, list]:
+    """The holes of the fin spars starting between two stations, by surface set (they run through its roots and its
+    carry-through)."""
+    holes: dict[str, list] = {}
     for spar in resolved.spars:
         if x0_m - spar.diameter_m <= spar.start[0] <= x1_m + spar.diameter_m:
-            holes.append(_spar_hole(resolved, spar))
+            holes.setdefault(spar.surface, []).append(_spar_hole(resolved, spar))
     return holes
 
 
@@ -575,54 +584,118 @@ def _access_support_notes(resolved: ResolvedAirframe, index: int) -> list[str]:
     return notes
 
 
-def build_section_solid(resolved: ResolvedAirframe, index: int, attachments: list[Attachment], opening=None) -> tuple[object, list[str]]:
-    """One printable fuselage section (cq.Shape) and notes on it: the body between its cuts with every attachment
-    (each panel's fixed side, each pod) clipped to the section's x-range and fused on, so a surface or pod crossing
-    a cut is divided between the sections and gets flat faces at the cuts; the outer end sections retain attachments
-    beyond the body ends (a control's opening is carried in its
-    panel's fixed side; the moving surfaces are separate parts, CS1..); hollowed to the wall (or, printed solid,
-    less its volumes), so a surface goes through its own section's wall and no further; the carry-through of the
-    surface sets in it; a socket at each female end (where a coupler or a mating spigot enters), a spigot at each
-    male end; screw, rod and spar holes cut. opening (optional) is the union access cutter: it is cut from the
-    section body before the attachments are fused, so access never cuts a wing root or pod, and an attachment that
-    covers it is reported."""
+@dataclass(frozen=True)
+class SectionLedger:
+    """What building a section added and removed, as volume moments (density 1, libs.volume_moments): the material
+    each surface set's roots added outside the stock built so far (the body, and roots before it), the body pods', the
+    material the cavity tool spared inside the cavity (carry-through arms, spigot roots), and the finished part. A
+    surface's spar holes come off its roots (they bore through its solid roots and carry-through); the rest of the
+    part is its wall, and the other cuts after the stock (sockets, access, screw and rod holes) count against it."""
+    surfaces: dict[str, Moments]
+    pods: Moments
+    spared: Moments
+    total: Moments
+
+
+@dataclass(frozen=True)
+class SectionBuild:
+    """One printable fuselage section: the solid (cq.Shape), notes on it and its SectionLedger."""
+    shape: object
+    notes: list[str]
+    ledger: SectionLedger
+
+
+def section_build(resolved: ResolvedAirframe, index: int) -> SectionBuild:
+    """Printable fuselage section index (build_section_solid), with its access notes; built once per design
+    (libs.solid_cache): the printable parts and the exact mass read the same build."""
+    return cached(resolved, ("section build", index), lambda: _build_section(resolved, index))
+
+
+def _build_section(resolved: ResolvedAirframe, index: int) -> SectionBuild:
+    attachments, _segments, _controls = panel_attachments(resolved)
+    section_access = access_composition(resolved).get(index)
+    build = build_section_solid(resolved, index, attachments, opening=None if section_access is None else section_access.opening)
+    if section_access is None:
+        return build
+    return replace(build, notes=[*build.notes, *section_access.notes, *_access_support_notes(resolved, index)])
+
+
+def build_section_solid(resolved: ResolvedAirframe, index: int, attachments: list[Attachment], opening=None) -> SectionBuild:
+    """One printable fuselage section, built as it would be machined: the stock first, then every cut.
+    - Stock: the body between its cuts; every attachment (each panel's fixed side, each pod) clipped to the section's
+      x-range and fused on, so a surface or pod crossing a cut is divided between the sections and gets flat faces at
+      the cuts (the outer end sections retain attachments beyond the body ends; a control's opening is carried in its
+      panel's fixed side, the moving surfaces are separate parts CS1..); the carry-through arms of the surface sets
+      in it; a spigot at each male end.
+    - Cuts: the cavity (the bore of a hollow section, the volumes of a solid one) less the arms and spigots, so a
+      surface goes through its own section's wall and no further; the access opening (optional, the union access
+      cutter) less every attachment, arm and spigot, so access never cuts a wing root or pod (an attachment that
+      covers it is reported); a socket at each female end (where a coupler or a mating spigot enters); screw, rod,
+      spar and motor holes.
+    The SectionLedger records the volume moments each fuse added and the cavity spared, from the solids built anyway."""
     airframe = resolved.airframe
     sections, joints = airframe.sections, airframe.sections.joints
     cuts = sections.cuts_m
     x0, x1 = section_bounds(resolved)[index]
     notes: list[str] = []
     shape = build_body_solid(resolved, x0, x1).val()
-    if opening is not None:
-        shape = shape.cut(opening)
-    for label, solid, _owner in attachments:
+    measured = volume_moments(shape)
+    surfaces: dict[str, Moments] = {}
+    pods = NO_MOMENTS
+    pieces = []
+    for label, solid, owner in attachments:
         bounds = solid.BoundingBox()
         piece = _clip_x(solid, min(x0, bounds.xmin / M_TO_MM) if index == 0 else x0,
                         max(x1, bounds.xmax / M_TO_MM) if index == len(cuts) else x1)
-        if piece is not None:
-            if opening is not None and _intersects(opening, piece):
-                notes.append(f"access opening reaches the attached {label}; it is cut in the fuselage body only, not in the attachment")
-            shape = shape.fuse(piece)
+        if piece is None:
+            continue
+        if opening is not None and _intersects(opening, piece):
+            notes.append(f"access opening reaches the attached {label}; it is cut in the fuselage body only, not in the attachment")
+        shape = shape.fuse(piece)
+        after = volume_moments(shape)
+        if owner is None:
+            pods = pods + (after - measured)
+        else:
+            surfaces[owner] = surfaces.get(owner, NO_MOMENTS) + (after - measured)
+        measured = after
+        pieces.append(piece)
+    kept = [build_carry_through_arm(resolved, arm) for arm in resolved.carry_through
+            if section_index(cuts, next(item for item in resolved.surfaces if item.name == arm.surface).exposed_x_root_le_m) == index]
+    reach0, reach1 = x0, x1  # extent of this part's material along x, spigots included
+    if index > 0 and sections.cut_joints[index - 1] == "rear_male":
+        kept.append(_spigot(resolved, cuts[index - 1], -1.0))
+        reach0 = cuts[index - 1] - joints.insertion_depth_m
+    if index < len(cuts) and sections.cut_joints[index] == "front_male":
+        kept.append(_spigot(resolved, cuts[index], 1.0))
+        reach1 = cuts[index] + joints.insertion_depth_m
+    if kept:  # one boolean for all: each one pays a full setup
+        shape = shape.fuse(*kept)
 
-    shape = hollowed_section(shape, resolved, index, x0, x1)
+    spared = NO_MOMENTS
+    cavity = section_cavity(resolved, index, x0, x1)
+    if cavity:
+        tool = cavity[0] if len(cavity) == 1 else cavity[0].fuse(*cavity[1:])
+        if kept:
+            whole = volume_moments(tool)
+            tool = tool.cut(*kept)
+            spared = whole - volume_moments(tool)
+        shape = shape.cut(tool)
+    if opening is not None:
+        guarded = [*pieces, *kept]
+        shape = shape.cut(opening.cut(*guarded) if guarded else opening)
     if index > 0 and sections.cut_joints[index - 1] in ("coupler", "front_male"):
         shape = shape.cut(_socket(resolved, x0, 1.0))
     if index < len(cuts) and sections.cut_joints[index] in ("coupler", "rear_male"):
         shape = shape.cut(_socket(resolved, x1, -1.0))
-    arms = [build_carry_through_arm(resolved, arm) for arm in resolved.carry_through  # after the bore, which would remove them
-            if section_index(cuts, next(item for item in resolved.surfaces if item.name == arm.surface).exposed_x_root_le_m) == index]
-    if arms:  # one boolean for all: each one pays a full setup
-        shape = shape.fuse(*arms)
-    reach0, reach1 = x0, x1  # extent of this part's material along x, spigots included
-    if index > 0 and sections.cut_joints[index - 1] == "rear_male":
-        shape = shape.fuse(_spigot(resolved, cuts[index - 1], -1.0))
-        reach0 = cuts[index - 1] - joints.insertion_depth_m
-    if index < len(cuts) and sections.cut_joints[index] == "front_male":
-        shape = shape.fuse(_spigot(resolved, cuts[index], 1.0))
-        reach1 = cuts[index] + joints.insertion_depth_m
     holes = _through_holes(resolved, reach0, reach1)
     if holes:
         shape = shape.cut(*holes)
-    return cut_motor_mount_holes(shape, resolved).clean(), notes
+    for owner, spar_holes in _spar_holes(resolved, reach0, reach1).items():  # through the surface's solid roots and arms
+        before = volume_moments(shape)
+        shape = shape.cut(*spar_holes)
+        surfaces[owner] = surfaces.get(owner, NO_MOMENTS) - (before - volume_moments(shape))
+    shape = cut_motor_mount_holes(shape, resolved).clean()
+    return SectionBuild(shape, notes, SectionLedger(surfaces, pods, spared, volume_moments(shape)))
 
 
 def build_coupler_solid(resolved: ResolvedAirframe, cut_index: int):
@@ -632,7 +705,8 @@ def build_coupler_solid(resolved: ResolvedAirframe, cut_index: int):
     cut = resolved.airframe.sections.cuts_m[cut_index]
     half_length = joints.insertion_depth_m
     solid = _ring(cut - half_length, cut + half_length, *joint_half_extents(resolved, cut), body_section_at(resolved.body, cut).shape)
-    holes = _through_holes(resolved, cut - half_length, cut + half_length)
+    holes = [*_through_holes(resolved, cut - half_length, cut + half_length),
+             *(hole for spar_holes in _spar_holes(resolved, cut - half_length, cut + half_length).values() for hole in spar_holes)]
     if holes:
         solid = solid.cut(*holes)
     return solid.clean()
@@ -694,11 +768,8 @@ def _build_printable_parts(resolved: ResolvedAirframe, *, progress: Progress | N
             progress(f"building {name}", len(parts), total)
 
     for index in range(len(section_bounds(resolved))):
-        section_access = access.get(index)
-        shape, notes = build_section_solid(resolved, index, attachments, opening=None if section_access is None else section_access.opening)
-        if section_access is not None:
-            notes = [*notes, *section_access.notes, *_access_support_notes(resolved, index)]
-        parts.append((f"S{index + 1:02d}", shape, notes))
+        build = section_build(resolved, index)
+        parts.append((f"S{index + 1:02d}", build.shape, build.notes))
         built(f"S{index + 1:02d}")
     for cut_index, joint in enumerate(resolved.airframe.sections.cut_joints):
         if joint == "coupler":
@@ -738,7 +809,7 @@ def export_sections(resolved: ResolvedAirframe, directory, export_format: str = 
             progress(f"writing {name}", index, len(parts))
         path = directory / f"{name}.{export_format}"
         cq.exporters.export(cq.Workplane("XY").newObject([shape]), str(path), exportType=export_format.upper())
-        written.append(f"{name}: {directory / name}.{export_format} ({shape.Volume() / 1000.0:.1f} cm^3)")
+        written.append(f"{name}: {directory / name}.{export_format} ({volume_moments(shape).mass * 1e6:.1f} cm^3)")
         bed = _bed_note(name, shape, resolved.airframe.print.printer_bed_m)
         pieces = len(shape.Solids())
         split = [f"{name}: comes out as {pieces} separate solids (something cuts it through, e.g. a socket deeper than a tapering end)"] if pieces > 1 else []

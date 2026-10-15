@@ -18,6 +18,7 @@ import tempfile
 import time
 from pathlib import Path
 
+from aiohttp import ClientTimeout
 from aiohttp.test_utils import TestClient, TestServer
 
 from libs.airframe import load_airframe
@@ -31,6 +32,7 @@ from webapp.state import AppState
 ROOT = Path(__file__).resolve().parent.parent  # aircraft/example, run as `uv run python -m webapp.test_geometry`
 EXAMPLE = ROOT / "aircraft" / "example"
 EDIT_LATENCY_S = 1.0  # an editor command while Compute Geometry runs answers within this
+COMPUTE_TIMEOUT_S = 3600.0  # the compute request: every solid built on the CAD worker's two CPUs takes minutes (aiohttp's own 300 s default cut it off)
 
 
 def make_state(root: Path) -> AppState:
@@ -124,7 +126,7 @@ def check_conservation(state: AppState) -> None:
 
 
 async def run(state: AppState) -> None:
-    async with TestClient(TestServer(create_app(state, ROOT / "web" / "dist"))) as client:
+    async with TestClient(TestServer(create_app(state, ROOT / "web" / "dist")), timeout=ClientTimeout(total=COMPUTE_TIMEOUT_S)) as client:
         await check_compute(client, state)
         await check_exports_reuse(client)
         await check_stale_and_back(client, state)

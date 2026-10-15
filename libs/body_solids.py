@@ -36,6 +36,13 @@ def _revolve_profile_solid(stations: list[tuple[float, float]]):
     for pt in stations:
         if points and math.hypot(pt[0] - points[-1][0], pt[1] - points[-1][1]) < GEOM_EPS_MM:
             continue
+        # A station on the straight line through its neighbours adds only another face on the same cone or cylinder;
+        # OCCT's clean then merges those faces, which crashed on a straight cone nose (faces meeting at its tip).
+        if len(points) >= 2:
+            (ax, ar), (bx, br) = points[-2], points[-1]
+            if abs((bx - ax) * (pt[1] - br) - (br - ar) * (pt[0] - bx)) <= GEOM_EPS_MM * math.hypot(pt[0] - ax, pt[1] - ar):
+                points[-1] = pt
+                continue
         points.append(pt)
     if len(points) < 2:
         raise RuntimeError("Revolve profile needs at least two distinct stations")
@@ -151,20 +158,21 @@ def section_bounds(resolved: ResolvedAirframe) -> list[tuple[float, float]]:
     return list(zip(bounds, bounds[1:]))
 
 
-def hollowed_section(shape, resolved: ResolvedAirframe, index: int, x0_m: float, x1_m: float):
-    """A section solid hollowed exactly as the printable section is: the bore for a hollow section, the internal
-    volumes for a solid one (the existing order preserves the current no-access output exactly)."""
+def section_cavity(resolved: ResolvedAirframe, index: int, x0_m: float, x1_m: float) -> list:
+    """The cutters that hollow a section (cq.Shape, mm): its bore for a hollow section (past both ends by
+    CUT_OVERSHOOT_MM), the internal volumes for a solid one; [] when nothing is cut."""
     airframe = resolved.airframe
-    sections = airframe.sections
-    if not sections.per_section[index].solid:
+    if not airframe.sections.per_section[index].solid:
         bore = build_body_solid(resolved, x0_m - CUT_OVERSHOOT_MM / M_TO_MM, x1_m + CUT_OVERSHOOT_MM / M_TO_MM,
                                 inset_m=airframe.fuselage.section.wall_radial_m)
-        if bore is not None:
-            shape = shape.cut(bore.val())
-    else:
-        for volume in airframe.volumes:
-            if volume.shape != "point":
-                shape = shape.cut(build_volume_solid(resolved, volume))
+        return [] if bore is None else [bore.val()]
+    return [build_volume_solid(resolved, volume) for volume in airframe.volumes if volume.shape != "point"]
+
+
+def hollowed_section(shape, resolved: ResolvedAirframe, index: int, x0_m: float, x1_m: float):
+    """A section solid hollowed as the printable section is (section_cavity)."""
+    for cutter in section_cavity(resolved, index, x0_m, x1_m):
+        shape = shape.cut(cutter)
     return shape
 
 

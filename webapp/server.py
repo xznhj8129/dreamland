@@ -74,7 +74,9 @@ def create_app(state: AppState, dist_dir: Path) -> web.Application:
     app.router.add_post("/api/cad/sections", handle_cad_sections)
     app.router.add_post("/api/cad/drawings", handle_cad_drawings)
     app.router.add_post("/api/cad/varsets", handle_cad_varsets)
-    app.router.add_get("/api/cad/progress", handle_cad_progress)
+    app.router.add_get("/api/cad/state", handle_cad_state)
+    app.router.add_post("/api/cad/worker", handle_cad_worker)
+    app.router.add_post("/api/cad/open", handle_cad_open)
     app.router.add_get("/api/sim/resource", handle_sim_resource)
     app.router.add_post("/api/sim/resource", handle_sim_resource)
     app.router.add_post("/api/sim/resource/delete", handle_sim_resource_delete)
@@ -510,20 +512,33 @@ def _cad_export_failed(state: AppState, error: cad_export.ExportFailed) -> web.R
     return web.json_response(snapshot(state), status=500)
 
 
-async def _run_cad_export(state: AppState, export: Callable[..., dict[str, Any]], *args: Any) -> web.Response:
-    """Run one webapp.cad export in a worker thread (OCCT blocks seconds) and answer with its result JSON.
+async def _cad_job(state: AppState, export: Callable[..., dict[str, Any]], args: tuple[Any, ...], log_title: str) -> web.Response:
+    """One webapp.cad export in a worker thread (OCCT blocks seconds), its notes and failure logged.
+
+    It runs to the end even when the request that started it goes away (a closed tab, a reload): webapp.cad keeps the
+    run and its outcome, which GET /api/cad/state shows to whichever view asks next.
+    """
+    try:
+        result = await asyncio.to_thread(export, *args)
+    except cad_export.ExportFailed as error:
+        return _cad_export_failed(state, error)
+    if result["notes"]:
+        state.log_error(log_title, "\n".join(result["notes"]))
+        state.notify()  # the problems must reach the open Log like the Tk status/Log does
+    return web.json_response(result)
+
+
+async def _run_cad_export(state: AppState, export: Callable[..., dict[str, Any]], *args: Any, log_title: str = "CAD export") -> web.Response:
+    """Run one webapp.cad export as a server job and answer with its result JSON once it is written.
 
     A failed export is answered with the 500 snapshot; its traceback (with the task/label context) is in the Log.
     The resolved airframe and project are read here, on the loop, so the thread only touches the values handed
-    to it.
+    to it. The job is shielded: a cancelled request (the client went away) does not stop it.
     """
     if state.resolved is None:
         return _refuse_no_airframe(state)
-    try:
-        result = await asyncio.to_thread(export, state.resolved, state.project, *args)
-    except cad_export.ExportFailed as error:
-        return _cad_export_failed(state, error)
-    return web.json_response(result)
+    job = asyncio.ensure_future(_cad_job(state, export, (state.resolved, state.project, *args), log_title))
+    return await asyncio.shield(job)
 
 
 async def handle_geometry_compute(request: web.Request) -> web.Response:
@@ -531,7 +546,7 @@ async def handle_geometry_compute(request: web.Request) -> web.Response:
 
     First the printable parts and the exact printed mass (saved to cad/exact_mass.json and applied as soon as it is
     measured, when the design is still the current one), then every other solid the CAD exports use. Progress is the
-    CAD progress record (task geometry); a failure goes to the Log like a CAD export. A second request while one runs
+    CAD run record (task geometry); a failure goes to the Log like a CAD export. A second request while one runs
     is refused with the snapshot (409)."""
     state = _state(request)
     if state.resolved is None:
@@ -585,16 +600,7 @@ async def handle_cad_sections(request: web.Request) -> web.Response:
     export_format = body.get("format", "step")
     if export_format not in ("step", "stl"):
         raise web.HTTPBadRequest(text="format must be 'step' or 'stl'")
-    if state.resolved is None:
-        return _refuse_no_airframe(state)
-    try:
-        result = await asyncio.to_thread(cad_export.export_sections, state.resolved, state.project, export_format)
-    except cad_export.ExportFailed as error:
-        return _cad_export_failed(state, error)
-    if result["notes"]:
-        state.log_error("Section export", "\n".join(result["notes"]))
-        state.notify()  # the problems must reach the open Log like the Tk status/Log does
-    return web.json_response(result)
+    return await _run_cad_export(state, cad_export.export_sections, export_format, log_title="Section export")
 
 
 async def handle_cad_drawings(request: web.Request) -> web.Response:
@@ -607,9 +613,32 @@ async def handle_cad_varsets(request: web.Request) -> web.Response:
     return await _run_cad_export(_state(request), cad_export.export_varsets)
 
 
-async def handle_cad_progress(request: web.Request) -> web.Response:
-    """GET /api/cad/progress: the one export in flight (task, label, done/total) for the CAD view's progress line."""
+async def handle_cad_state(request: web.Request) -> web.Response:
+    """GET /api/cad/state: the current or last CAD run with its steps, each export's last outcome, the worker settings."""
     return web.json_response(cad_export.current())
+
+
+async def handle_cad_worker(request: web.Request) -> web.Response:
+    """POST /api/cad/worker {cpus}: how many CPUs the CAD worker may use (1..WORKER_CPUS), applied at once."""
+    body = await _json_object(request)
+    cpus = body.get("cpus")
+    if type(cpus) is not int:
+        raise web.HTTPBadRequest(text="cpus must be an integer")
+    try:
+        cad_export.WORKER.set_cpus(cpus)
+    except ValueError as error:
+        raise web.HTTPBadRequest(text=str(error)) from None
+    return web.json_response(cad_export.current())
+
+
+async def handle_cad_open(request: web.Request) -> web.Response:
+    """POST /api/cad/open {task}: open that export's output folder in the file manager."""
+    body = await _json_object(request)
+    task = body.get("task")
+    if task not in ("step", "stl", "sections", "drawings", "varsets"):
+        raise web.HTTPBadRequest(text="task must be step, stl, sections, drawings or varsets")
+    directory = cad_export.open_folder(_state(request).project, task)
+    return web.json_response({"ok": True, "folder": str(directory)})
 
 
 async def handle_sim_resource(request: web.Request) -> web.Response:
