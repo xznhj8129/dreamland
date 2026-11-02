@@ -21,11 +21,10 @@ import itertools
 import math
 from dataclasses import dataclass
 
-import aerosandbox as asb
-
+from libs.airfoils import airfoil
 from libs.airframe import (
-    AXES, BOX_SHAPES, Airframe, AirframeError, AccessEntry, CarryThrough, ControlSurface, MotorMountHoles, Mount, PlacedPart,
-    Reinforcement, Surface, Volume, orientation_rows,
+    AXES, BOX_SHAPES, Airframe, AirframeError, AccessEntry, CarryThrough, ControlSurface, ElectricPropulsion, MotorMountHoles, Mount,
+    NacaDuct, PlacedPart, Reinforcement, Surface, Volume, orientation_rows,
 )
 from libs.pointed_shapes import sample_pointed_profile
 from libs.rocketmotors import RocketMotor
@@ -39,7 +38,20 @@ SPAN_STRIPS = 64
 ROOT_CHORD_SAMPLES = 16  # body radius samples under a root chord for the equivalent aero root
 ROOT_EMBED_MARGIN_M = 0.001  # a lofted panel's root airfoil ends up this far inside the outer body (embedded_root_fraction)
 ROOT_EMBED_BISECTIONS = 24  # halvings of the inward search: a few nanometres on a 0.1 m panel
-PROP_SHAFT_LEN_M = 0.015
+# The electric motor body is a 2807 drawing (stator 28 x 7 mm) scaled to the motorlib stator (motor_body):
+# representative, not the real motor's dimensions.
+MOTOR_REFERENCE_STATOR_DIAMETER_M = 0.028
+MOTOR_REFERENCE_BELL_DIAMETER_M = 0.0329
+MOTOR_REFERENCE_BELL_OVERHANG_M = 0.01365 - 0.007  # bell length beyond the stator height
+MOTOR_REFERENCE_BASE_DIAMETER_M = 0.025
+MOTOR_REFERENCE_BASE_THICKNESS_M = 0.003
+MOTOR_REFERENCE_NECK_LENGTH_M = 0.03405 - 0.003 - 0.01365 - 0.014  # the gap between base and bell (overall length less the rest)
+MOTOR_NECK_FRACTION = 0.6  # neck diameter, of the base diameter
+MOTOR_SHAFT_DIAMETER_M = 0.005  # every motor (simplification), not scaled
+MOTOR_REFERENCE_SHAFT_OUT_M = 0.014  # from the bell top (up shaft) or the base (reverse shaft) to the shaft tip; the prop sits mid-way
+OPEN_BASE_HUB_FRACTION = 0.4  # of the base diameter
+OPEN_BASE_ARM_WIDTH_FRACTION = 0.2  # of the base diameter
+OPEN_BASE_ARMS = tuple((0.0, math.sqrt(0.5) * sy, math.sqrt(0.5) * sz) for sy, sz in ((1, 1), (-1, 1), (-1, -1), (1, -1)))  # an X seen along the axis
 CARRY_THROUGH_FLARE_SAMPLES = 24  # points along a carry-through flare or wall fillet
 MAX_RANGED_MASSES = 12  # CG range is found by enumerating min/max of every ranged mass
 STANDARD_GRAVITY_M_S2 = 9.80665
@@ -98,6 +110,19 @@ def resolve_access(access: tuple[AccessEntry, ...]) -> tuple["AccessInstance", .
     return tuple(instances)
 
 
+def resolve_ducts(ducts: tuple[NacaDuct, ...]) -> tuple["DuctInstance", ...]:
+    """One instance per saved duct copy: the seed, plus, with radial, count - 1 copies evenly spaced a full circle
+    about the body axis (the x-aligned line through the origin). The copies share the seed's lip station and are
+    rebuilt on the surface at their own clock, so each one is a valid duct on the body."""
+    instances = []
+    for index, duct in enumerate(ducts):
+        count = 1 if duct.radial is None else duct.radial
+        for copy in range(count):
+            instance_id = duct.name if count == 1 else f"{duct.name} {copy + 1}/{count}"
+            instances.append(DuctInstance(index=index, copy=copy, count=count, instance_id=instance_id, entry=duct))
+    return tuple(instances)
+
+
 @dataclass(frozen=True)
 class BodyStation:
     x_m: float
@@ -131,7 +156,8 @@ class Panel:
     chord_root_m: float
     chord_tip_m: float
     span_m: float
-    incidence_deg: float
+    incidence_deg: float  # at the root
+    tip_incidence_deg: float  # at the tip; linear between (panel_incidence_deg)
     airfoil: str
 
 
@@ -199,14 +225,59 @@ class ControlPlacement:
 
 
 @dataclass(frozen=True)
+class MotorBody:
+    """The electric motor's base, neck, bell and shaft (motor_body): an open base is a hub with OPEN_BASE_ARMS, a closed
+    base a disc; the narrower neck joins the base to the bell."""
+    open_base: bool
+    reverse_shaft: bool  # the shaft runs out through the base, which is then on the prop side
+    bell_diameter_m: float
+    bell_length_m: float
+    base_diameter_m: float
+    base_thickness_m: float
+    neck_diameter_m: float
+    neck_length_m: float  # the gap between base and bell
+    hub_diameter_m: float  # open base
+    arm_width_m: float  # open base
+    shaft_diameter_m: float
+    shaft_out_m: float
+
+    @property
+    def mount_side_m(self) -> float:
+        """Bell centre to the motor's end away from the prop."""
+        return self.bell_length_m / 2.0 + (0.0 if self.reverse_shaft else self.neck_length_m + self.base_thickness_m)
+
+    @property
+    def shaft_tip_m(self) -> float:
+        """Bell centre to the shaft tip."""
+        return self.bell_length_m / 2.0 + (self.neck_length_m + self.base_thickness_m if self.reverse_shaft else 0.0) + self.shaft_out_m
+
+    @property
+    def prop_side_m(self) -> float:
+        """Bell centre to the prop plane: the middle of the shaft's exposed length."""
+        return self.shaft_tip_m - self.shaft_out_m / 2.0
+
+
+@dataclass(frozen=True)
+class AxialSegment:
+    """A cylinder of a motor body on its axis."""
+    start: Vec
+    end: Vec
+    diameter_m: float
+
+
+@dataclass(frozen=True)
 class MotorPlacement:
     name: str
     position: Vec  # motor bell centre
     thrust_dir: Vec  # unit vector of thrust
     prop_center: Vec
     prop_radius_m: float
-    bell_diameter_m: float
-    bell_length_m: float
+    body: MotorBody
+    base: AxialSegment
+    neck: AxialSegment
+    bell: AxialSegment
+    shaft: AxialSegment  # through the prop plane (prop_center) to its tip
+    base_arms: tuple[Vec, ...]  # an open base's arm directions (unit, across the axis); () for a closed base
     pod_stations: tuple[tuple[float, float], ...]  # (x_m, radius_m) on the motor's axis line, nose to tail
     spin: str  # "cw" / "ccw" seen from where the thrust points (from above in hover)
     mount_x_m: float  # surface root LE, or the end mount face clamped to the body; assigns attached mass to a section
@@ -251,6 +322,24 @@ class AccessInstance:
     @property
     def cut_direction(self) -> Vec:
         return self.axes[2]
+
+
+@dataclass(frozen=True)
+class DuctInstance:
+    """One placed duct copy (libs.airframe.NacaDuct): index is its position in airframe.ducts, copy 0 is the seed
+    and 1.. its radial copies (count includes the seed); instance_id is deterministic (the name alone, or
+    "<name> <copy + 1>/<count>"). The derived dimensions live on the entry; the surface frame is computed from the
+    body where it is needed."""
+    index: int
+    copy: int
+    count: int
+    instance_id: str
+    entry: NacaDuct
+
+    @property
+    def clock_deg(self) -> float:
+        """The copy's clock angle: the entry's, turned by the radial pattern."""
+        return self.entry.clock_deg + 360.0 * self.copy / self.count
 
 
 @dataclass(frozen=True)
@@ -331,6 +420,7 @@ class ResolvedAirframe(AccessGeometry):
     controls: tuple[ControlPlacement, ...]
     spars: tuple[SparLine, ...]
     carry_through: tuple[CarryThroughArm, ...]
+    ducts: tuple[DuctInstance, ...]
     mass_points: tuple[MassPoint, ...]
     sections: tuple[SectionMass, ...]
     mass_kg: tuple[float, float]  # at liftoff: rocket propellant loaded
@@ -514,6 +604,49 @@ def body_surface_point(body: Body, x_m: float, angle_rad: float) -> tuple[Vec, f
     return (x_m, radius * math.cos(angle_rad), radius * math.sin(angle_rad)), radius
 
 
+def skin_normal(body: Body, x_m: float, angle_rad: float) -> Vec:
+    """The body surface's outward unit normal at a station and section angle: the superellipse's analytic gradient,
+    exact for every exponent and with no step size."""
+    half_w, half_h = body_half_extents(body, x_m)
+    point, radius = body_surface_point(body, x_m, angle_rad)
+    if radius <= 0.0 or min(half_w, half_h) <= 0.0:
+        return (0.0, math.cos(angle_rad), math.sin(angle_rad))
+    shape = body_section_at(body, x_m).shape
+
+    def slope(value: float, half: float) -> float:
+        ratio = abs(value) / half
+        if ratio <= 0.0:
+            return 0.0
+        return shape * ratio ** (shape - 1.0) * (1.0 if value >= 0.0 else -1.0) / half
+
+    return unit((0.0, slope(point[1], half_w), slope(point[2], half_h)))
+
+
+def skin_clock_for_arc(body: Body, x_m: float, clock0_rad: float, arc_m: float, limit_rad: float = math.pi / 2.0) -> float:
+    """The section angle at signed arc length arc_m across the skin from clock0; raises ValueError when the walk
+    passes limit_rad or leaves the body, so a width that cannot fit its section fails visibly."""
+    if arc_m == 0.0:
+        return clock0_rad
+    step = math.radians(0.25) * (1.0 if arc_m > 0.0 else -1.0)
+    remaining, clock = abs(arc_m), clock0_rad
+    point, radius = body_surface_point(body, x_m, clock)
+    if radius <= 0.0:
+        raise ValueError(f"no body section at x {x_m * 1000:.1f} mm")
+    while remaining > 1e-12:
+        following = clock + step
+        if abs(following - clock0_rad) > limit_rad:
+            raise ValueError(f"needs more than {math.degrees(limit_rad):g} deg around the section at x {x_m * 1000:.1f} mm")
+        following_point, following_radius = body_surface_point(body, x_m, following)
+        if following_radius <= 0.0:
+            raise ValueError(f"no body section at x {x_m * 1000:.1f} mm")
+        piece = math.dist(point, following_point)
+        if piece >= remaining:
+            return clock + step * (remaining / piece)
+        remaining -= piece
+        clock, point = following, following_point
+    return clock
+
+
 def embedded_root_fraction(panel: Panel, coordinates, body: Body) -> float:
     """Span fraction (<= 0) of the panel's own outline carried inward past its root (leading edge, chord and the
     straight loft between root and tip extended alike) at which the root airfoil lies inside the outer body by
@@ -532,11 +665,10 @@ def embedded_root_fraction(panel: Panel, coordinates, body: Body) -> float:
     lowest = -(root[1] * span[1] + root[2] * span[2]) / span_yz_squared
     if lowest >= 0.0:
         return 0.0
-    chord_dir, thick_dir = chord_direction(panel), thickness_direction(panel)
-
     def point(x: float, y: float, fraction: float) -> Vec:
         chord = panel.chord_root_m + fraction * (panel.chord_tip_m - panel.chord_root_m)
-        return tuple(r + fraction * s + chord * (x * c + y * t) for r, s, c, t in zip(root, span, chord_dir, thick_dir))
+        return tuple(r + fraction * s + chord * (x * c + y * t)
+                     for r, s, c, t in zip(root, span, chord_direction(panel, fraction), thickness_direction(panel, fraction)))
 
     def inside(p: Vec) -> bool:
         half_w, half_h = body_half_extents(body, p[0])
@@ -567,6 +699,7 @@ def build_surface(surface: Surface, body: Body) -> SurfaceSet:
     on_axis = surface.root == "axis"
     sweep_len = surface.span_m * math.tan(math.radians(surface.sweep_le_deg))
     incidence = math.radians(surface.incidence_deg)
+    tip_incidence = math.radians(surface.tip_incidence_deg)
     chord_root = surface.chord_root_m
     layout = surface_panel_layout(
         layout=surface.layout, root_radius=1.0, span=surface.span_m, dihedral_deg=surface.dihedral_deg,
@@ -593,7 +726,7 @@ def build_surface(surface: Surface, body: Body) -> SurfaceSet:
             root_le = (surface.x_root_le_m, mean_radius * math.cos(angle), mean_radius * math.sin(angle))
         attach_te = tuple(point - chord_root * math.sin(incidence) * n for point, n in zip(te_point, normal))
         tip_le = (attach_le[0] + sweep_len, attach_le[1] + surface.span_m * dir_y, attach_le[2] + surface.span_m * dir_z)
-        tip_te = tuple(le + surface.chord_tip_m * ((math.cos(incidence) if axis == 0 else 0.0) - math.sin(incidence) * n)
+        tip_te = tuple(le + surface.chord_tip_m * ((math.cos(tip_incidence) if axis == 0 else 0.0) - math.sin(tip_incidence) * n)
                        for axis, (le, n) in enumerate(zip(tip_le, normal)))
         panels.append(Panel(
             surface=surface.name, index=spec["index"], xz_mirror=None if cant else spec["xz_mirror"],
@@ -601,7 +734,7 @@ def build_surface(surface: Surface, body: Body) -> SurfaceSet:
             span_dir=(0.0, dir_y, dir_z), normal=normal,
             chord_root_m=chord_root, chord_tip_m=surface.chord_tip_m,
             span_m=math.dist(root_le[1:], tip_le[1:]),
-            incidence_deg=surface.incidence_deg, airfoil=surface.airfoil,
+            incidence_deg=surface.incidence_deg, tip_incidence_deg=surface.tip_incidence_deg, airfoil=surface.airfoil,
         ))
     # Exposed trapezoid: an axis-rooted panel is cut at the mean body radius; a body-rooted panel is all exposed.
     hidden = mean_radii[0] / surface.span_m if on_axis else 0.0
@@ -646,8 +779,8 @@ def control_hinge_fraction(panel: Panel, control: ControlSurface, span_fraction:
     hinge_point = control_hinge_point(panel, control, span_fraction)
     leading_edge = panel_point(panel, span_fraction, 0.0)
     trailing_edge = panel_point(panel, span_fraction, 1.0)
-    chord_m = dot(tuple(t - l for t, l in zip(trailing_edge, leading_edge)), chord_direction(panel))  # noqa: E741 (renaming changes the JSBSim export fingerprint)
-    fraction = dot(tuple(p - l for p, l in zip(hinge_point, leading_edge)), chord_direction(panel)) / chord_m  # noqa: E741
+    chord_m = dot(tuple(t - l for t, l in zip(trailing_edge, leading_edge)), chord_direction(panel, span_fraction))  # noqa: E741 (renaming changes the JSBSim export fingerprint)
+    fraction = dot(tuple(p - l for p, l in zip(hinge_point, leading_edge)), chord_direction(panel, span_fraction)) / chord_m  # noqa: E741
     span_end = control.span_end if control.kind == "split" else 1.0
     if control.span_start <= span_fraction <= span_end and not 0.0 <= fraction <= 1.0:
         raise AirframeError(
@@ -669,11 +802,12 @@ def control_cut_frames(panel: Panel, control: ControlSurface) -> dict:
     else:
         span_start, span_end = control.span_start, 1.0  # all_moving: from span_start (0 = the root) to the tip
     gap_m = control.gap_m
-    chord_dir = chord_direction(panel)
+    middle = (span_start + span_end) / 2.0  # a twisted panel's cut planes take the control's mid-span chord frame
+    chord_dir = chord_direction(panel, middle)
     span_dir = panel.span_dir
     hinge_start = control_hinge_point(panel, control, span_start)
     hinge_end = control_hinge_point(panel, control, span_end)
-    hinge_dir = unit(cross(tuple(b - a for a, b in zip(hinge_start, hinge_end)), thickness_direction(panel)))
+    hinge_dir = unit(cross(tuple(b - a for a, b in zip(hinge_start, hinge_end)), thickness_direction(panel, middle)))
     if dot(hinge_dir, chord_dir) < 0.0:
         hinge_dir = tuple(-value for value in hinge_dir)
 
@@ -772,9 +906,15 @@ def deflected_outline(control: ControlPlacement, deflection_deg: float) -> tuple
     return tuple(rotated)
 
 
-def chord_direction(panel: Panel) -> Vec:
-    """Unit vector along the chord, leading edge to trailing edge (incidence turns it towards the normal)."""
-    incidence = math.radians(panel.incidence_deg)
+def panel_incidence_deg(panel: Panel, span_fraction: float) -> float:
+    """The local incidence at a span fraction: root to tip, linear."""
+    return panel.incidence_deg + span_fraction * (panel.tip_incidence_deg - panel.incidence_deg)
+
+
+def chord_direction(panel: Panel, span_fraction: float = 0.0) -> Vec:
+    """Unit vector along the local chord at a span fraction (the root by default), leading edge to trailing edge
+    (incidence turns it towards the normal)."""
+    incidence = math.radians(panel_incidence_deg(panel, span_fraction))
     return tuple((math.cos(incidence) if axis == 0 else 0.0) - math.sin(incidence) * panel.normal[axis] for axis in range(3))
 
 
@@ -793,9 +933,10 @@ def closest_approach(origin_a: Vec, dir_a: Vec, origin_b: Vec, dir_b: Vec) -> tu
     return t_a, t_b, math.sqrt(dot(gap, gap))
 
 
-def thickness_direction(panel: Panel) -> Vec:
-    """Unit vector through the section thickness, square to the chord (towards the normal; incidence turns it with the chord)."""
-    incidence = math.radians(panel.incidence_deg)
+def thickness_direction(panel: Panel, span_fraction: float = 0.0) -> Vec:
+    """Unit vector through the local section thickness at a span fraction, square to the chord (towards the normal;
+    incidence turns it with the chord)."""
+    incidence = math.radians(panel_incidence_deg(panel, span_fraction))
     return tuple((math.sin(incidence) if axis == 0 else 0.0) + math.cos(incidence) * panel.normal[axis] for axis in range(3))
 
 
@@ -1010,24 +1151,27 @@ def build_carry_through(surfaces: tuple[SurfaceSet, ...], body: Body, wall_m: fl
     return tuple(arms)
 
 
-def carry_through_mass_points(surfaces: tuple[SurfaceSet, ...], arms: tuple[CarryThroughArm, ...], airframe: Airframe) -> list[MassPoint]:
+def carry_through_mass_points(surfaces: tuple[SurfaceSet, ...], arms: tuple[CarryThroughArm, ...], airframe: Airframe, parts_data: dict) -> list[MassPoint]:
     """The printed carry-through of each surface set, attached with the set: side profile x stem width per arm (the fillets
-    into the wall and the overlap of the arms at the axis are left out) x print bulk density. None where the section it
-    sits in is weighed (its empty mass includes it)."""
+    into the wall and the overlap of the arms at the axis are left out) x the print bulk density, or the section
+    material's solid density when the section is CNC-cut from another material. None where the section it sits in is
+    weighed (its empty mass includes it)."""
     points = []
     for surface_set in surfaces:
         own = [arm for arm in arms if arm.surface == surface_set.name]
         if not own:
             continue
-        section = airframe.sections.per_section[section_index(airframe.sections.cuts_m, surface_set.exposed_x_root_le_m)]
+        index = section_index(airframe.sections.cuts_m, surface_set.exposed_x_root_le_m)
+        section = airframe.sections.per_section[index]
         if section.empty_mass_kg is not None:
             continue
+        density = section_density(airframe, parts_data, index) if not section_printed(airframe, index) else airframe.print.bulk_density_kg_m3
         carry = surface_set.definition.spars.carry_through
         pieces = []
         for arm in own:
             volume = polygon_area(arm.side_profile) * carry.stem_width_m
             centre = tuple(s + arm.wall_distance_m / 2.0 * d for s, d in zip(arm.start, arm.direction))
-            pieces.append((volume * airframe.print.bulk_density_kg_m3, centre, NO_INERTIA))
+            pieces.append((volume * density, centre, NO_INERTIA))
         mass, centroid, inertia = combine_inertia(pieces)
         points.append(MassPoint(f"carry-through {surface_set.name}", "structure", centroid, (mass, mass), True, mass, per_unit(inertia, mass),
                                 surface_set.exposed_x_root_le_m))
@@ -1080,7 +1224,7 @@ def panel_strips(panel: Panel):
         t = (index + 0.5) / SPAN_STRIPS
         chord = panel.chord_root_m + (panel.chord_tip_m - panel.chord_root_m) * t
         le = tuple(r + (p - r) * t for r, p in zip(panel.root_le, panel.tip_le))
-        incidence = math.radians(panel.incidence_deg)  # mid-chord along the chord line, as the panel outline
+        incidence = math.radians(panel_incidence_deg(panel, t))  # mid-chord along the local chord line, as the panel outline
         yield chord, width, tuple(e + chord / 2.0 * ((math.cos(incidence) if axis == 0 else 0.0) - math.sin(incidence) * n)
                                   for axis, (e, n) in enumerate(zip(le, panel.normal)))
 
@@ -1150,7 +1294,7 @@ def surface_mass_point(surface_set: SurfaceSet, density_kg_m3: float | None, exa
     weight, centroid, inertia = combine_inertia(strips)
     estimate = None
     if density_kg_m3 is not None:
-        unit_section_area = float(asb.Airfoil(definition.airfoil).area())
+        unit_section_area = float(airfoil(definition.airfoil).area())
         cr, ct = definition.chord_root_m, definition.chord_tip_m
         estimate = len(surface_set.panels) * unit_section_area * definition.span_m * (cr * cr + cr * ct + ct * ct) / 3.0 * density_kg_m3
     mass = definition.mass_kg if definition.mass_kg is not None else estimate
@@ -1233,23 +1377,43 @@ def solid_between(body: Body, x0: float, x1: float, volumes: tuple[Volume, ...],
     return mass, centroid, per_unit(inertia, mass)
 
 
-def structure_mass_points(airframe: Airframe, body: Body, density_kg_m3: float, exact: ExactStructure | None = None) -> list[MassPoint]:
+def section_printed(airframe: Airframe, index: int) -> bool:
+    """Whether the section is 3D-printed: no material chosen, or the airframe's print material itself. A section of
+    another material is CNC-cut stock from that material (data/parts/material.json)."""
+    row = airframe.sections.per_section[index]
+    return row.material is None or row.material == airframe.print.material
+
+
+def section_density(airframe: Airframe, parts_data: dict, index: int) -> float | None:
+    """The density of the section's own material in kg/m^3: a printed solid section is priced at the print bulk
+    density (None while its mass is weighed); everything else is a material's solid density: the section's own for a
+    CNC-cut section, the airframe's print material for a printed hollow shell. Carried-through arms are printed and
+    priced separately (carry_through_mass_points)."""
+    if airframe.sections.per_section[index].solid and section_printed(airframe, index):
+        return airframe.print.bulk_density_kg_m3
+    material = airframe.sections.per_section[index].material or airframe.print.material
+    return parts_data["material"][material]["density_kg_m3"]
+
+
+def structure_mass_points(airframe: Airframe, body: Body, parts_data: dict, exact: ExactStructure | None = None) -> list[MassPoint]:
     """One mass point per fuselage section, in section order, then one per coupler. A section is a hollow shell or
-    solid less its volumes; a weighed empty mass keeps the computed centroid and inertia shape. With exact, the built
-    solids give each section's and coupler's mass, centroid and inertia (a weighed mass still replaces the mass)."""
+    solid less its volumes, priced at the density of its own material (section_density: the print bulk density for a
+    printed solid section, a material's solid density for a CNC-cut one); a weighed empty mass keeps the computed
+    centroid and inertia shape. With exact, the built solids give each section's and coupler's mass, centroid and
+    inertia (a weighed mass still replaces the mass)."""
     if exact is not None:
         return _exact_structure_points(airframe, body, exact)
     sections = airframe.sections
     wall = airframe.fuselage.section.wall_radial_m
-    bulk_density = airframe.print.bulk_density_kg_m3
     bounds = [0.0, *sections.cuts_m, body.length_m]
     points = []
     for index, (x0, x1) in enumerate(zip(bounds, bounds[1:])):
         row = sections.per_section[index]
+        density = section_density(airframe, parts_data, index)
         if not row.solid:
-            estimate, centroid, inertia = shell_between(body, x0, x1, wall, density_kg_m3)
-        elif bulk_density is not None:
-            estimate, centroid, inertia = solid_between(body, x0, x1, airframe.volumes, wall, bulk_density)
+            estimate, centroid, inertia = shell_between(body, x0, x1, wall, density)
+        elif density is not None:
+            estimate, centroid, inertia = solid_between(body, x0, x1, airframe.volumes, wall, density)
         else:  # weighed solid section without a bulk density: the shape alone gives centroid and inertia
             estimate, (_, centroid, inertia) = None, solid_between(body, x0, x1, airframe.volumes, wall, 1.0)
         mass = estimate if row.empty_mass_kg is None else row.empty_mass_kg
@@ -1461,13 +1625,47 @@ def motor_route(esc: Vec, motor: MotorPlacement) -> tuple[Vec, ...]:
     return tuple(point for index, point in enumerate(route) if index == 0 or math.dist(point, route[index - 1]) > 1e-9)
 
 
+def motor_body(electric: ElectricPropulsion) -> MotorBody:
+    """The motor body: the reference 2807 scaled by the stator diameter; the bell is the stator height plus the
+    scaled reference overhang."""
+    scale = electric.stator_diameter_m / MOTOR_REFERENCE_STATOR_DIAMETER_M
+    base_diameter = MOTOR_REFERENCE_BASE_DIAMETER_M * scale
+    return MotorBody(
+        open_base=electric.motor_base == "open", reverse_shaft=electric.motor_shaft == "reverse",
+        bell_diameter_m=MOTOR_REFERENCE_BELL_DIAMETER_M * scale, bell_length_m=electric.stator_height_m + MOTOR_REFERENCE_BELL_OVERHANG_M * scale,
+        base_diameter_m=base_diameter, base_thickness_m=MOTOR_REFERENCE_BASE_THICKNESS_M * scale,
+        neck_diameter_m=base_diameter * MOTOR_NECK_FRACTION, neck_length_m=MOTOR_REFERENCE_NECK_LENGTH_M * scale,
+        hub_diameter_m=base_diameter * OPEN_BASE_HUB_FRACTION, arm_width_m=base_diameter * OPEN_BASE_ARM_WIDTH_FRACTION,
+        shaft_diameter_m=MOTOR_SHAFT_DIAMETER_M, shaft_out_m=MOTOR_REFERENCE_SHAFT_OUT_M * scale,
+    )
+
+
+def motor_segments(body: MotorBody, position: Vec, toward_prop: Vec) -> tuple[AxialSegment, AxialSegment, AxialSegment, AxialSegment]:
+    """Base, neck, bell and shaft along the motor axis (toward_prop: unit, from the bell centre to the prop); each
+    segment runs toward the prop."""
+    def at(distance: float) -> Vec:
+        return tuple(p + distance * a for p, a in zip(position, toward_prop))
+    half = body.bell_length_m / 2.0
+    neck_end = half + body.neck_length_m
+    bell = AxialSegment(at(-half), at(half), body.bell_diameter_m)
+    if body.reverse_shaft:
+        neck = AxialSegment(at(half), at(neck_end), body.neck_diameter_m)
+        base = AxialSegment(at(neck_end), at(neck_end + body.base_thickness_m), body.base_diameter_m)
+    else:
+        neck = AxialSegment(at(-neck_end), at(-half), body.neck_diameter_m)
+        base = AxialSegment(at(-neck_end - body.base_thickness_m), at(-neck_end), body.base_diameter_m)
+    shaft_start = base.end if body.reverse_shaft else bell.end
+    return base, neck, bell, AxialSegment(shaft_start, at(body.shaft_tip_m), body.shaft_diameter_m)
+
+
 def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[MotorPlacement, ...]:
     """The electric motors, in mount order (named by mount number); rocket mounts carry rocket motors instead (build_rockets)."""
     propulsion = airframe.propulsion
     if propulsion is None or propulsion.electric is None:
         return ()
     electric = propulsion.electric
-    bell_len = electric.bell_length_m
+    body = motor_body(electric)
+    mount_side = body.mount_side_m
     placements = []  # (name, position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel, mount)
     for number, mount in propulsion.electric_mounts:
         if mount.on == "surface":
@@ -1479,10 +1677,10 @@ def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[
             ]
             mount_x = surface_set.exposed_x_root_le_m
         elif mount.on == "nose":
-            positions = [("nose", (mount.x_offset_m - bell_len / 2.0, 0.0, 0.0), None)]
+            positions = [("nose", (mount.x_offset_m - mount_side, 0.0, 0.0), None)]
             mount_x = min(airframe.fuselage.length_m, max(0.0, mount.x_offset_m))
         else:
-            positions = [("tail", (airframe.fuselage.length_m + mount.x_offset_m + bell_len / 2.0, 0.0, 0.0), None)]
+            positions = [("tail", (airframe.fuselage.length_m + mount.x_offset_m + mount_side, 0.0, 0.0), None)]
             mount_x = min(airframe.fuselage.length_m, max(0.0, airframe.fuselage.length_m + mount.x_offset_m))
         prop_side = -1.0 if mount.direction == "tractor" else 1.0  # tractor prop ahead of the motor (towards the nose)
         tilt = math.radians(mount.thrust_axis_tilt_deg)
@@ -1492,24 +1690,27 @@ def build_motors(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[
             pod_stations = ()
             if mount.pod is not None:
                 pod_radius = mount.pod.diameter_m / 2.0
-                start = position[0] - prop_side * bell_len / 2.0
+                start = position[0] - prop_side * mount_side
                 flat_end = start - prop_side * mount.pod.flat_length_m
                 stations = [(start, pod_radius), (flat_end, pod_radius)]
                 curve = sample_pointed_profile(mount.pod.profile, mount.pod.curve_length_m, pod_radius, POD_PROFILE_SAMPLES)
                 stations += [(flat_end - prop_side * (mount.pod.curve_length_m - x), r) for x, r in curve[:-1]]
                 pod_stations = tuple(sorted(stations))
             placements.append((f"motor {number} {name}", position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel, mount))
-    return tuple(
-        MotorPlacement(
-            name=name, position=position, thrust_dir=thrust_dir,
-            prop_center=tuple(p - prop_side * (bell_len / 2.0 + PROP_SHAFT_LEN_M) * t for p, t in zip(position, thrust_dir)),
-            prop_radius_m=electric.prop_diameter_m / 2.0, bell_diameter_m=electric.bell_diameter_m,
-            bell_length_m=bell_len, pod_stations=pod_stations, spin=spin, mount_x_m=mount_x, panel=panel,
-            mount_holes=mount.holes, mount_clearance_m=mount.clearance_m, mount_face=(position[0] - prop_side * bell_len / 2.0, position[1], position[2]),
+    motors = []
+    for name, position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel, mount in placements:
+        toward_prop = tuple(-prop_side * t for t in thrust_dir)
+        base, neck, bell, shaft = motor_segments(body, position, toward_prop)
+        motors.append(MotorPlacement(
+            name=name, position=position, thrust_dir=thrust_dir, prop_center=tuple(p + body.prop_side_m * a for p, a in zip(position, toward_prop)),
+            prop_radius_m=electric.prop_diameter_m / 2.0,
+            body=body, base=base, neck=neck, bell=bell, shaft=shaft,
+            base_arms=tuple(unit(tuple(c - dot(arm, toward_prop) * a for c, a in zip(arm, toward_prop))) for arm in OPEN_BASE_ARMS) if body.open_base else (),
+            pod_stations=pod_stations, spin=spin, mount_x_m=mount_x, panel=panel,
+            mount_holes=mount.holes, mount_clearance_m=mount.clearance_m, mount_face=(position[0] - prop_side * mount_side, position[1], position[2]),
             mount_inward=(-prop_side, 0.0, 0.0),
-        )
-        for name, position, prop_side, pod_stations, spin, thrust_dir, mount_x, panel, mount in placements
-    )
+        ))
+    return tuple(motors)
 
 
 def build_rockets(airframe: Airframe, surfaces: tuple[SurfaceSet, ...]) -> tuple[RocketPlacement, ...]:
@@ -1693,14 +1894,14 @@ def resolve_airframe(airframe: Airframe, parts_data: dict, exact: ExactStructure
     fitting their volume, the fuselage outside its preset's limits). exact (optional) is the printed structure
     measured on this design's built CAD solids (libs.computed_geometry): it replaces the analytic section, coupler,
     carry-through and surface estimates."""
-    density = parts_data["material"][airframe.print.material]["density_kg_m3"]
     body = build_body(airframe)
     surfaces = tuple(build_surface(surface, body) for surface in airframe.surfaces)
     motors = build_motors(airframe, surfaces)
     rockets = build_rockets(airframe, surfaces)
 
     access_geometry = AccessGeometry(airframe, body, resolve_access(airframe.access))
-    points = structure_mass_points(airframe, body, density, exact)
+    ducts = resolve_ducts(airframe.ducts)
+    points = structure_mass_points(airframe, body, parts_data, exact)
     reinforcement = airframe.fuselage.reinforcement
     if reinforcement is not None:
         points += reinforcement_mass_points(reinforcement, airframe.sections.cuts_m, parts_data["material"][reinforcement.pattern.material]["density_kg_m3"])
@@ -1710,7 +1911,7 @@ def resolve_airframe(airframe: Airframe, parts_data: dict, exact: ExactStructure
     points += spar_mass_points(surfaces, spars, parts_data)
     carry_through = build_carry_through(surfaces, body, airframe.fuselage.section.wall_radial_m)
     if exact is None:  # the built sections carry it: ExactStructure counts it in its section
-        points += carry_through_mass_points(surfaces, carry_through, airframe)
+        points += carry_through_mass_points(surfaces, carry_through, airframe, parts_data)
     wall = airframe.fuselage.section.wall_radial_m
     points += [
         MassPoint(f"volume {volume.name}", "volume", (volume.x_m, volume.y_m, volume.z_m), volume.mass_kg, False, None, volume_inertia(volume, body, wall))
@@ -1721,7 +1922,7 @@ def resolve_airframe(airframe: Airframe, parts_data: dict, exact: ExactStructure
         for part in airframe.parts
     ]
     for motor in motors:
-        bell = cylinder_inertia(motor.bell_diameter_m / 2.0, motor.bell_length_m, "x")
+        bell = cylinder_inertia(motor.body.bell_diameter_m / 2.0, motor.body.bell_length_m, "x")
         points.append(MassPoint(motor.name, "motor", motor.position, (airframe.propulsion.electric.motor_mass_kg,) * 2, False, None, bell, motor.mount_x_m))
         points.append(MassPoint(f"prop {motor.name}", "prop", motor.prop_center, (airframe.propulsion.electric.prop_mass_kg,) * 2, False, None, rotor_inertia(motor.prop_radius_m),
                                 motor.mount_x_m))
@@ -1739,11 +1940,13 @@ def resolve_airframe(airframe: Airframe, parts_data: dict, exact: ExactStructure
 
     resolved = ResolvedAirframe(
         airframe=airframe, body=body, surfaces=surfaces, motors=motors, rockets=rockets, controls=build_controls(surfaces), spars=spars, carry_through=carry_through,
-        access=access_geometry.access, mass_points=points, sections=section_masses,
+        access=access_geometry.access, ducts=ducts, mass_points=points, sections=section_masses,
         mass_kg=(sum(point.mass_kg[0] for point in points), sum(point.mass_kg[1] for point in points)),
         cg_m=center_of_mass(points, nominal), cg_x_range_m=(min(cg_xs), max(cg_xs)),
         inertia_kg_m2=combine_inertia([(mass, point.position, point.inertia_per_kg) for mass, point in zip(nominal, points)])[2],
         reference=build_reference(surfaces, body), wires=build_wires(airframe, motors),
     )
+    from libs.ducts import duct_checks  # libs.ducts builds on this module's surface helpers, so it is imported at call time
     return resolved, (electric_checks(airframe) + volume_checks(airframe, body) + part_checks(airframe, body) + preset_checks(airframe) + socket_checks(airframe, body)
-                      + reinforcement_checks(airframe, body) + spar_checks(surfaces, spars) + rocket_checks(airframe, body, rockets))
+                      + reinforcement_checks(airframe, body) + spar_checks(surfaces, spars) + rocket_checks(airframe, body, rockets)
+                      + duct_checks(airframe, body, ducts))

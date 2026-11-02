@@ -23,6 +23,8 @@ interface EntryFieldProps {
   onValue?: (value: unknown) => void
   /** A derived numeric field whose structural op owns the edit. */
   derivedValue?: number
+  /** Suggestions for a text field (a datalist); the typed value stays free text. */
+  suggestions?: readonly string[]
 }
 
 /**
@@ -43,6 +45,7 @@ export function EntryField({
   width,
   onValue,
   derivedValue,
+  suggestions,
 }: EntryFieldProps): ReactElement {
   const api = useFormApi()
   const id = useId()
@@ -174,6 +177,7 @@ export function EntryField({
           ref={inputRef}
           id={id}
           type="text"
+          list={suggestions === undefined ? undefined : `${id}-suggestions`}
           className={error === '' ? 'field-input' : 'field-input field-invalid'}
           style={width === undefined ? undefined : { width: `${width + 2}ch` }}
           value={text}
@@ -195,6 +199,13 @@ export function EntryField({
             }
           }}
         />
+        {suggestions !== undefined && (
+          <datalist id={`${id}-suggestions`}>
+            {suggestions.map((suggestion) => (
+              <option key={suggestion} value={suggestion} />
+            ))}
+          </datalist>
+        )}
         {error !== '' && <div className="field-error">{error}</div>}
       </div>
       {showLabel && optional && (
@@ -445,7 +456,7 @@ export function Fields({ data, path, context, skip = [], onChoice }: FieldsProps
             </div>
           )
         }
-        return <EntryField key={key} path={childPath} unitKey={key} />
+        return <EntryField key={key} path={childPath} unitKey={key} suggestions={key === 'airfoil' ? context.airfoils : undefined} />
       })}
     </>
   )

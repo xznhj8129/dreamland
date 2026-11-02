@@ -2,6 +2,7 @@ import { useCallback, useEffect, useRef, useState } from 'react'
 import type { ReactElement } from 'react'
 import * as THREE from 'three'
 import { OrbitControls } from 'three/addons/controls/OrbitControls.js'
+import { DropdownMenu } from './DropdownMenu'
 import { buildAirframe, disposeAirframe, isModel3DPayload } from '../airframeMesh'
 import type { AirframeGroups } from '../airframeMesh'
 import type { Model3DBounds, Model3DPayload, Snapshot } from '../types'
@@ -46,12 +47,17 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
   const [transparentSkin, setTransparentSkin] = useState(false)
   const [showGuides, setShowGuides] = useState(false)
   const [showSections, setShowSections] = useState(false)
-  const [showFeatures, setShowFeatures] = useState(true)
+  const [showFeatures, setShowFeatures] = useState(false)
   const [showHatches, setShowHatches] = useState(true)
+  const [showMotors, setShowMotors] = useState(true)
+  const [showProps, setShowProps] = useState(true)
   /** The toggles' latest values, so a payload rebuild reapplies them without rebuilding on a toggle. */
   const showGuidesRef = useRef(showGuides)
   const showSectionsRef = useRef(showSections)
   const showFeaturesRef = useRef(showFeatures)
+  const showHatchesRef = useRef(showHatches)
+  const showMotorsRef = useRef(showMotors)
+  const showPropsRef = useRef(showProps)
 
   const session = snapshot?.session_id ?? -1
   const revision = snapshot?.definition_revision ?? -1
@@ -87,6 +93,16 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
     camera.far = Math.max(distance + radius * 6, 100)
     camera.updateProjectionMatrix()
     controls.update()
+    dirtyRef.current = true
+  }, [])
+
+  /**
+   * Show or hide every mesh of one kind in the main group (the body, panels, controls, parts, motors, props and
+   * hatches live there). The toggle effects below drive it; a payload rebuild reapplies their refs. */
+  const setKindVisible = useCallback((kind: string, visible: boolean): void => {
+    const groups = airframeRef.current
+    if (groups === null) return
+    groups.group.traverse(object => { if (object.userData.kind === kind) object.visible = visible })
     dirtyRef.current = true
   }, [])
 
@@ -194,7 +210,11 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
     groups.sectionGroup.visible = showSectionsRef.current
     groups.featureGroup.visible = showFeaturesRef.current
     scene.add(groups.group, groups.markerGroup, groups.guideGroup, groups.sectionGroup, groups.featureGroup)
-    groups.group.traverse(object => { if (object.userData.kind === 'hatch') object.visible = showHatches })
+    groups.group.traverse(object => {
+      if (object.userData.kind === 'hatch') object.visible = showHatchesRef.current
+      if (object.userData.kind === 'motor') object.visible = showMotorsRef.current
+      if (object.userData.kind === 'prop') object.visible = showPropsRef.current
+    })
     airframeRef.current = groups
     const minimum = new THREE.Vector3(data.bounds.min[0], data.bounds.min[1], data.bounds.min[2])
     const maximum = new THREE.Vector3(data.bounds.max[0], data.bounds.max[1], data.bounds.max[2])
@@ -217,7 +237,7 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
       lastCentreRef.current = centre
     }
     dirtyRef.current = true
-  }, [model, placeCamera, transparentSkin, showHatches])
+  }, [model, placeCamera, transparentSkin])
 
   useEffect(() => {
     showSectionsRef.current = showSections
@@ -236,6 +256,21 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
     if (airframeRef.current !== null) airframeRef.current.featureGroup.visible = showFeatures
     dirtyRef.current = true
   }, [showFeatures])
+
+  useEffect(() => {
+    showHatchesRef.current = showHatches
+    setKindVisible('hatch', showHatches)
+  }, [showHatches, setKindVisible])
+
+  useEffect(() => {
+    showMotorsRef.current = showMotors
+    setKindVisible('motor', showMotors)
+  }, [showMotors, setKindVisible])
+
+  useEffect(() => {
+    showPropsRef.current = showProps
+    setKindVisible('prop', showProps)
+  }, [showProps, setKindVisible])
 
   // Fetch once per session/revision/aero state while the tab is visible; abort a request whose key goes stale.
   useEffect(() => {
@@ -290,25 +325,33 @@ export function ModelView({ snapshot, visible }: { snapshot: Snapshot | null; vi
       data-model-guides={showGuides ? model?.payload.meshes.filter(mesh => mesh.kind === 'loft').length ?? 0 : 0}
       data-model-sections={showSections ? model?.payload.meshes.filter(mesh => mesh.kind === 'section').length ?? 0 : 0}
       data-model-features={showFeatures ? model?.payload.meshes.filter(mesh => mesh.kind === 'feature').length ?? 0 : 0}
+      data-model-hatches={showHatches ? model?.payload.meshes.filter(mesh => mesh.kind === 'hatch').length ?? 0 : 0}
+      data-model-motors={showMotors ? model?.payload.meshes.filter(mesh => mesh.kind === 'motor').length ?? 0 : 0}
+      data-model-props={showProps ? model?.payload.meshes.filter(mesh => mesh.kind === 'prop').length ?? 0 : 0}
+      data-model-ducts={model?.payload.meshes.filter(mesh => mesh.kind === 'duct').length ?? 0}
     >
       <div className="graphics-controls model-controls">
         <div className="model-legend">
           <span className="axes-label">X = Front &nbsp; Y = Right &nbsp; Z = Up</span>
           <span className="axes-label">NP = static estimate</span>
         </div>
-        <div className="button-row" role="group" aria-label="Visibility">
-          <button type="button" aria-pressed={transparentSkin} className={transparentSkin ? 'active' : ''}
-            onClick={() => setTransparentSkin(value => !value)} disabled={model === null}>Transparent skin</button>
-          <button type="button" aria-pressed={showGuides} className={showGuides ? 'active' : ''}
-            onClick={() => setShowGuides(value => !value)} disabled={model === null}>Loft guides</button>
-          <button type="button" aria-pressed={showSections} className={showSections ? 'active' : ''}
-            onClick={() => setShowSections(value => !value)} disabled={model === null}>Sections</button>
-          <button type="button" aria-pressed={showHatches} className={showHatches ? 'active' : ''}
-            onClick={() => setShowHatches(value => !value)} disabled={model === null}>Hatches</button>
-          <button type="button" aria-pressed={showFeatures} className={showFeatures ? 'active' : ''}
-            onClick={() => setShowFeatures(value => !value)} disabled={model === null}>Cuts &amp; holes</button>
-        </div>
         <div className="button-row" role="group" aria-label="Camera views">
+          <DropdownMenu label="Show" disabled={model === null}>
+            {([
+              ['Transparent skin', transparentSkin, setTransparentSkin],
+              ['Loft guides', showGuides, setShowGuides],
+              ['Sections', showSections, setShowSections],
+              ['Hatches', showHatches, setShowHatches],
+              ['Cuts & holes', showFeatures, setShowFeatures],
+              ['Motors', showMotors, setShowMotors],
+              ['Propellers', showProps, setShowProps],
+            ] as const).map(([label, checked, setChecked]) => (
+              <label key={label} className="menu-check" role="menuitemcheckbox" aria-checked={checked}>
+                <input type="checkbox" checked={checked} onChange={() => setChecked(value => !value)} />
+                {label}
+              </label>
+            ))}
+          </DropdownMenu>
           <button type="button" onClick={() => placeCamera(null)} disabled={model === null}>
             Fit view
           </button>

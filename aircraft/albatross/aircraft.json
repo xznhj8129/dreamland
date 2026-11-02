@@ -78,6 +78,7 @@
             "chord_tip_m": 0.11,
             "sweep_le_deg": 2.0,
             "incidence_deg": 2.0,
+            "tip_incidence_deg": 2.0,
             "incidence_mode": "symmetric",
             "airfoil": "mh32",
             "control": {
@@ -136,6 +137,7 @@
             "chord_tip_m": 0.08,
             "sweep_le_deg": 15.0,
             "incidence_deg": 1.0,
+            "tip_incidence_deg": 1.0,
             "incidence_mode": "symmetric",
             "airfoil": "naca0009",
             "control": {
@@ -268,6 +270,7 @@
             "gap_m": 0.0003
         }
     ],
+    "ducts": [],
     "sections": {
         "cuts_m": [
             0.09,
@@ -335,6 +338,8 @@
                 "manufacturer": "Spektrum",
                 "name": "X2216 KV880 V3 3-4S"
             },
+            "motor_base": "open",
+            "motor_shaft": "up",
             "prop": "APC E 9x6",
             "battery": {
                 "model": "custom_liion",

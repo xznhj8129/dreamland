@@ -86,10 +86,9 @@ def enrich_longitudinal_scene(canvas, resolved: ResolvedAirframe, project: Proje
         for panel in surface_set.panels:
             _replace_panel_quad(canvas, panel, surface_index, project, ui_draw)
             coordinates = airfoil_profile(panel.airfoil)
-            direction = chord_direction(panel)
-            thickness = thickness_direction(panel)
-            for leading_edge, chord_m in ((panel.attach_le, panel.chord_root_m), (panel.tip_le, panel.chord_tip_m)):
-                points = [project(point) for point in section_points(leading_edge, chord_m, direction, thickness, coordinates)]
+            for leading_edge, chord_m, fraction in ((panel.attach_le, panel.chord_root_m, 0.0), (panel.tip_le, panel.chord_tip_m, 1.0)):
+                points = [project(point) for point in section_points(leading_edge, chord_m, chord_direction(panel, fraction),
+                                                                      thickness_direction(panel, fraction), coordinates)]
                 outline = tuple(value for point in points for value in point)
                 key = (surface_index, outline)
                 if key in seen:
@@ -143,11 +142,10 @@ def enrich_front_scene(canvas, resolved: ResolvedAirframe, project: Project, ui_
         for panel in surface_set.panels:
             _drop_front_span_line(canvas, panel, project, ui_draw)
             coordinates = airfoil_profile(panel.airfoil)
-            direction = chord_direction(panel)
-            thickness = thickness_direction(panel)
             points: list[tuple[float, float]] = []
-            for leading_edge, chord_m in ((panel.attach_le, panel.chord_root_m), (panel.tip_le, panel.chord_tip_m)):
-                points += [project(point) for point in section_points(leading_edge, chord_m, direction, thickness, coordinates)]
+            for leading_edge, chord_m, fraction in ((panel.attach_le, panel.chord_root_m, 0.0), (panel.tip_le, panel.chord_tip_m, 1.0)):
+                points += [project(point) for point in section_points(leading_edge, chord_m, chord_direction(panel, fraction),
+                                                                       thickness_direction(panel, fraction), coordinates)]
             hull = convex_hull(points)
             canvas.create_polygon([value for point in hull for value in point], outline=ui_draw, fill="", width=PROFILE_WIDTH_PX,
                                   tags=("drag", f"surface:{surface_index}"))
@@ -191,5 +189,5 @@ def enrich_surface_cuts(canvas, resolved: ResolvedAirframe, project: Project) ->
                 fraction = cut / span_m
                 leading_edge = tuple(a + fraction * (b - a) for a, b in zip(panel.attach_le, panel.tip_le))
                 chord = panel.chord_root_m + fraction * (panel.chord_tip_m - panel.chord_root_m)
-                points = section_points(leading_edge, chord, chord_direction(panel), thickness_direction(panel), airfoil_profile(panel.airfoil))
+                points = section_points(leading_edge, chord, chord_direction(panel, fraction), thickness_direction(panel, fraction), airfoil_profile(panel.airfoil))
                 draw_surface_cut(canvas, points, project, ("surface-cut",))

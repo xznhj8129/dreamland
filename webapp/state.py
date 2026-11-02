@@ -63,6 +63,7 @@ class LogEntry:
     title: str
     text: str
     summary: str
+    generation: int | None  # the recompute it describes, shown until a later recompute runs; None = an action's error, kept until cleared
 
 
 class AppState:
@@ -87,9 +88,10 @@ class AppState:
         self.definition_valid = False  # True when the current definition parsed and resolved; False = invalid user text behind a last-valid resolved
         self.status = ""
         self.report: list[ReportLine] = []
-        self.log: list[LogEntry] = []
+        self.log: list[LogEntry] = []  # every entry, append-only; the Log tab shows visible_log()
+        self.log_cleared = 0  # entries before this index were cleared from the Log tab
         self.log_path: Path = LOG_PATH  # tests point this at a temp file (see webapp/test_cad_progress.py)
-        self._last_log_entry: tuple[str, str] | None = None
+        self._last_log_entry: tuple[str, str, int | None] | None = None
         self._aero_queue: queue.Queue[AeroQueueItem] = queue.Queue()
         self._loop: asyncio.AbstractEventLoop | None = None
         self._listeners: list[Callable[[], None]] = []
@@ -155,9 +157,9 @@ class AppState:
             if generation != self.aero_generation:
                 continue
             if invalid_text is not None:
-                self.log_error("Aero not computed", invalid_text)
+                self.log_error("Aero not computed", invalid_text, generation=generation)
             elif error_text is not None:
-                self.log_error("Aero failed", error_text)
+                self.log_error("Aero failed", error_text, generation=generation)
             else:
                 assert self.resolved is not None and aero is not None
                 self.aero = aero
@@ -166,17 +168,26 @@ class AppState:
             changed = True
         return changed
 
-    def log_error(self, title: str, text: str, summary: str | None = None) -> None:
-        """Errors go to the Log; an unchanged repeat is already there (guibuilder.BuilderApp.log_error).
+    def visible_log(self) -> list[LogEntry]:
+        """The Log tab: entries since the last clear, less recompute errors a later recompute replaced."""
+        return [entry for entry in self.log[self.log_cleared:] if entry.generation in (None, self.aero_generation)]
+
+    def clear_log(self) -> None:
+        self.log_cleared = len(self.log)
+        self._last_log_entry = None
+
+    def log_error(self, title: str, text: str, summary: str | None = None, generation: int | None = None) -> None:
+        """Errors go to the Log; an unchanged repeat is already there (guibuilder.BuilderApp.log_error). generation
+        is the recompute (aero_generation) an error describes; None for an action's error.
 
         The Log entry keeps the full text, so the Log tab can show the whole traceback with its context. A copy
         goes to logs/webapp.log as a silent durable record. summary is the one-line headline the views show as
         a message (the full text for non-traceback errors; a caller with better context can pass it in).
         """
         self.status = f"{title} (see Log)"
-        if (title, text) == self._last_log_entry:
+        if (title, text, generation) == self._last_log_entry:
             return
-        self._last_log_entry = (title, text)
+        self._last_log_entry = (title, text, generation)
         headline = summary
         if headline is None and TRACEBACK_HEADER in text:
             headline = _traceback_summary(text)
@@ -184,7 +195,7 @@ class AppState:
             headline = text
         if TRACEBACK_HEADER in text:
             self._write_traceback(title, headline, text)
-        self.log.append(LogEntry(time=time.strftime("%H:%M:%S"), title=title, text=text, summary=headline))
+        self.log.append(LogEntry(time=time.strftime("%H:%M:%S"), title=title, text=text, summary=headline, generation=generation))
 
     def _write_traceback(self, title: str, headline: str, text: str) -> None:
         """Append one traceback to the server log; logging must never raise back into the caller."""
@@ -227,8 +238,9 @@ class AppState:
         """Adopt an edited definition (the user's text, valid or not) and recompute.
 
         The revision bumps whatever the outcome, so the editors rebuild once per accepted edit; a failure keeps
-        the invalid text in place with the last valid resolved airframe behind it, as Tk does. Drag motions pass
-        run_aero=False: they recompute geometry only, exactly like the Tk drag. notify=False suppresses the
+        the invalid text in place and still shows the current setup in the drawing whenever it resolves leniently
+        (state._adopt_drawing), falling back to the last valid resolved airframe only when it cannot. Drag motions
+        pass run_aero=False: they recompute geometry only, exactly like the Tk drag. notify=False suppresses the
         websocket push (the fast drag path renders the returned drawing itself); the revision still bumps.
         """
         self.definition = definition
@@ -239,12 +251,40 @@ class AppState:
         else:
             self.recompute(run_aero=run_aero, notify=False)
 
+    def _adopt_drawing(self) -> bool:
+        """Keep the drawing current when the definition fails its checks: parse leniently (duct joint positions are
+        the drag/release case) and resolve the picture. The definition stays flagged and nothing else changes; the
+        last valid airframe is kept only when the definition cannot be resolved at all (completely undrawable).
+        Returns whether a current airframe was adopted."""
+        try:
+            airframe = parse_airframe(self.definition, self.parts_data, path=f"{self.project.name}/{BUILD_FILE}", duct_joints=False)
+            resolved, _problems = resolve_airframe(airframe, self.parts_data)
+            if self.measured is not None and self.measured.applies_to(resolved, self.parts_data):
+                resolved, _problems = resolve_airframe(airframe, self.parts_data, self.measured.exact)
+        except Exception:
+            return False  # keep the last valid airframe: there is nothing else to draw
+        self.resolved = resolved
+        return True
+
+    def set_definition_drag(self, definition: dict[str, Any]) -> None:
+        """Adopt a drag motion's definition for the live drawing: geometry only, no checks, nothing logged.
+
+        A dragged element is allowed to pass through invalid intermediate positions (a duct crossing a joint band,
+        leaving the body, or reaching a rod); the release's full recompute runs every check and flags the final
+        position. The revision bumps so the editors and the drawing rebuild, but definition_valid, problems, the
+        report and the Log stay untouched: the drag itself must never fail or read as a failure.
+        """
+        self.definition = definition
+        self.definition_revision += 1
+        self._adopt_drawing()
+
     def recompute(self, run_aero: bool = True, notify: bool = True) -> None:
         """Validate and resolve the definition now; aero follows in a background thread unless run_aero is False.
 
-        A failure is logged and leaves the last valid resolved/report/aero in place (guibuilder.recompute plus the
-        global safety net in handle_callback_exception); it never propagates to the caller. notify=False skips
-        every push for this call (the caller answers with the drawing instead).
+        A failure is logged and keeps the definition flagged, but the drawing still shows the current setup whenever
+        the definition resolves leniently for the picture (state._adopt_drawing), and the last valid resolved airframe
+        only when it does not (guibuilder.recompute plus the global safety net in handle_callback_exception); it never
+        propagates to the caller. notify=False skips every push for this call (the caller answers with the drawing).
         """
         self.aero_generation += 1
         try:
@@ -254,13 +294,15 @@ class AppState:
                 resolved, problems = resolve_airframe(airframe, self.parts_data, self.measured.exact)
         except AirframeError as error:
             self.definition_valid = False
-            self.log_error("Definition error", f"{error}\nThe drawing shows the last valid airframe.")
+            drawn = self._adopt_drawing()  # the drawing shows the current setup when it can be resolved at all
+            self.log_error("Definition error", str(error) if drawn else f"{error}\nThe drawing shows the last valid airframe.", generation=self.aero_generation)
             if notify:
                 self.notify()
             return
         except Exception:  # unexpected parse/resolve failure: log the traceback, keep the last valid state
             self.definition_valid = False
-            self.log_error("Definition error", traceback.format_exc())
+            self._adopt_drawing()
+            self.log_error("Definition error", traceback.format_exc(), generation=self.aero_generation)
             if notify:
                 self.notify()
             return
@@ -272,9 +314,9 @@ class AppState:
             try:
                 self.propulsion = propulsion_summary(resolved, self.parts_data)
             except MotorStalled as error:
-                self.log_error("Propulsion", str(error))
+                self.log_error("Propulsion", str(error), generation=self.aero_generation)
             except Exception:  # an unexpected propulsion failure must not abort the recompute
-                self.log_error("Error", traceback.format_exc())
+                self.log_error("Error", traceback.format_exc(), generation=self.aero_generation)
         self.aero = None
         # The mass/geometry/layout report is rebuilt now; the aero report replaces it when the thread lands.
         self.report = build_report_lines(resolved, None, self.problems, self.propulsion, sweep=True)

@@ -23,7 +23,7 @@ EditorView split behavior
     - optional numeric inputs: Auto beside the value (A in Placement cells, pressed = automatic); source under the info control
     - explanatory text under Help; definition errors and status remain visible
     - component pickers: uniform tight vertical rows; name left, detail right; selected row highlighted
-      sections show length and Solid/Hollow; guides show x; surfaces show span; volumes show x; parts show volume or x; mounts show target
+      sections show length, Solid/Hollow and the material when set; guides show x; surfaces show span; volumes show x; parts show volume or x; mounts show target
     - Notes: editable text; blank allowed
 ```
 
@@ -33,12 +33,13 @@ EditorView split behavior
 LeftPane [arrange:column]
 
     * RecomputeHeader [arrange:row]
-    * LeftTabs [ui:tabs]
+    * LeftTabs [ui:tabs]   the open tab is remembered
         Summary
+        Problems   "Problems (n)" while there are any
         Mass
         Aero
         Propulsion
-        Log
+        Log   "Log (n)" while there are entries
 ```
 
 ### RecomputeHeader
@@ -71,10 +72,17 @@ SummaryTab [fill]
 
     * SummaryPanel [fill, scrollable, copyable]
         * Overview [ui:labelled values, bind:analysis.report_pages.summary]
-            airframe, mass, CG, thrust/weight, layout problems, propulsion alerts, static stability estimate
-            geometry collapsed under Geometry details; layout problems link to the affected inspector
-            problems in red (layout problems, unstable margin, no hover), warnings in yellow (marginal margin,
-            parts not modelled, motorlib warnings)
+            airframe, mass, CG, thrust/weight, static stability estimate
+            geometry collapsed under Geometry details
+            problems in red (unstable margin, no hover), warnings in yellow (marginal margin)
+```
+
+### Problems tab
+
+```text
+ProblemsTab [fill, scrollable, copyable]
+    layout problems (red; each links to the affected inspector) and propulsion alerts (parts not modelled, motorlib
+    warnings, yellow); "No problems." when there are none
 ```
 
 ### Detail tabs
@@ -111,6 +119,9 @@ LogTab [fill]
             to logs/webapp.log at the repo root as a durable copy
             a new entry brings the Log tab to the front; the status bar says "<what> (see Log)"; the Summary keeps the
             last valid report, explicitly labelled when the definition is invalid
+            errors of a recompute (definition, propulsion, aero) clear when the next recompute runs: a fixed error
+            goes, a remaining one comes back; other errors (load, save, CAD, requests) stay until cleared
+        - Clear [ui:button]   empties the Log tab
 ```
 
 ## Center Pane
@@ -172,6 +183,9 @@ OrthographicView [fill, switchable, pannable, zoomable]
     - vertical scrollbar -> pan y
 
     - selecting a drawing handle opens its component inspector; inspector selection highlights the handle
+    - the drawing always shows the current definition: a flagged (invalid) definition still draws from a lenient
+      resolve, and the last valid airframe stays only when the definition cannot resolve at all
+    - the drawing never breaks: a feature that fails mid-record leaves everything drawn before it in place
 
     mode Longitudinal
         - draw fuselage in side view
@@ -186,7 +200,7 @@ OrthographicView [fill, switchable, pannable, zoomable]
         - draw the carry-through as dashed pink outlines (each arm's side profile)
         - mouse drag on a spar -> move that set's spars along the root chord (x offset)
         - draw top-left colored point guide: blue CG, red Neutral point, green Lift @ AoA, each with its x from the nose
-        - draw pods, motors, shafts, props, CG, CP, CL
+        - draw pods, motors (base, neck, bell and shaft outlines; an open base as its hub and arms at this roll), props, CG, CP, CL
         - pink projected cut outlines: joint screws, motor bolts, head bores and shaft relief
 
     mode Front
@@ -197,7 +211,8 @@ OrthographicView [fill, switchable, pannable, zoomable]
         - draw wires as yellow dotted lines
         - draw spars as pink lines (solid = through, dashed = stops) and the carry-through as dashed pink outlines
         - draw top-left colored point guide: blue CG, red Neutral point, green Lift @ AoA, each with its x from the nose
-        - draw motor / pod / prop cross-sections
+        - draw motor / pod / prop cross-sections: base (a disc, or an open base's hub and X arms), neck, bell and shaft, far to near
+        - draw each duct's teal surface cut rim (the shape it cuts into the skin; the ramp and tunnel are CAD later)
         - pink projected cut outlines: joint screws, motor bolts, head bores and shaft relief
 ```
 
@@ -206,11 +221,17 @@ OrthographicView [fill, switchable, pannable, zoomable]
 ```text
 3DTab [fill]
 
-    - Separate compact rows: axes/NP legend, visibility toggles, camera buttons
-    - Transparent skin [ui:toggle button]: translucent body, pods, panels and controls; internal parts remain visible
+    - Compact rows: axes/NP legend; Show [ui:dropdown with checkboxes] and the camera buttons
+    - Show holds the visibility checkboxes below
+    - Transparent skin: translucent body, pods, panels and controls; internal parts remain visible
     - Sections: toggle fuselage cross-section outlines and surface print-cut planes; off initially
     - Loft guides: independently toggle fuselage cross-section outlines at loft guides; off initially
-    - Cuts & holes: pink cut-volume outlines for joint screws, motor bolts, head bores and shaft relief; on initially
+    - Hatches: retained access hatch covers, on initially
+    - Cuts & holes: pink cut-volume outlines for joint screws, motor bolts, head bores and shaft relief; off initially
+    - Motors: electric motors (base: a disc or an open base's hub and X arms; neck; bell; 5 mm shaft, the prop mid-way along it) and rocket casings, on initially
+    - Propellers: prop discs, seen from both sides, on initially
+    - Ducts: the skin carries a real opening at each duct's rim (clipped like an access cut) and the flow volume
+      (ramp and tunnel) is lit interior geometry, seen through the opening; with Transparent skin, through the body
     - NP = static estimate; camera retained through transparency changes
     - Three.js model from webapp/model3d.py
     - body-rooted panels start inside the body where the CAD export starts them (no gap over a tapering body)
@@ -241,7 +262,8 @@ RightPane [arrange:column]
             Parts
             Wiring
 
-    the group and the open section are remembered in the browser: leaving the view or reloading comes back to them
+    the group, the open section, the selected item of each kind (surface, section, mount, ...) and the Propulsion
+    Electric / Rocket tab are remembered in the browser: leaving the view or reloading comes back to them
     (a selection made in the drawing still switches to the tab that edits it)
 ```
 
@@ -308,11 +330,13 @@ ReinforcementPanel  (title "Reinforcement (longitudinal rods)")
                new rods run nose end to tail start
     - type [ui:dropdown]
     - material [ui:dropdown]  (data/parts/material.json)
+    - layout [ui:dropdown]: quadrants (default) | horizontal
+        quadrants  -> one rod position per quadrant, mirrored left/right and top/bottom; fields polar_n (all rods),
+                      polar_offset_angle (deg from the horizontal), polar_split (0 = single, 2 = pair),
+                      polar_split_angle (deg: a pair sits at offset +/- this)
+        horizontal -> 2 rods, one each side at 0 and 180 deg from +y, no top or bottom rods; the quadrant fields are hidden
     - diameter, radial position (rod centre from the axis)
-    - polar_n (all rods), polar_offset_angle (deg from the horizontal), polar_split (0 = single, 2 = pair),
-      polar_split_angle (deg: a pair sits at offset +/- this)
     - from x, to x
-    one rod position per quadrant, mirrored left/right and top/bottom
     drawn as dashed lines in the side view and small circles in the front view
 ```
 
@@ -330,17 +354,21 @@ SectionsTab [scrollable]  (group title "Sections (cut lines; drag them in the si
         length mm    keep airframe length; move boundaries and scale the other unfixed sections proportionally
         Fix length   preserve length during automatic resizing; explicit length edits still apply
                      refuse changes when no unfixed section can absorb them; rejected changes leave geometry unchanged
-        joint        that cut's joint [ui:dropdown]: coupler (separate coupler, its mass at the cut), front_male (this
-                     section carries the male end), rear_male (the next section does), none (the sections butt with no
-                     coupler, spigot or screws); empty on the last section
+        joint        that cut's joint [ui:dropdown]: coupler (separate printed part, its mass at the cut), front_male
+                     (this section carries the male spigot at its aft end), rear_male (the next section carries it at
+                     its fore end), none (the sections butt with no coupler, spigot or screws); empty on the last section
         solid        [ui:checkbox]  off = hollow shell wall; on = solid less the volumes inside it
+        material     [ui:dropdown]  default = the print material; another material makes the section CNC-cut stock from
+                     that material (e.g. aluminum, carbon plate): priced at its solid density, not the print densities
         empty g      Auto = geometry estimate; Auto off = weighed printed mass [ui:textbox]
-        calc         computed printed mass (hollow: shell wall x material density; solid: x print bulk density)
+        calc         computed printed mass (hollow: shell wall x the section's material density; solid: x print bulk
+                     density, or the material's solid density when the section is set to another material)
         complete g   Auto = itemised components; Auto off = weighed complete mass [ui:textbox]
         items        itemised mass of everything attached in the section (props with their motor, motors with their mount,
                      wing sets at their root leading edge); a range when it holds a mass range
         Remove end cut & merge sections [ui:button] delete the section's end cut and its joint: the two sections merge, keeping the left one's solid flag,
-                     each weighed mass summed when both had one; mixed measured/automatic masses require clearing or measuring both first
+                     each weighed mass summed when both had one (refused when the two name different materials); mixed
+                     measured/automatic masses require clearing or measuring both first
     * joints: type [ui:dropdown], count (screws per section end), screw, insertion depth, coupler wall, fit clearance,
       socket wall, hole edge dist, hole diameter, hole angle offset, coupler mass
     Cut and section-length edits preserve the body, guides and placements.
@@ -355,6 +383,8 @@ SurfacesTab [arrange:column]
 
     - Add surface set [ui:button]
     * compact surface picker and selected surface inspector: its planform fields, mass (blank = computed), Delete
+      airfoil is typed with suggestions from data/airfoils.json plus AeroSandbox's UIUC database; plate (square edges) and
+      plate-rounded (semicircular ends, radius = half the strip thickness) are straight non-airfoil sections.
       Sections: compact S<n> span-length list; S1 is the attached root, later fixed segments export separately.
         Add before/after below the list: first cut leaves a 15 mm root (half span on shorter panels), later cuts bisect the selected segment.
         Start and End are cut positions in mm from the root; the first Start is 0 and the last End is the fixed wing span (shown read-only; only its Start moves the last cut).
@@ -390,6 +420,19 @@ AccessTab [arrange:column]
       Through all (the whole body)
     - radial pattern: Enable, count (including original), X/Y/Z axis and axis position x/y/z (mm)
       evenly spaced around a full circle; position and orientation rotate together
+    - Ducts (definition ducts[]): NACA cooling inlets on the fuselage skin, below the same tab's cells.
+      Add Duct [ui:button] puts one on the roomiest section that fits it with the joint clearance at both cuts.
+      Fields: name; type NACA; lip X (mm); clock (deg, from +y toward +z, 90 = top); throat depth, inlet width,
+      tunnel length and wall (mm); width : depth and length : width ratios. Derived text under the ratios: throat
+      width, ramp length and ramp angle (never typed). A duct on or within the joint band of a section cut is a
+      definition error; rods and interior volumes it reaches are layout problems.
+    - Duct radial pattern: Enable, count (including original); copies evenly spaced about the body axis from the
+      clock angle, sharing the lip station and dimensions
+    - Simple: teal surface cut rim (the shape it cuts into the skin); drag along the body (Longitudinal) or around
+      it (Front) to set X or the clock; a radial copy drags the seed. A drag never fails or flags: the position is
+      adopted for the drawing, and every check runs when the drag is released
+    - 3D: the skin opens at each duct copy's rim (the access convention) and the ramp/tunnel show as interior
+      geometry through it; Transparent skin shows them through the body
 ```
 
 ## Motor mounts tab
@@ -404,7 +447,9 @@ MotorMountsTab [arrange:column]
     a surface mount puts one motor on every panel of the surface
     - Motor type rocket: no direction, spin, pod or mounting holes (dropped when the type changes; a nose mount moves to the
       tail); X offset is the loaded motor's aft (nozzle) end from the tail face or surface root LE, positive aft; the motor
-      runs forward from there. The motor itself is loaded on the Propulsion tab (Rocket)
+      runs forward from there. The motor itself is loaded on the Propulsion tab (Rocket); a loaded motor bores its
+      casing diameter into the carrying fuselage section or wing and pod, from its front end aft through the nozzle and
+      out of the material behind it
     - deleting a mount takes the rocket motor loaded in it; later mounts' motors follow their mount's new number
     - Mount clearance (mm, added to the bell diameter), electric only, new = 1 mm: everything of the carrying wing and pod
       (or fuselage section) on the motor's side of the mount face, within bell + clearance, is cut away
@@ -473,6 +518,8 @@ SelectionPanel [editable]
 
     - Manufacturer [ui:dropdown, readonly]
     - Motor [ui:search + dropdown, readonly]
+    - Base [ui:dropdown, readonly]   open | closed (plane); new = open
+    - Shaft [ui:dropdown, readonly]   up | reverse (out through the base); new = up
     - Prop [ui:search + dropdown, readonly]
     - ESC [ui:dropdown, readonly]
 
@@ -584,6 +631,10 @@ Numeric entries
 
 Type fields
     - readonly dropdowns
+
+tip_incidence_deg (Surfaces tab, per surface set)
+    - the tip's incidence; the incidence runs linearly from incidence_deg at the root (washout: below it)
+    - new = incidence_deg
 
 incidence_mode (Surfaces tab, per surface set)
     - enum = { symmetric, cant }

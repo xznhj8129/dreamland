@@ -188,6 +188,14 @@ input[type="radio"] {
   padding: 4px 8px;
 }
 
+.menu-check {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 4px 8px;
+  cursor: pointer;
+}
+
 .menu-line input {
   width: 5em;
   padding: 2px 6px;
@@ -533,6 +541,11 @@ button:disabled {
 
 .log-entry {
   margin-bottom: 13px;
+}
+
+.log-clear {
+  float: right;
+  margin: 0 0 8px 8px;
 }
 
 .log-text {

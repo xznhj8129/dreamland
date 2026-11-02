@@ -10,8 +10,8 @@ import { aircraftQuaternion, controlDeflectionDeg } from '../flightPose'
 type LogRows = (number | null)[][]
 type CameraMode = 'orbit' | 'chase' | 'path'
 
-/** The external flight geometry: fuselage and skins, control surfaces and propulsion; no interiors, cuts or spars. */
-const FLIGHT_KINDS: ReadonlySet<string> = new Set(['body', 'panel', 'control', 'prop', 'pod', 'motor'])
+/** The external flight geometry: fuselage, skins and hatch covers, control surfaces and propulsion; no interiors, cuts or spars. */
+const FLIGHT_KINDS: ReadonlySet<string> = new Set(['body', 'panel', 'control', 'prop', 'pod', 'motor', 'hatch'])
 
 // The retired path view's constants (the Tk view: sim_view.py PATH_COLUMNS/PATH_VIEW/colors/limits 43-49, draw_path 471-517).
 const PATH_MIN_HALF_M = 50

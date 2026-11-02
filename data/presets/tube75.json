@@ -22,6 +22,7 @@
         "material": "carbon_rod",
         "diameter_m": 0.0062,
         "radial_position_m": 0.0341,
+        "polar_layout": "quadrants",
         "polar_n": 4,
         "polar_offset_angle": 36,
         "polar_split": 0,

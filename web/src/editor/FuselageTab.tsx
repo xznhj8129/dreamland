@@ -10,7 +10,9 @@ import { isObject } from './patch'
 import { reinforcementForTick } from './reinforcement'
 import { useFormApi } from './session'
 
-const ROD_ENTRY_KEYS = ['diameter_m', 'radial_position_m', 'polar_n', 'polar_offset_angle', 'polar_split', 'polar_split_angle', 'from_x_m', 'to_x_m']
+const ROD_SHARED_KEYS = ['diameter_m', 'radial_position_m']
+const ROD_QUADRANT_KEYS = ['polar_n', 'polar_offset_angle', 'polar_split', 'polar_split_angle']
+const ROD_EXTENT_KEYS = ['from_x_m', 'to_x_m']
 
 /** editor_view.build_fuselage_tab (684-704): preset group, fuselage blocks, reinforcement. */
 export function FuselageTab({ snapshot, onPresetsChanged }: { snapshot: Snapshot; onPresetsChanged: () => Promise<void> }): ReactElement {
@@ -87,6 +89,32 @@ export function FuselageTab({ snapshot, onPresetsChanged }: { snapshot: Snapshot
   const rods = isObject(fuselage.reinforcement) ? fuselage.reinforcement : null
   const section = isObject(fuselage.section) ? fuselage.section : {}
   const materials = Object.keys(context.parts_data.material ?? {}).sort()
+  const rodLayout = rods?.polar_layout === 'horizontal' ? 'horizontal' : 'quadrants'
+
+  /** Choosing a layout writes the fields it owns: horizontal fixes 2 rods at 0/180 deg; switching back to
+   * quadrants keeps a valid quadrant pattern and otherwise restores the 4-rod default. */
+  const setRodLayout = (next: string): void => {
+    if (rods === null) return
+    if (next === 'horizontal') {
+      void api.set(['fuselage', 'reinforcement'], {
+        ...rods,
+        polar_layout: 'horizontal',
+        polar_n: 2,
+        polar_offset_angle: 0,
+        polar_split: 0,
+        polar_split_angle: 0,
+      })
+      return
+    }
+    const n = typeof rods.polar_n === 'number' ? rods.polar_n : 4
+    const split = rods.polar_split === 2 ? 2 : 0
+    const offset = typeof rods.polar_offset_angle === 'number' ? rods.polar_offset_angle : 45
+    const splitAngle = typeof rods.polar_split_angle === 'number' ? rods.polar_split_angle : 0
+    const valid = (split === 2 ? n === 8 : n === 4) && offset > 0 && offset < 90 && (split === 0 || splitAngle > 0)
+    void api.set(['fuselage', 'reinforcement'], valid
+      ? { ...rods, polar_layout: 'quadrants' }
+      : { ...rods, polar_layout: 'quadrants', polar_n: 4, polar_offset_angle: 45, polar_split: 0, polar_split_angle: 0 })
+  }
 
   const renderEnd = (end: 'nose' | 'tail'): ReactElement => {
     const data = isObject(fuselage[end]) ? fuselage[end] : {}
@@ -161,12 +189,26 @@ export function FuselageTab({ snapshot, onPresetsChanged }: { snapshot: Snapshot
               options={materials}
               label={fieldLabel('material', context)}
             />
-            {ROD_ENTRY_KEYS.map((key) => (
+            <ChoiceField
+              path={['fuselage', 'reinforcement', 'polar_layout']}
+              value={rodLayout}
+              options={context.choices.polar_layout ?? ['quadrants', 'horizontal']}
+              label={fieldLabel('polar_layout', context)}
+              onValue={setRodLayout}
+            />
+            {ROD_SHARED_KEYS.map((key) => (
+              <EntryField key={key} path={['fuselage', 'reinforcement', key]} unitKey={key} />
+            ))}
+            {rodLayout === 'quadrants' && ROD_QUADRANT_KEYS.map((key) => (
+              <EntryField key={key} path={['fuselage', 'reinforcement', key]} unitKey={key} />
+            ))}
+            {ROD_EXTENT_KEYS.map((key) => (
               <EntryField key={key} path={['fuselage', 'reinforcement', key]} unitKey={key} />
             ))}
             <HelpNote>
-              one rod position per quadrant, polar_offset_angle (deg) up from the horizontal, mirrored left/right and top/bottom; polar_split 2 = a pair at
-              +/- polar_split_angle (deg), 0 = single; polar_n = all rods
+              {rodLayout === 'horizontal'
+                ? '2 rods, one each side at the horizontal (0 and 180 deg from +y); no top or bottom rods'
+                : 'one rod position per quadrant, polar_offset_angle (deg) up from the horizontal, mirrored left/right and top/bottom; polar_split 2 = a pair at +/- polar_split_angle (deg), 0 = single; polar_n = all rods'}
             </HelpNote>
           </>
         )}

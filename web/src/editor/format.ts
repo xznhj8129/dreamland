@@ -27,7 +27,7 @@ const FIELD_NAMES: Record<string, string> = {
   x_root_le_m: 'Root leading-edge x', chord_root_m: 'Root chord', chord_tip_m: 'Tip chord',
   sweep_le_deg: 'Leading-edge sweep', chord_start: 'Hinge position (chord fraction)',
   span_start: 'Start (span fraction)', span_end: 'End (span fraction)', k_prime: "Parabolic K′",
-  fin_position: 'Fin position', wall_radial_m: 'Radial wall thickness',
+  fin_position: 'Fin position', wall_radial_m: 'Radial wall thickness', polar_layout: 'Rod layout',
   vertical_offset: 'Vertical offset (body radius fraction)', bulk_density_kg_m3: 'Printed bulk density',
   rod_diameter_m: 'Pivot rod diameter', rod_x_offset_m: 'Pivot rod x offset (aft)', rod_y_offset_m: 'Pivot rod y offset (up)',
 }

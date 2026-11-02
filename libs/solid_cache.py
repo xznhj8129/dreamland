@@ -21,7 +21,7 @@ from libs.geometry import ResolvedAirframe
 
 T = TypeVar("T")
 
-SOLID_SOURCES = ("airframe.py", "geometry.py", "print_features.py", "body_solids.py", "access.py", "cad.py", "drawings.py")
+SOLID_SOURCES = ("airframe.py", "geometry.py", "print_features.py", "body_solids.py", "access.py", "ducts.py", "cad.py", "drawings.py")
 _SOURCE_DIGEST = hashlib.sha256(b"".join((Path(__file__).parent / name).read_bytes() for name in SOLID_SOURCES)).hexdigest()
 
 _store: dict[Hashable, object] = {}

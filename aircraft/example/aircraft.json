@@ -88,6 +88,7 @@
             "chord_tip_m": 0.08,
             "sweep_le_deg": 3,
             "incidence_deg": 3.0,
+            "tip_incidence_deg": 3.0,
             "incidence_mode": "symmetric",
             "airfoil": "naca2412",
             "mass_kg": 0.05,
@@ -155,6 +156,7 @@
             "chord_tip_m": 0.07,
             "sweep_le_deg": 5.0,
             "incidence_deg": 0.0,
+            "tip_incidence_deg": 0.0,
             "incidence_mode": "symmetric",
             "airfoil": "naca0008",
             "control": {
@@ -196,6 +198,7 @@
             "chord_tip_m": 0.07,
             "sweep_le_deg": 10,
             "incidence_deg": 0.0,
+            "tip_incidence_deg": 0.0,
             "incidence_mode": "symmetric",
             "airfoil": "naca0008",
             "control": {
@@ -236,6 +239,7 @@
             "chord_tip_m": 0.05,
             "sweep_le_deg": 20,
             "incidence_deg": 0.0,
+            "tip_incidence_deg": 0.0,
             "incidence_mode": "symmetric",
             "airfoil": "naca0012",
             "sections": {
@@ -268,6 +272,8 @@
                 "manufacturer": "Brother Hobby",
                 "name": "Tornado T5 3115 PRO 900"
             },
+            "motor_base": "open",
+            "motor_shaft": "up",
             "prop": "APC SF 9x6",
             "battery": {
                 "model": "commercial",
@@ -373,10 +379,25 @@
             "gap_m": 0.0003
         }
     ],
+    "ducts": [
+        {
+            "name": "ESC cooling",
+            "type": "naca",
+            "x_m": 0.47439,
+            "clock_deg": 0,
+            "throat_depth_m": 0.007,
+            "inlet_width_m": 0.003,
+            "tunnel_length_m": 0.01,
+            "wall_m": 0.002,
+            "width_to_depth": 4,
+            "length_to_width": 2,
+            "radial": 2
+        }
+    ],
     "sections": {
         "cuts_m": [
             0.05801,
-            0.21799,
+            0.22602,
             0.30729,
             0.45109,
             0.6137

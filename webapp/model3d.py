@@ -1,15 +1,15 @@
 """Triangle meshes and markers for the browser's live Three.js view of the resolved airframe.
 
 The view is built from the same resolved model as every other consumer (libs.geometry.resolve_airframe): one
-lightweight triangle mesh per body, wing panel, control surface, volume, placed part, motor, prop, rod and spar,
-plus the resolved CG, the CG/NP/Lift markers and the overall bounds. A control surface's mesh carries its hinge
+lightweight triangle mesh per body, wing panel, control surface, volume, placed part, motor, prop, rod, spar and duct
+flow volume, plus the resolved CG, the CG/NP/Lift markers and the overall bounds. A control surface's mesh carries its hinge
 point, hinge axis, servo output and deflection limits so the client can animate it. World frame is the airframe's
 (x from the nose, y right, z up); the client sets its camera up to +z. The preview uses plain Python geometry (numpy
 only to classify skin triangles against Access cuts): the body lofts the resolved body stations with superellipse_radius, the panels use the exact airfoil sections libs.cad builds its solids from
 (webapp.drawing_enrich.airfoil_profile/section_points) as closed shells (the profile loop wraps and the root/tip
 fan caps close it, and a panel's control is the rear part of that same skin, partitioned at its span and chord
 bounds), everything else is placed from the resolved fields.
-Access previews clip the existing triangle mesh; the editor and live 3D never construct CAD solids.
+Access openings and duct mouths clip the existing triangle mesh; the editor and live 3D never construct CAD solids.
 """
 
 from __future__ import annotations
@@ -20,11 +20,12 @@ from typing import Any
 import numpy as np
 
 from libs.airframe import BATTERY_PART_NAME, BOX_SHAPES
+from libs.ducts import clip_body_mouth, duct_cavity_mesh
 from libs.geometry import (
-    PROP_SHAFT_LEN_M, BodyStation, ResolvedAirframe, body_section_at, chord_direction, control_cut_frames, cross, dot,
+    BodyStation, ResolvedAirframe, body_section_at, chord_direction, control_cut_frames, cross, dot,
     embedded_root_fraction, superellipse_radius, thickness_direction, unit,
 )
-from libs.graphics import FEATURE_COLOR, LOFT_COLOR, PROP_SHAFT_DIAM_M, marker_positions, part_corners
+from libs.graphics import FEATURE_COLOR, LOFT_COLOR, marker_positions, part_corners
 from libs.print_features import joint_holes, motor_mount_openings
 from webapp.drawing_enrich import airfoil_profile, section_points
 
@@ -46,6 +47,8 @@ ROD_COLOR = "#ff66aa"  # rods and spars, as libs/graphics.py ROD_COLOR
 VOLUME_OPACITY = 0.25
 PART_OPACITY = 0.85
 PROP_OPACITY = 0.25
+DUCT_COLOR = "#44ffd4"  # a NACA duct's flow volume; see-through like the cut overlays, but always shown
+DUCT_OPACITY = 1.0  # a lit surface: the skin opens at the rim and the ramp shows through
 SECTION_COLOR = "#33ccff"
 SECTION_OPACITY = 0.12
 SECTION_PLANE_MARGIN = 1.35
@@ -71,10 +74,7 @@ def build_model3d(resolved: ResolvedAirframe, aero: Any | None) -> dict[str, Any
     the airframe frame (libs.geometry.ResolvedAirframe.cg_m).
     """
     meshes: list[dict[str, Any]] = []
-    if resolved.access:
-        meshes.extend(_access_body_meshes(resolved))
-    else:
-        _try_mesh(meshes, lambda: _mesh("body", "body", *_body_mesh(resolved.body.stations), BODY_COLOR))
+    _try_meshes(meshes, lambda: _body_meshes(resolved))
     for surface_index, surface_set in enumerate(resolved.surfaces):
         color = PANEL_COLORS[surface_index % len(PANEL_COLORS)]
         definition = surface_set.definition.control
@@ -125,6 +125,8 @@ def build_model3d(resolved: ResolvedAirframe, aero: Any | None) -> dict[str, Any
         meshes.append(_mesh(hole.name, "feature", *_opening_mesh(hole), FEATURE_COLOR, FEATURE_OPACITY))
     for opening in motor_mount_openings(resolved):
         meshes.append(_mesh(opening.name, "feature", *_opening_mesh(opening), FEATURE_COLOR, FEATURE_OPACITY))
+    for duct in resolved.ducts:  # the flow volume, wrapped on the skin; the printable solid is CAD work (libs.ducts)
+        _try_mesh(meshes, lambda duct=duct: _mesh(duct.instance_id, "duct", *duct_cavity_mesh(duct, resolved.body, mouth_open=True), DUCT_COLOR, DUCT_OPACITY))
     for index, cut in enumerate(resolved.airframe.sections.cuts_m):
         meshes.append(_mesh(f"cut {index + 1}", "section", *_section_plane(resolved, cut), SECTION_COLOR, SECTION_OPACITY))
     for surface_set in resolved.surfaces:
@@ -172,7 +174,7 @@ def _surface_section_plane(panel, fraction: float) -> tuple[list, list]:
     loop = ((-0.05, low - margin), (1.05, low - margin), (1.05, high + margin), (-0.05, high + margin))
     leading_edge = tuple(a + fraction * (b - a) for a, b in zip(panel.attach_le, panel.tip_le))
     chord = panel.chord_root_m + fraction * (panel.chord_tip_m - panel.chord_root_m)
-    return section_points(leading_edge, chord, chord_direction(panel), thickness_direction(panel), loop), [0, 1, 2, 0, 2, 3]
+    return section_points(leading_edge, chord, chord_direction(panel, fraction), thickness_direction(panel, fraction), loop), [0, 1, 2, 0, 2, 3]
 
 
 def _mesh(name: str, kind: str, positions, indices, color: str, opacity: float = 1.0) -> dict[str, Any]:
@@ -255,6 +257,13 @@ def _box(corners) -> tuple[list, list]:
     """A closed box over corners ordered as libs.graphics.part_corners returns them."""
     indices = [index for a, b, c, d in _BOX_QUADS for index in (a, b, c, a, c, d)]
     return [tuple(corner) for corner in corners], indices
+
+
+def _oriented_box(center, frame, half) -> tuple[list, list]:
+    """A box about center along a right-handed frame of unit vectors, half its extent along each."""
+    corners = [tuple(c + s0 * half[0] * e0 + s1 * half[1] * e1 + s2 * half[2] * e2 for c, e0, e1, e2 in zip(center, *frame))
+               for s0 in (-1.0, 1.0) for s1 in (-1.0, 1.0) for s2 in (-1.0, 1.0)]
+    return _box(corners)
 
 
 def _axis_box(center, half) -> tuple[list, list]:
@@ -388,13 +397,11 @@ def _panel_meshes(panel, color: str, definition, placement, body) -> list[dict[s
     same surface with no gap or overlap and the root/tip caps stay with the panel. An all-moving panel's whole
     shell, caps included, is the control and no panel-skin mesh is emitted."""
     coordinates = _closed_profile(airfoil_profile(panel.airfoil))
-    direction = chord_direction(panel)
-    thickness = thickness_direction(panel)
     kind = definition.kind if definition is not None and placement is not None else None
     spans = _split_spans(definition) if kind == "split" else (0.0, 1.0)
     root = embedded_root_fraction(panel, coordinates, body)
     spans = ((root,) if root < 0.0 else ()) + spans
-    rings = [_panel_section(panel, coordinates, direction, thickness, span) for span in spans]
+    rings = [_panel_section(panel, coordinates, chord_direction(panel, span), thickness_direction(panel, span), span) for span in spans]
     count = len(coordinates)
     positions = [point for ring in rings for point in ring]
     root_cap, tip_cap = len(positions), len(positions) + 1
@@ -493,21 +500,28 @@ def _part_mesh(part) -> tuple[list, list]:
 
 
 def _motor_mesh(motor) -> tuple[list, list]:
-    """The bell as a cylinder along thrust_dir, plus the shaft stub out to the prop when there is room for it."""
-    axis = unit(motor.thrust_dir)
-    half = motor.bell_length_m / 2.0
-    bell_start = tuple(c - half * a for c, a in zip(motor.position, axis))
-    bell_end = tuple(c + half * a for c, a in zip(motor.position, axis))
-    parts = [_cylinder(bell_start, bell_end, motor.bell_diameter_m / 2.0)]
-    if PROP_SHAFT_LEN_M > 0.0:
-        face = bell_end if dot(tuple(p - c for p, c in zip(motor.prop_center, motor.position)), axis) >= 0.0 else bell_start
-        parts.append(_cylinder(face, motor.prop_center, PROP_SHAFT_DIAM_M / 2.0))
+    """Base, neck, bell and shaft out to the prop (libs.geometry.motor_segments); an open base is its hub and arms."""
+    base = motor.base
+    parts = [_cylinder(segment.start, segment.end, segment.diameter_m / 2.0) for segment in (motor.neck, motor.bell, motor.shaft)]
+    if not motor.base_arms:
+        parts.append(_cylinder(base.start, base.end, base.diameter_m / 2.0))
+        return _merge(parts)
+    parts.append(_cylinder(base.start, base.end, motor.body.hub_diameter_m / 2.0))
+    axis = unit(tuple(b - a for a, b in zip(base.start, base.end)))
+    centre = tuple((a + b) / 2.0 for a, b in zip(base.start, base.end))
+    reach = base.diameter_m / 2.0
+    half = (reach / 2.0, motor.body.arm_width_m / 2.0, motor.body.base_thickness_m / 2.0)
+    for arm in motor.base_arms:
+        frame = (arm, cross(axis, arm), axis)  # right-handed: arm x across = axis
+        parts.append(_oriented_box(tuple(c + reach / 2.0 * a for c, a in zip(centre, arm)), frame, half))
     return _merge(parts)
 
 
 def _prop_mesh(motor) -> tuple[list, list]:
-    """The prop as a flat disc through prop_center, perpendicular to the thrust direction."""
-    return _disc(motor.prop_center, unit(motor.thrust_dir), motor.prop_radius_m)
+    """The prop as a flat disc through prop_center, perpendicular to the thrust direction, wound both ways so it shows
+    from either side."""
+    positions, indices = _disc(motor.prop_center, unit(motor.thrust_dir), motor.prop_radius_m)
+    return positions, indices + [index for step in range(0, len(indices), 3) for index in (indices[step], indices[step + 2], indices[step + 1])]
 
 
 def _pod_mesh(motor) -> tuple[list, list]:
@@ -677,8 +691,9 @@ def _split_access_triangles(positions, indices, planes):
     return outside, inside + [index for triangle, _row in pending for index in triangle]
 
 
-def _access_body_meshes(resolved):
-    """Preview holes and retained curved hatch skins by clipping triangles, without CAD operations."""
+def _body_meshes(resolved):
+    """The body mesh with every access cut and duct opening clipped in (no CAD operations): holes and duct mouths
+    are openings in the preview skin, and hatch skins are the retained curved pieces."""
     positions, indices = _body_mesh(resolved.body.stations)
     hatches = []
     # Holes own overlaps; hatch skins are retained only from the material still present at their turn.
@@ -692,4 +707,9 @@ def _access_body_meshes(resolved):
                 renumber = {index: number for number, index in enumerate(used)}
                 hatches.append(_mesh(instance.instance_id, "hatch", [positions[index] for index in used],
                                      [renumber[index] for index in retained], FEATURE_COLOR))
+    for duct in resolved.ducts:  # the duct's mouth is a real opening in the skin, one per radial copy
+        try:
+            indices = clip_body_mouth(duct, resolved.body, positions, indices)
+        except Exception:
+            continue  # a duct that does not fit the body has no opening (a layout problem); the body stays intact
     return [_mesh("body", "body", positions, indices, BODY_COLOR), *hatches]

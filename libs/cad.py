@@ -13,24 +13,29 @@ cadquery is imported lazily so the GUI starts light. FreeCAD varsets: libs/varse
 """
 
 import math
+import re
 from collections.abc import Callable
 from dataclasses import dataclass, replace
 
 from libs.access import ACCESS_EPS_MM3, access_composition
+from libs.airfoils import PLATE_NAMES, airfoil
 from libs.airframe import ControlSurface
 from libs.body_solids import (
     CUT_OVERSHOOT_MM, GEOM_EPS_MM, M_TO_MM, _prism, _revolve_profile_solid, _ring, _taper,
     build_body_solid, printed_section_material, section_bounds, section_cavity,
 )
+from libs.ducts import naca_duct_profile
 from libs.geometry import (
-    Body, CarryThroughArm, Panel, ResolvedAirframe, body_half_extents, body_section_at, carry_through_front_profile, carry_through_side_profile,
-    chord_direction, control_cut_frames, embedded_root_fraction, section_index, thickness_direction,
+    Body, CarryThroughArm, DuctInstance, Panel, ResolvedAirframe, body_half_extents, body_section_at, body_surface_point,
+    carry_through_front_profile, carry_through_side_profile, chord_direction, control_cut_frames, embedded_root_fraction,
+    section_index, skin_clock_for_arc, skin_normal, thickness_direction,
 )
 from libs.print_features import joint_hole_stations, joint_holes_at, motor_mount_openings
 from libs.solid_cache import cached
 from libs.volume_moments import NO_MOMENTS, Moments, volume_moments
 
 AIRFOIL_POINTS_PER_SIDE = 40
+PRINTABLE_PART_NAME = re.compile(r"^(?:S\d+|C\d+|CS\d+|H\d+|W\d+_P\d+_S\d+)$")
 PROP_DISC_THICKNESS_MM = 1.0
 FLAT_PLATE_SECTION = ((0.0, 0.01), (1.0, 0.01), (1.0, -0.01), (0.0, -0.01))  # chord fractions, for an airfoil with no thickness
 CARRY_THROUGH_WALL_EMBED = 0.5  # of the wall: carry-through arms reach this far into the tube wall, fusing to it
@@ -42,9 +47,9 @@ Progress = Callable[[str, int, int], None]
 
 
 def _airfoil_section_coordinates(airfoil_name: str):
-    import aerosandbox as asb
-
-    coordinates = asb.Airfoil(airfoil_name).repanel(n_points_per_side=AIRFOIL_POINTS_PER_SIDE).coordinates
+    if airfoil_name in PLATE_NAMES:  # the plate records are already the exact section: straight faces, optional rounded ends
+        return [(float(x), float(y)) for x, y in airfoil(airfoil_name).coordinates]
+    coordinates = airfoil(airfoil_name).repanel(n_points_per_side=AIRFOIL_POINTS_PER_SIDE).coordinates
     thickness = float(coordinates[:, 1].max() - coordinates[:, 1].min())
     if thickness < 1e-4:
         return list(FLAT_PLATE_SECTION)
@@ -62,19 +67,18 @@ def build_wing_solid(panel: Panel, body: Body):
     import cadquery as cq
 
     coordinates = _airfoil_section_coordinates(panel.airfoil)
-    chord_dir = chord_direction(panel)
-    thick_dir = thickness_direction(panel)
 
-    def section_wire(leading_edge, chord_m: float):
+    def section_wire(leading_edge, chord_m: float, span_fraction: float):
         """The airfoil as one spline from the upper trailing edge round the leading edge to the lower one, closed by a
         straight trailing edge (kept sharp): a loft is then two faces per segment, smooth round the leading edge, rather
         than one per sample (slow booleans, and no outline at the leading edge in a hidden-line drawing)."""
         chord_mm = chord_m * M_TO_MM
+        chord_dir, thick_dir = chord_direction(panel, span_fraction), thickness_direction(panel, span_fraction)
         points = [
             cq.Vector(*(leading_edge[axis] * M_TO_MM + chord_mm * (x * chord_dir[axis] + y * thick_dir[axis]) for axis in range(3)))
             for x, y in coordinates
         ]
-        if len(points) == len(FLAT_PLATE_SECTION):
+        if panel.airfoil in PLATE_NAMES or len(points) == len(FLAT_PLATE_SECTION):
             return cq.Wire.makePolygon(points, close=True)
         if (points[0] - points[-1]).Length < GEOM_EPS_MM:
             points = points[:-1]
@@ -83,7 +87,7 @@ def build_wing_solid(panel: Panel, body: Body):
     root = embedded_root_fraction(panel, coordinates, body)
     root_le = tuple(a + root * (b - a) for a, b in zip(panel.attach_le, panel.tip_le))
     root_chord = panel.chord_root_m + root * (panel.chord_tip_m - panel.chord_root_m)
-    wires = [section_wire(root_le, root_chord), section_wire(panel.tip_le, panel.chord_tip_m)]
+    wires = [section_wire(root_le, root_chord, root), section_wire(panel.tip_le, panel.chord_tip_m, 1.0)]
     return cq.Workplane("XY").newObject([cq.Solid.makeLoft(wires, ruled=True)])
 
 
@@ -149,8 +153,8 @@ def build_motor_solid(motor):
     import cadquery as cq
 
     x, y, z = motor.position
-    start = cq.Vector((x - motor.bell_length_m / 2.0) * M_TO_MM, y * M_TO_MM, z * M_TO_MM)
-    solid = cq.Solid.makeCylinder(motor.bell_diameter_m / 2.0 * M_TO_MM, motor.bell_length_m * M_TO_MM, start, cq.Vector(1, 0, 0))
+    start = cq.Vector((x - motor.body.bell_length_m / 2.0) * M_TO_MM, y * M_TO_MM, z * M_TO_MM)
+    solid = cq.Solid.makeCylinder(motor.body.bell_diameter_m / 2.0 * M_TO_MM, motor.body.bell_length_m * M_TO_MM, start, cq.Vector(1, 0, 0))
     return cq.Workplane("XY").newObject([solid])
 
 
@@ -240,12 +244,18 @@ def _build_airframe_pieces(resolved: ResolvedAirframe) -> list[tuple[int, str, o
     access = access_composition(resolved)
     for index, (x0, x1) in enumerate(section_bounds(resolved)):
         section_access = access.get(index)
-        if section_access is None:  # untouched sections keep the existing solid-volume proxy, byte for byte
+        flows = duct_flow_volumes(resolved, index)
+        ducts = duct_solids(resolved, index)
+        if section_access is None and not ducts:  # untouched sections keep the existing solid-volume proxy, byte for byte
             body = build_body_solid(resolved, x0, x1).val()
-        else:  # a section with access exports its printed material, so an opening reaches the real cavity
+        else:  # access or a duct prints: the section exports its printed material, so its opening reaches the real cavity
             body = printed_section_material(resolved, index)
-            if section_access.opening is not None:
+            if section_access is not None and section_access.opening is not None:
                 body = body.cut(section_access.opening)
+            if flows:  # the duct's opening, then its own material: the same order as the section's own build
+                body = body.cut(*flows)
+            if ducts:
+                body = body.fuse(*ducts).clean()
         pieces.append((index, f"S{index + 1:02d}_body", cut_motor_mount_holes(body, resolved), "body"))
         for piece in () if section_access is None else section_access.retained:
             pieces.append((index, piece.part_id, piece.solid, "hatch"))
@@ -620,6 +630,94 @@ def _build_section(resolved: ResolvedAirframe, index: int) -> SectionBuild:
     return replace(build, notes=[*build.notes, *section_access.notes, *_access_support_notes(resolved, index)])
 
 
+# --- Ducts: printed as their own pipeline, added at the end of a section's build ---------------------------------
+DUCT_ACROSS_SAMPLES = 9  # across samples per loft section: the mouth follows the skin's real curvature
+DUCT_RAMP_SAMPLES = 12  # loft stations across the ramp, where the profile opens
+DUCT_TUNNEL_SAMPLES = 3  # loft stations across the straight tunnel
+DUCT_SKIN_STANDOFF_M = 0.0005  # the cutter reaches this far outside the skin, so no zero-thickness skin is left
+DUCT_BOSS_SINK_M = 0.0002  # the duct's material sinks this far into the skin: a coincident fuse face leaves artifacts
+DUCT_OUTLET_OVERSHOOT_M = 0.002  # the lip and the tunnel outlet reach past the material, so both stay open
+
+
+def _duct_loft_section(instance: DuctInstance, body: Body, s_m: float, *, across_extra_m: float, depth_extra_m: float,
+                       min_depth_m: float, standoff_m: float):
+    """One loft section of a duct solid: the skin edge sampled across (so the opening follows the skin), down the
+    right side, back along the floor and up the left side to close. Airframe mm."""
+    import cadquery as cq
+
+    duct = instance.entry
+    depth, half = naca_duct_profile(duct, s_m)
+    deep = max(depth + depth_extra_m, min_depth_m)
+    reach = half + across_extra_m
+    clock0 = math.radians(instance.clock_deg)
+    x_m = duct.x_m + s_m
+    top, floor = [], []
+    for index in range(DUCT_ACROSS_SAMPLES):
+        across = -reach + 2.0 * reach * index / (DUCT_ACROSS_SAMPLES - 1)
+        clock = skin_clock_for_arc(body, x_m, clock0, across)
+        point, _radius = body_surface_point(body, x_m, clock)
+        normal = skin_normal(body, x_m, clock)
+        top.append(cq.Vector(*(M_TO_MM * (point[axis] + standoff_m * normal[axis]) for axis in range(3))))
+        floor.append(cq.Vector(*(M_TO_MM * (point[axis] - deep * normal[axis]) for axis in range(3))))
+    return cq.Wire.makePolygon([*top, *reversed(floor)], close=True)
+
+
+def _duct_stations(instance: DuctInstance) -> list[float]:
+    """Loft stations along a duct in surface coordinates (m): the ramp, where the profile opens to the throat, and
+    the straight tunnel."""
+    duct = instance.entry
+    ramp = [duct.ramp_length_m * index / (DUCT_RAMP_SAMPLES - 1) for index in range(DUCT_RAMP_SAMPLES)]
+    tunnel = [duct.ramp_length_m + duct.tunnel_length_m * index / (DUCT_TUNNEL_SAMPLES - 1) for index in range(1, DUCT_TUNNEL_SAMPLES)]
+    return [*ramp, *tunnel]
+
+
+def duct_boss_and_flow(instance: DuctInstance, body: Body) -> tuple:
+    """One duct as two solids, airframe mm: the stock (material around the flow volume - the side walls, the floor
+    under the ramp, the wall around the mouth, sunk a hair into the skin so the fuse has no coincident faces) and
+    the flow volume itself, its lip and its tunnel outlet reaching past the stock. libs.cad fuses the stock into a
+    section and cuts the flow volume out of it, so the duct is open at the skin and discharges into the body."""
+    import cadquery as cq
+
+    duct = instance.entry
+    stations = _duct_stations(instance)
+    boss = cq.Solid.makeLoft([_duct_loft_section(instance, body, s_m, across_extra_m=duct.wall_m, depth_extra_m=duct.wall_m,
+                                                 min_depth_m=duct.wall_m, standoff_m=-DUCT_BOSS_SINK_M)
+                              for s_m in stations], ruled=True)
+    cutter = cq.Solid.makeLoft([_duct_loft_section(instance, body, s_m, across_extra_m=0.0, depth_extra_m=0.0,
+                                                   min_depth_m=DUCT_BOSS_SINK_M, standoff_m=DUCT_SKIN_STANDOFF_M)
+                                for s_m in (-DUCT_OUTLET_OVERSHOOT_M, *stations, duct.length_m + DUCT_OUTLET_OVERSHOOT_M)], ruled=True)
+    return (cq.Workplane("XY").newObject([boss]).val(), cq.Workplane("XY").newObject([cutter]).val())
+
+
+def duct_solid(instance: DuctInstance, body: Body):
+    """One duct's printable material alone: the stock less its own flow volume (what libs.cad fuses into a section)."""
+    boss, flow = duct_boss_and_flow(instance, body)
+    return boss.cut(flow)
+
+
+def duct_solids(resolved: ResolvedAirframe, index: int) -> list:
+    """The ducts printed in fuselage section index, as their own solids (built once per design, libs.solid_cache)."""
+    return cached(resolved, ("duct solids", index), lambda: _build_duct_solids(resolved, index))
+
+
+def _build_duct_solids(resolved: ResolvedAirframe, index: int) -> list:
+    cuts = resolved.airframe.sections.cuts_m
+    return [duct_solid(instance, resolved.body) for instance in resolved.ducts
+            if section_index(cuts, instance.entry.x_m) == index]
+
+
+def duct_flow_volumes(resolved: ResolvedAirframe, index: int) -> list:
+    """The ducts' flow volumes in fuselage section index: the opening each duct cuts into the section - the skin
+    over its footprint goes and the passage reaches into the body (their material is duct_solids)."""
+    return cached(resolved, ("duct flows", index), lambda: _build_duct_flows(resolved, index))
+
+
+def _build_duct_flows(resolved: ResolvedAirframe, index: int) -> list:
+    cuts = resolved.airframe.sections.cuts_m
+    return [duct_boss_and_flow(instance, resolved.body)[1] for instance in resolved.ducts
+            if section_index(cuts, instance.entry.x_m) == index]
+
+
 def build_section_solid(resolved: ResolvedAirframe, index: int, attachments: list[Attachment], opening=None) -> SectionBuild:
     """One printable fuselage section, built as it would be machined: the stock first, then every cut.
     - Stock: the body between its cuts; every attachment (each panel's fixed side, each pod) clipped to the section's
@@ -695,6 +793,13 @@ def build_section_solid(resolved: ResolvedAirframe, index: int, attachments: lis
         shape = shape.cut(*spar_holes)
         surfaces[owner] = surfaces.get(owner, NO_MOMENTS) - (before - volume_moments(shape))
     shape = cut_motor_mount_holes(shape, resolved).clean()
+    flows = duct_flow_volumes(resolved, index)
+    ducts = duct_solids(resolved, index)
+    if flows:  # a duct opens like any other cut: never through a wing root or pod (the access convention) ...
+        guard = [*pieces, *kept]
+        shape = shape.cut(*(flow.cut(*guard) if guard else flow for flow in flows))
+    if ducts:  # ... and then its own material is added: the duct is its own build, after every cut
+        shape = shape.fuse(*ducts).clean()
     return SectionBuild(shape, notes, SectionLedger(surfaces, pods, spared, volume_moments(shape)))
 
 
@@ -787,11 +892,21 @@ def _build_printable_parts(resolved: ResolvedAirframe, *, progress: Progress | N
     return parts
 
 
+def _remove_stale_printable_parts(directory, names: set[str]) -> None:
+    """Drop files an earlier export wrote for parts the current design no longer has: a cut changed from coupler to
+    front_male must not leave its C0x behind, and a merged section must not leave its Sxx behind."""
+    for extension in ("step", "stl"):
+        for path in directory.glob(f"*.{extension}"):
+            if path.stem not in names and PRINTABLE_PART_NAME.fullmatch(path.stem):
+                path.unlink()
+
+
 def export_sections(resolved: ResolvedAirframe, directory, export_format: str = "step", *, progress: Progress | None = None) -> tuple[list[str], list[str]]:
     """Write every printable part as STEP or STL (export_format, "step" by default): sections S01.., couplers C01..
-    (numbered by their cut) and control surfaces CS1.. (numbered front to back like their placements). Returns one line
-    per part written, and the problems found (root chords past a section end, parts larger than the printer bed, parts
-    that come out in pieces or as an invalid solid).
+    (numbered by their cut) and control surfaces CS1.. (numbered front to back like their placements). Parts a previous
+    export wrote for a design that no longer has them (a coupler changed to a male joint, a merged section) are removed.
+    Returns one line per part written, and the problems found (root chords past a section end, parts larger than the
+    printer bed, parts that come out in pieces or as an invalid solid).
 
     progress (optional): "building <name>" per part as it is built (only on a cache miss), then
     "writing <name>" per part as it is written, done/total = part count."""
@@ -804,6 +919,7 @@ def export_sections(resolved: ResolvedAirframe, directory, export_format: str = 
     directory.mkdir(parents=True, exist_ok=True)
     written, all_notes = [], []
     parts = build_printable_parts(resolved, progress=progress)
+    _remove_stale_printable_parts(directory, {name for name, _shape, _notes in parts})
     for index, (name, shape, notes) in enumerate(parts, start=1):
         if progress is not None:
             progress(f"writing {name}", index, len(parts))

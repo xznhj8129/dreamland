@@ -217,11 +217,8 @@ class DataRepo:
             else:
                 mfgcode = ""
             rm_raw = row.get("Rm")
-            if rm_raw is None or str(rm_raw).strip() == "":
-                rm_ohm = 0.0
-            else:
-                rm_val = float(rm_raw)
-                rm_ohm = rm_val / 1000.0 if rm_val < 1000.0 else rm_val / 1_000_000.0
+            # The tables store Rm in milliohms (the rcplanes.online calculator lists it in ohms).
+            rm_ohm = 0.0 if rm_raw is None or str(rm_raw).strip() == "" else float(rm_raw) / 1000.0
             weight_g = None
             if "EstimatedWeight_g" in row and row["EstimatedWeight_g"]:
                 weight_g = float(row["EstimatedWeight_g"])
@@ -400,7 +397,7 @@ class MotorSim:
         v_bemf = volts_to_motor - volt_drop_int
         motor_rpm = motor_kv_timed * v_bemf if motor_kv_timed > 0 and v_bemf > 0 else 0.0
         if motor_rpm <= 0.0:
-            raise MotorStalled(f"motor overloaded, cannot turn the prop: {motor_current:.0f} A would drop the {pack_v:.1f} V supply to {v_bemf:.1f} V back-EMF (kv {motor_kv_timed:g})")
+            raise MotorStalled(f"motor overloaded, cannot turn the prop: at {motor_current:.0f} A the motor and wiring voltage drop exceeds the {pack_v:.1f} V supply (kv {motor_kv_timed:g})")
 
         fe_loss = volts_to_motor * motor_io_eff
         cu_loss_factor = empirical_factor / self.motor.krpm if self.motor.krpm else 1.0
@@ -433,9 +430,9 @@ class MotorSim:
         duration_min = (pack_cap / 1000.0) / total_current * 60.0 * 0.9 if total_current > 1e-6 else 0.0
 
         warnings = []
-        if motor_current > self.motor.imax:
+        if self.motor.imax > 0.0 and motor_current > self.motor.imax:
             warnings.append("Motor Max Current exceeded!")
-        if motor_current > self.controller.imax:
+        if self.controller.imax > 0.0 and motor_current > self.controller.imax:
             warnings.append("ESC Max Current exceeded!")
         if total_current > self.cell.max_i * cells_parallel:
             warnings.append("Battery Max Current exceeded")

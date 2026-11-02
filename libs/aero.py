@@ -29,8 +29,9 @@ from aerosandbox.aerodynamics.aero_3D.aero_buildup_submodels.fuselage_aerodynami
 from aerosandbox.aerodynamics.aero_3D.singularities.uniform_strength_horseshoe_singularities import calculate_induced_velocity_horseshoe
 from aerosandbox.library.aerodynamics import Cd_cylinder
 
+from libs.airfoils import airfoil as surface_airfoil
 from libs.airframe import ControlSurface
-from libs.geometry import STANDARD_GRAVITY_M_S2, Panel, ResolvedAirframe, control_cut_frames, control_hinge_fraction
+from libs.geometry import STANDARD_GRAVITY_M_S2, Panel, ResolvedAirframe, control_cut_frames, control_hinge_fraction, panel_incidence_deg
 
 AERO_MODEL_SIZE = "large"
 # Beyond about +-35 deg the wind runs backwards along swept vertical fins in asb.LiftingLine's strip model
@@ -192,7 +193,7 @@ def panel_sections(panel: Panel, control: ControlSurface | None, tip_first: bool
     moving = [hinge is not None and (control.kind != "split" or control.span_start <= a and b <= control.span_end) for a, b in segments]
     sections = [
         asb.WingXSec(xyz_le=[r + (t - r) * f for r, t in zip(panel.root_le, panel.tip_le)], chord=panel.chord_root_m + (panel.chord_tip_m - panel.chord_root_m) * f,
-                     twist=panel.incidence_deg, airfoil=asb.Airfoil(panel.airfoil))
+                     twist=panel_incidence_deg(panel, f), airfoil=surface_airfoil(panel.airfoil))
         for f in fractions
     ]
     if tip_first:
@@ -249,7 +250,7 @@ def rotationally_symmetric(resolved: ResolvedAirframe) -> bool:
         tip_y, tip_z = mapped(panel.tip_le[1], panel.tip_le[2])
         span_y, span_z = mapped(panel.span_dir[1], panel.span_dir[2])
         return (round(panel.chord_root_m, 9), round(panel.chord_tip_m, 9), round(panel.span_m, 9),
-                round(panel.incidence_deg, 6), panel.airfoil, round(panel.root_le[0], 9), round(panel.tip_le[0], 9),
+                round(panel.incidence_deg, 6), round(panel.tip_incidence_deg, 6), panel.airfoil, round(panel.root_le[0], 9), round(panel.tip_le[0], 9),
                 round(root_y, 6), round(root_z, 6), round(tip_y, 6), round(tip_z, 6), round(span_y, 6), round(span_z, 6))
 
     if any(abs(station.width_m - station.height_m) > 1e-9 for station in resolved.body.stations):
@@ -285,9 +286,8 @@ def build_asb_airplane(resolved: ResolvedAirframe, moment_reference: tuple[float
             wings.append(wing_type(name=f"{panel.surface}_{panel.index + 1}", symmetric=panel.xz_mirror == "primary", xsecs=sections))
     propulsors = []
     for motor in resolved.motors:
-        x, y, z = motor.position
-        prop_side = 1.0 if motor.prop_center[0] > x else -1.0
-        bell_face = (x + prop_side * motor.bell_length_m / 2.0, motor.bell_diameter_m / 2.0)
+        _x, y, z = motor.position
+        bell_face = (motor.bell.end[0], motor.bell.diameter_m / 2.0)  # the bell's prop-side face
         if motor.pod_stations:
             fuselages.append(asb.Fuselage(name=f"{motor.name} pod", xsecs=[
                 asb.FuselageXSec(xyz_c=[pod_x, y, z], radius=pod_radius) for pod_x, pod_radius in sorted([*motor.pod_stations, bell_face])

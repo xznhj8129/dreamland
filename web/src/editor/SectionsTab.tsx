@@ -1,16 +1,42 @@
-import { useState } from 'react'
+import { useId, useState } from 'react'
 import type { ReactElement } from 'react'
 import { editorOp } from '../store'
-import type { ResolvedSection, Snapshot } from '../types'
+import type { Path, ResolvedSection, Snapshot } from '../types'
 import { Card, CheckboxField, ChoiceField, EntryField, Fields, HelpNote } from './fields'
-import { formatValue } from './format'
+import { fieldLabel, formatValue } from './format'
 import { isObject } from './patch'
 import { ComponentPicker, useComponentIndex, useSelection } from './selection'
 import { useFormApi } from './session'
 
+const CUT_JOINT_LABELS: Record<string, string> = {
+  coupler: 'coupler (separate printed part)',
+  front_male: 'male on this section (at its aft end)',
+  rear_male: 'male on the next section (at its fore end)',
+  none: 'none (butt joint)',
+}
+
 function itemisedLabel(section: ResolvedSection): string {
   const [low, high] = section.complete_itemised_kg
   return low === high ? `${(low * 1000).toFixed(1)} g` : `${(low * 1000).toFixed(1)}–${(high * 1000).toFixed(1)} g`
+}
+
+/** The chosen section's material; blank removes the key, so a printed section falls back to the airframe's print material. */
+function MaterialField({ path, value, options, printMaterial }: { path: Path; value: unknown; options: string[]; printMaterial: string }): ReactElement {
+  const api = useFormApi()
+  const id = useId()
+  const current = value === null || value === undefined ? '' : String(value)
+  return (
+    <div className="form-row">
+      <label className="form-label" htmlFor={id} title={fieldLabel('material', api.context)}>{fieldLabel('material', api.context)}</label>
+      <div className="form-control">
+        <select id={id} className="field-input" value={current}
+          onChange={event => { void (event.target.value === '' ? api.remove(path) : api.set(path, event.target.value)) }}>
+          <option value="">Print material{printMaterial === '' ? '' : ` (${printMaterial})`}</option>
+          {options.map(option => <option key={option} value={option}>{option}</option>)}
+        </select>
+      </div>
+    </div>
+  )
 }
 
 export function SectionsTab({ snapshot }: { snapshot: Snapshot }): ReactElement {
@@ -22,6 +48,9 @@ export function SectionsTab({ snapshot }: { snapshot: Snapshot }): ReactElement 
   const boundaries = [0, ...cuts, fuselage.length_m].map(Number)
   const cutJoints = Array.isArray(sections.cut_joints) ? sections.cut_joints : []
   const rows = Array.isArray(sections.per_section) ? sections.per_section.filter(isObject) : []
+  const materials = Object.keys(api.context.parts_data.material ?? {}).sort()
+  const print = isObject(api.definition.print) ? api.definition.print : {}
+  const printMaterial = typeof print.material === 'string' ? print.material : ''
   const resolved = snapshot.definition_valid && snapshot.resolved?.sections.length === rows.length ? snapshot.resolved.sections : []
   const selected = useComponentIndex('section', rows.length)
   const { select } = useSelection()
@@ -36,7 +65,7 @@ export function SectionsTab({ snapshot }: { snapshot: Snapshot }): ReactElement 
       <HelpNote>Select a section to edit its boundaries, joint and mass. Cuts do not change the fuselage shape.</HelpNote>
       {notice && <div className="field-error">{notice}</div>}
     </Card>
-    <ComponentPicker kind="section" items={rows.map((row, index) => ({ name: `S${index + 1}`, detail: `${formatValue('length_m', boundaries[index + 1]! - boundaries[index]!, api.context)} mm · ${row.solid === true ? 'Solid' : 'Hollow'}` }))} />
+    <ComponentPicker kind="section" items={rows.map((row, index) => ({ name: `S${index + 1}`, detail: `${formatValue('length_m', boundaries[index + 1]! - boundaries[index]!, api.context)} mm · ${row.solid === true ? 'Solid' : 'Hollow'}${typeof row.material === 'string' && row.material !== '' ? ` · ${row.material}` : ''}` }))} />
     <div className="button-row" role="group" aria-label="Add section">
       <button type="button" disabled={!snapshot.definition_valid || rows.length === 0}
         onClick={() => void run({ op: 'section.add_cut', index: selected, side: 'before' })}>Add before</button>
@@ -56,9 +85,11 @@ export function SectionsTab({ snapshot }: { snapshot: Snapshot }): ReactElement 
         <CheckboxField path={['sections','per_section',index,'fixed_length']} checked={row.fixed_length === true} label="Fix length" />
         <HelpNote>Fix preserves length during automatic resizing. Editing length keeps the airframe length and resizes the other unfixed sections proportionally.</HelpNote>
         {index < cuts.length ? <>
-          <ChoiceField path={['sections','cut_joints',index]} value={cutJoints[index]} options={api.context.cut_joints} label="Joint at end cut" />
+          <ChoiceField path={['sections','cut_joints',index]} value={cutJoints[index]} options={api.context.cut_joints} optionLabels={CUT_JOINT_LABELS} label="Joint at end cut" />
         </> : null}
         <CheckboxField path={['sections','per_section',index,'solid']} checked={row.solid === true} label="Solid section" />
+        <MaterialField path={['sections','per_section',index,'material']} value={row.material} options={materials} printMaterial={printMaterial} />
+        <HelpNote>A material other than the print filament makes the section CNC-cut stock: a solid section is priced at that material's solid density instead of the print bulk density.</HelpNote>
         <EntryField path={['sections','per_section',index,'empty_mass_kg']} unitKey="empty_mass_kg" label="Empty mass (g)" optional
           defaultValue={resolved[index]?.empty_estimate_kg ?? undefined} defaultLabel="Geometry estimate" />
         <EntryField path={['sections','per_section',index,'complete_mass_kg']} unitKey="complete_mass_kg" label="Complete mass (g)" optional

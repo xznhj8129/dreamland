@@ -9,6 +9,7 @@ scrollbars behave as in the Tk view.
 from __future__ import annotations
 
 import math
+import traceback
 from typing import Any
 
 from libs.airframe import BATTERY_PART_NAME
@@ -30,7 +31,7 @@ SCROLL_UNIT_PX = 40.0  # editor_view.py on_view_xscroll/on_view_yscroll
 SCROLL_PAGE_FRACTION = 0.9
 
 # Drag handle targets, the definition collections the move op edits (webapp.editor.apply_move).
-TAGGED_TARGETS = ("cut", "loft", "spars", "surface", "volume", "access")  # libs/graphics.py canvas tags
+TAGGED_TARGETS = ("cut", "loft", "spars", "surface", "volume", "access", "duct")  # libs/graphics.py canvas tags
 ALWAYS_X_TARGETS = ("cut", "loft", "spars", "surface", "rod")  # only the body axis moves them, in either view
 HANDLE_OVAL_SAMPLES = 24
 
@@ -264,6 +265,8 @@ def _drag_axes(view: ViewState, target: str) -> tuple[str | None, str | None]:
     unambiguous screen-vertical axis (z and y mix), so vertical is None there. Cuts, spars, surfaces and rods are
     moved only along the body: their horizontal axis is x and they have no vertical axis.
     """
+    if target == "duct":  # the lip moves along the body; the front view drags it around it (editor.apply_move)
+        return ("x", None) if view.mode == "Longitudinal" else ("y", "z")
     if target in ALWAYS_X_TARGETS:
         return "x", None
     horizontal = "x" if view.mode == "Longitudinal" else "y"
@@ -428,13 +431,20 @@ def _handles(state: AppState, view: ViewState, metrics: dict[str, Any], canvas: 
     reinforcement = resolved.airframe.fuselage.reinforcement
     if reinforcement is not None:
         handles += _rod_handles(view, reinforcement, project, metrics)
+    # A duct's grip dot is small and sits where long outlines crowd it (wing root spars): it hit-tests above them.
+    handles.sort(key=lambda handle: handle["target"] == "duct")
     for order, handle in enumerate(handles):
         handle["order"] = order
     return handles
 
 
 def draw(state: AppState, width: float, height: float, control_deflections: dict[int, float]) -> dict[str, Any]:
-    """Draw the active view into a RecordingCanvas; the /api/draw payload, all JSON-safe."""
+    """Draw the active view into a RecordingCanvas; the /api/draw payload, all JSON-safe.
+
+    The drawing never breaks and always shows the current setup: a feature that fails mid-record leaves everything
+    already drawn in place (the failure is printed to the server console, never raised), and the payload still
+    carries the scene so far. Only a definition with nothing resolved at all answers empty.
+    """
     view = ensure_view(state)
     canvas = RecordingCanvas(max(float(width), MIN_CANVAS_PX), max(float(height), MIN_CANVAS_PX))
     resolved = state.resolved
@@ -455,26 +465,31 @@ def draw(state: AppState, width: float, height: float, control_deflections: dict
             "height": height,
         }
     draw_args = (canvas, resolved, state.aero, view.mode, view.roll_deg, UI_DRAW, UI_BG)
-    metrics = draw_canvas_view(*draw_args, view.zoom_scale, view.pan_x, view.pan_y, control_deflections)
-    if view.clamp_pan(metrics):
-        # editor_view.py draw_active_view (lines 337-340): a clamp that bit redraws with the clamped view.
+    metrics: dict[str, Any] = {}
+    try:
         metrics = draw_canvas_view(*draw_args, view.zoom_scale, view.pan_x, view.pan_y, control_deflections)
-    if view.mode == "Longitudinal":
-        # The recorded scene gets the browser-only side-view enrichment; the Tk drawing itself is untouched.
-        enrich_longitudinal_scene(canvas, resolved, _longitudinal_map(metrics), UI_DRAW, ROD_COLOR)
-    else:
-        # The front view gets its panel thickness bands; the recorded straight span lines are replaced.
-        enrich_front_scene(canvas, resolved, _front_map(metrics), UI_DRAW)
+        if view.clamp_pan(metrics):
+            # editor_view.py draw_active_view (lines 337-340): a clamp that bit redraws with the clamped view.
+            metrics = draw_canvas_view(*draw_args, view.zoom_scale, view.pan_x, view.pan_y, control_deflections)
+        if view.mode == "Longitudinal":
+            # The recorded scene gets the browser-only side-view enrichment; the Tk drawing itself is untouched.
+            enrich_longitudinal_scene(canvas, resolved, _longitudinal_map(metrics), UI_DRAW, ROD_COLOR)
+        else:
+            # The front view gets its panel thickness bands; the recorded straight span lines are replaced.
+            enrich_front_scene(canvas, resolved, _front_map(metrics), UI_DRAW)
+    except Exception:  # a drawing failure must never reach the client: keep the scene recorded so far
+        traceback.print_exc()
     view.metrics = metrics
+    handles = _tagged_handles(canvas, view) if not metrics else _handles(state, view, metrics, canvas)  # metrics-less: tagged items only
     return {
         "scene": canvas.items,
-        "handles": _handles(state, view, metrics, canvas),
-        "loft_outlines": front_profile_outlines(resolved, [s.x_m for s in resolved.airframe.fuselage.loft_stations], metrics) if view.mode == "Front" else [],
-        "section_outlines": front_profile_outlines(resolved, [(s.x0_m + s.x1_m) / 2.0 for s in resolved.sections], metrics) if view.mode == "Front" else [],
+        "handles": handles,
+        "loft_outlines": front_profile_outlines(resolved, [s.x_m for s in resolved.airframe.fuselage.loft_stations], metrics) if view.mode == "Front" and metrics else [],
+        "section_outlines": front_profile_outlines(resolved, [(s.x0_m + s.x1_m) / 2.0 for s in resolved.sections], metrics) if view.mode == "Front" and metrics else [],
         "session_id": state.session_id,
         "metrics": metrics,
         "view": _view_payload(view),
-        "scrollbars": view.scrollbar_fractions(metrics),
+        "scrollbars": view.scrollbar_fractions(metrics) if metrics else {"x": {"first": 0.0, "last": 1.0}, "y": {"first": 0.0, "last": 1.0}},
         "roll_display": f"{view.roll_deg:.1f} deg",
         "roll_detents": roll_detents(resolved),
         "width": width,

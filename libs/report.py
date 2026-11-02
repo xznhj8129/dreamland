@@ -79,11 +79,13 @@ def build_report_lines(resolved: ResolvedAirframe, aero: AeroResult | None, prob
             lines.append("                     solid sections: less their volumes, and surfaces: solid airfoil volume, x print.bulk_density_kg_m3)")
     lines.append(f"  Sections         : empty as used ({'exact' if exact else 'estimate'}), complete = everything attached in it, itemised or weighed")
     for index, section in enumerate(resolved.sections):
+        row = airframe.sections.per_section[index]
+        material = "" if row.material is None else f" {row.material}"
         estimate = "-" if section.empty_estimate_kg is None else f"{section.empty_estimate_kg * 1000:.1f}"
         low, high = section.complete_itemised_kg
         itemised = f"{low * 1000:.1f}" if low == high else f"{low * 1000:.1f}-{high * 1000:.1f}"
         complete = f"itemised {itemised} g" if section.complete_kg is None else f"weighed {section.complete_kg * 1000:.1f} g (itemised {itemised} g)"
-        lines.append(f"    S{index + 1} {section.x0_m * 1000:4.0f}-{section.x1_m * 1000:4.0f} mm {'solid ' if section.solid else 'hollow'}  "
+        lines.append(f"    S{index + 1} {section.x0_m * 1000:4.0f}-{section.x1_m * 1000:4.0f} mm {'solid ' if section.solid else 'hollow'}{material}  "
                      f"empty {section.empty_kg * 1000:6.1f} g ({estimate} g)  complete {complete}")
     lines.append("")
     lines.append("Geometry")

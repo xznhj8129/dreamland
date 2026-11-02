@@ -29,7 +29,7 @@ dev = [
 package = false  # an application run from the checkout, not an installed package
 
 [tool.uv.sources]
-inavbench = { path = "vendor/inav-jsbsim-bench", editable = true }  # scripts/setup_vendor.sh (temporary)
+inavbench = { path = "vendor/inav-jsbsim-bench", editable = true }  # ./setup.sh (temporary)
 
 [tool.ruff.lint]
 select = ["E4", "E7", "E9", "F"]  # ruff's classic defaults, pinned so newer ruff releases do not widen the set

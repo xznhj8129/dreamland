@@ -39,6 +39,7 @@ DreamlandWindow [fill]
         SimView
         CADView
         PartEditorView
+        PlaceholderView (Calculators)
 ```
 
 ### Window behavior
@@ -69,7 +70,7 @@ TopBar [docked:top, arrange:row]
             on:click -> ask a new project name, copy the whole project to aircraft/<name>/, save there, continue there
 
     * ViewButtons [arrange:row]
-        - Editor, Aero Analysis, VLM, SIM, CAD, Part Editor
+        - Editor, Aero Analysis, VLM, SIM, CAD, Part Editor, Calculators
             on:click -> raise the view; the visible view's button is highlighted
             VLM disabled and labelled Planned
 
@@ -126,6 +127,7 @@ VLM            -> vlm_view.md
 SIM            -> sim_view.md
 CAD            -> cad_view.md
 Part Editor    -> part_editor_view.md
+Calculators    -> placeholder only (no view yet)
 ```
 
 VLM is a planned, disabled view in the web front end; its engine (the VLM sweep) runs
@@ -135,7 +137,7 @@ headless.
 
 ```text
 Errors (aero failures, load / save / preset errors)
-    - are appended to the Editor view's Log tab
+    - are appended to the Editor view's Log tab; a recompute's errors clear with the next recompute, the rest with Clear
     - an unchanged repeat of the last logged error adds no second line
     - a failed save also shows its message in the top bar; a failed load in its dialog
 ```

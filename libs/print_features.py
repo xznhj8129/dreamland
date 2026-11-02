@@ -8,7 +8,7 @@ import bisect
 import math
 from dataclasses import dataclass
 
-from libs.geometry import MotorPlacement, ResolvedAirframe, Vec, body_section_at, cross, superellipse_radius, unit
+from libs.geometry import MotorPlacement, Panel, ResolvedAirframe, Vec, body_section_at, cross, superellipse_radius, unit
 
 CUT_MARGIN_M = 0.0005
 OPENING_PROFILE_SAMPLES = 24
@@ -120,41 +120,47 @@ def joint_holes(resolved: ResolvedAirframe) -> tuple[JointHole, ...]:
                  for station in joint_hole_stations(resolved, index) for hole in joint_holes_at(resolved, index, station))
 
 
-def _extent_x(resolved: ResolvedAirframe, motor: MotorPlacement, direction: float) -> float:
+def _extent_x(resolved: ResolvedAirframe, panel: Panel | None, pod_stations: tuple[tuple[float, float], ...], face_x: float, direction: float) -> float:
     """The last x of the material that carries a motor, going along x in direction (+1 aft, -1 forward): a surface
-    motor's whole panel and pod; a nose or tail motor's fuselage section on that side of its mount face."""
-    if motor.panel is not None:
-        panel = motor.panel
-        xs = [panel.attach_le[0], panel.attach_te[0], panel.tip_le[0], panel.tip_te[0], *(x for x, _radius in motor.pod_stations)]
+    motor's whole panel and pod; a fuselage motor's section on that side of its mount face (face_x)."""
+    if panel is not None:
+        xs = [panel.attach_le[0], panel.attach_te[0], panel.tip_le[0], panel.tip_te[0], *(x for x, _radius in pod_stations)]
         return max(xs) if direction > 0 else min(xs)
     bounds = (0.0, *resolved.airframe.sections.cuts_m, resolved.body.length_m)
     cuts = resolved.airframe.sections.cuts_m
-    index = bisect.bisect_right(cuts, motor.mount_face[0]) if direction > 0 else bisect.bisect_left(cuts, motor.mount_face[0])
+    index = bisect.bisect_right(cuts, face_x) if direction > 0 else bisect.bisect_left(cuts, face_x)
     return bounds[index + 1] if direction > 0 else bounds[index]
 
 
 def mount_perimeter_m(motor: MotorPlacement) -> float:
     """The mount clearance cut's diameter: the motor bell's plus the mount's clearance."""
-    return motor.bell_diameter_m + motor.mount_clearance_m
+    return motor.body.bell_diameter_m + motor.mount_clearance_m
 
 
 def motor_mount_openings(resolved: ResolvedAirframe) -> tuple[MountOpening, ...]:
     """Each electric motor's mount cuts. The mount clearance: everything of the carrying wing and pod (or fuselage
     section) on the motor's side of the mount face, within the mount's perimeter, so a pod can sit recessed into the
     wing with a channel behind it. With holes: the screw's clearance bores through the mount face and on through the
-    material in front (the screws go in from there), the head bores from the seat depth on, and the shaft relief."""
+    material in front (the screws go in from there), the head bores from the seat depth on, and the shaft relief.
+    Each loaded rocket motor's bore: the casing diameter, from its front end aft through the nozzle and out of the
+    carrying material behind it."""
     openings = []
+    for rocket in resolved.rockets:
+        carrier = None if rocket.panel is None else (rocket.panel.surface, rocket.panel.index)
+        behind = _extent_x(resolved, rocket.panel, (), rocket.nozzle[0], 1.0) - rocket.nozzle[0] + CUT_MARGIN_M  # the nozzle end faces aft
+        openings.append(MountOpening(f'{rocket.name} bore', rocket.nozzle, rocket.thrust_dir, (0., 0.), (0., 0.),
+                                     rocket.motor.diameter_m, -max(behind, CUT_MARGIN_M), rocket.motor.length_m, carrier))
     for motor in resolved.motors:
         inward = motor.mount_inward[0]
         carrier = None if motor.panel is None else (motor.panel.surface, motor.panel.index)
-        behind = (_extent_x(resolved, motor, -inward) - motor.mount_face[0]) * -inward + CUT_MARGIN_M
+        behind = (_extent_x(resolved, motor.panel, motor.pod_stations, motor.mount_face[0], -inward) - motor.mount_face[0]) * -inward + CUT_MARGIN_M
         if behind > 0:
             openings.append(MountOpening(f'{motor.name} mount clearance', motor.mount_face, motor.mount_inward, (0., 0.), (0., 0.),
                                          mount_perimeter_m(motor), -behind, 0.0, carrier))
         holes = motor.mount_holes
         if holes is None:
             continue
-        reach = (_extent_x(resolved, motor, inward) - motor.mount_face[0]) * inward + CUT_MARGIN_M
+        reach = (_extent_x(resolved, motor.panel, motor.pod_stations, motor.mount_face[0], inward) - motor.mount_face[0]) * inward + CUT_MARGIN_M
         if reach <= 0:
             continue
         for number, (start, end) in enumerate(holes.segments_m(), start=1):

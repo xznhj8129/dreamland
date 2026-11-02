@@ -119,27 +119,21 @@ The full list is in [TODO.md](TODO.md).
 
 ## Getting started
 
-Needs git, [uv](https://docs.astral.sh/uv/), Node.js and Docker. uv installs the right Python and every pinned dependency (`pyproject.toml`, `uv.lock`) into a local `.venv`.
-
-First, the INAV JSBSim bench and the INAV SITL build with the stepped clock, cloned into the gitignored `vendor/` (temporary, until both are published). SITL builds in INAV's Docker image; `--host` builds it with the local toolchain instead:
+Needs git, [uv](https://docs.astral.sh/uv/) and Node.js. uv installs the right Python and every pinned dependency (`pyproject.toml`, `uv.lock`) into a local `.venv`.
 
 ```bash
-scripts/setup_vendor.sh
+./run.sh
 ```
 
-Then the Python environment and the browser UI:
+The first run installs (`./setup.sh`): the JSBSim bench in the gitignored `vendor/` (temporary, until it is published), the Python environment and the browser UI. Later runs only catch up the venv and the UI, then start. Arguments go to `webbuilder.py` (`./run.sh aircraft/albatross`). Re-run `./setup.sh` after a vendor pin changes.
 
-```bash
-uv sync
-```
+Flying INAV SITL needs the INAV fork with the stepped clock, built into `vendor/` with the host toolchain (cmake, ninja, ruby, GCC 13 or later), or in INAV's Docker image with `--docker`:
 
 ```bash
-cd web && npm install && npm run build
+./setup.sh --inav
 ```
 
-```bash
-uv run python webbuilder.py aircraft/example
-```
+`--px4` and `--ardupilot` are reserved for PX4 and ArduPilot SITL and do nothing yet.
 
 The full command reference is in [docs/usage.md](docs/usage.md).
 

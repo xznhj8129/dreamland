@@ -56,18 +56,22 @@ fuselage
                     shape; omitted profile keys inherit fuselage.section. Empty = constant default cross-section.
                     Cubic easing joins guides; nose/tail profiles taper the loft. Wall thickness stays global.
   reinforcement     optional longitudinal rods: type cf_rod, material (data/parts/material.json), diameter_m, radial_position_m (rod centre
-                    from the axis), polar_n (all rods), polar_offset_angle (deg from the horizontal, one position per quadrant,
-                    mirrored left/right and top/bottom), polar_split (0 = one rod per position, 2 = a pair at
-                    polar_offset_angle +/- polar_split_angle), polar_split_angle (deg), from_x_m, to_x_m;
-                    rods inside the outer surface and strictly inside their quadrant
+                    from the axis), polar_layout (optional, default quadrants = one position per quadrant, mirrored left/right
+                    and top/bottom; horizontal = one rod each side at 0 and 180 deg, no top/bottom rods), polar_n (all rods: 4 or 8 in
+                    quadrants, 2 horizontal), polar_offset_angle (deg from the horizontal, quadrants only), polar_split
+                    (quadrants only: 0 = one rod per position, 2 = a pair at polar_offset_angle +/- polar_split_angle),
+                    polar_split_angle (deg), from_x_m, to_x_m; rods inside the outer surface and strictly inside their
+                    quadrant (quadrants)
   channels[]        name, diameter_m, from_x_m, to_x_m, angle_deg
 surfaces[]          name, x_root_le_m (must be on the body; chords may overhang the tail),
                     layout (H X + 1 3), fin_position (top/bottom), dihedral_deg, vertical_offset (-1..1),
                     root (body: span from the body surface at the root LE; axis: span from the fuselage axis,
                     panels meet in the centre, e.g. delta tail fins), span_m (per panel, along the panel),
-                    chord_root_m, chord_tip_m, sweep_le_deg, incidence_deg, incidence_mode (symmetric: XZ-mirror
+                    chord_root_m, chord_tip_m, sweep_le_deg, incidence_deg (root), tip_incidence_deg (tip; linear between,
+                    washout below the root), incidence_mode (symmetric: XZ-mirror
                     panels pitched alike, lift like AoA; cant: every panel turned the same way about the body axis,
-                    roll / spin; + = anticlockwise seen from behind), airfoil (AeroSandbox name),
+                    roll / spin; + = anticlockwise seen from behind), airfoil (data/airfoils.json name, including the
+                    plate / plate-rounded sections, or an AeroSandbox name),
                     mass_kg (whole set; optional, absent = computed)
                     sections: cuts_m (ascending span distances from the true panel root, strictly inside span_m);
                       empty = attached fixed panel; first segment stays on the fuselage, later fixed segments export separately;
@@ -109,6 +113,11 @@ propulsion          required when powered, absent when not
   mounts[]          (below) type electric | rocket
   electric          required when a mount is electric (may exist without one): motor, prop, battery, esc, wiring:
   motor             manufacturer, name (motorlib, libs/motorlib/data/motordatav2.csv; needs a stator size; mass from it)
+  motor_base        open (cross, multirotor) | closed (plane)
+  motor_shaft       up (out of the bell top) | reverse (out through the base, which is then on the prop side)
+                    the motor body (base, neck, bell; a 5 mm shaft, the prop mid-way along its exposed length) is a 2807 drawing scaled by the stator diameter, the
+                    bell the stator height plus the scaled overhang: representative, used by the views, aero, mass, CAD
+                    and the mount clearance cut
   prop              motorlib propeller name (libs/motorlib/data/propellers.csv)
   battery           the pack, placed like a part (volume with x/y/z_offset_m, or its own x_m, y_m, z_m); model:
                       commercial: part (data/parts/battery.json: type, s, p, mah, mass, dimensions, connector, optional
@@ -131,6 +140,7 @@ propulsion          required when powered, absent when not
   mounts[]          type electric | rocket. Rocket: on (tail | surface), surface, span_position_m, thrust_axis_tilt_deg,
                     x_offset_m = the loaded motor's aft (nozzle) end from the tail face / surface root LE, positive aft
                     (overhang allowed; the casing must fit the inner wall inside the body); no direction, spin, pod, holes.
+                    A loaded motor bores its casing diameter into the carrying section / wing, front end to out the back.
                     Electric: on (nose | tail | surface); for surface: surface, span_position_m (from panel root),
                     x_offset_m (all mounts; from surface root LE or nose/tail face, positive aft; moves motor and pod);
                     direction (tractor | pusher);
@@ -178,6 +188,21 @@ access[]            saved named holes and hatches (fuselage cuts, retained hatch
                     length, local Y its width, local +Z the cut direction. radial (optional): count (integer >= 1,
                     includes the seed), axis x | y | z and x_m, y_m, z_m (a point on the rotation axis); the seed and
                     every copy are turned 360 * k / count deg about that axis line, position and local axes together.
+ducts[]             saved NACA submerged inlets on the fuselage (libs.ducts; the flow volume, tunnel and placement
+                    checks live there); required, may be empty. name (unique in ducts), type naca, x_m (inlet lip
+                    station, >= 0), clock_deg (around the body from +y toward +z, the rod pattern's polar convention),
+                    throat_depth_m, inlet_width_m, tunnel_length_m, wall_m (each positive), width_to_depth and
+                    length_to_width (positive ratios; the smallest hand-entered set). Derived, never stored: the throat
+                    width = width_to_depth x throat_depth_m, the ramp length = length_to_width x the throat width, and
+                    the ramp angle = the ramp's mean slope atan(throat_depth_m / ramp_length_m); the inlet must be
+                    narrower than the throat. radial (optional whole number >= 1) repeats the duct evenly about the
+                    body axis from clock_deg; the copies share the lip station and the dimensions. The duct runs aft
+                    along the skin; it must fit the body's cross-section and clear the reinforcement rods and interior
+                    volumes (layout problems, libs.ducts.duct_checks). A duct on or within the joint band
+                    (insertion_depth_m + wall_m) of a section cut is a definition error: the socket/coupler occupies
+                    that band and a print seam would run through the duct. CAD builds the printable tunnel at the end
+                    of its section build (a separate pipeline, not section stock); the 3D view previews the flow
+                    volume wrapped on the skin.
 sections
   joints            type radial_screws, count (screws per section end), screw, insertion_depth_m (coupler or spigot into
                     each female end's socket), coupler_wall_m, fit_clearance_m (radial play of coupler, spigot, rods and
@@ -191,9 +216,11 @@ sections
                     is a layout problem (the socket breaks through).
   cuts_m[]          cut stations (ascending, inside the fuselage); section i spans cut i-1 .. cut i; may be empty
                     (one uncut section: the whole fuselage, no couplers)
-  per_section[]     one per section: solid (true: printed solid less the volumes inside it, x print.bulk_density_kg_m3;
-                    fixed_length (optional bool, default false: preserve section length during automatic editor resizing),
-                    false: hollow shell wall), empty_mass_kg (optional: weighed printed mass), complete_mass_kg (optional:
+  per_section[]     one per section: solid (true: solid less the volumes inside it, x print.bulk_density_kg_m3; false:
+                    hollow shell wall x material density), material (optional: data/parts/material.json; another material
+                    makes the section CNC-cut stock, priced at that material's solid density instead of the print
+                    densities), fixed_length (optional bool, default false: preserve section length during automatic
+                    editor resizing), empty_mass_kg (optional: weighed printed mass), complete_mass_kg (optional:
                     weighed printed mass + everything attached in the section, which it replaces: points by position,
                     props with their motor, motors with their mount, surface sets where they meet the body: their exposed root LE)
   cut_joints[]      one per cut: coupler (separate coupler into both sections; sections.joints.coupler_mass_kg at the
@@ -207,7 +234,7 @@ Converted examples: `aircraft/m62v2/` and `aircraft/quadlancer62/` reproduce the
 
 ## 2. Libraries (data/)
 
-- `data/parts/`, tables (one file each): batteries (`battery.json`; mass required, > 0; connector: the battery's own plug, first on the battery run), props (mass; linear between listed diameters, outside them the nearest scaled by diameter^3), materials, connectors (contact_resistance_ohm), mounting patterns (`mounting.json`: holes_mm, screw, outline_mm).
+- `data/parts/`, tables (one file each): batteries (`battery.json`; mass required, > 0; connector: the battery's own plug, first on the battery run), props (mass; linear between listed diameters, outside them the nearest scaled by diameter^3), materials (density_kg_m3; filament plus CNC stock: 5150 aluminum, textolite, FR6, T300 carbon plate), connectors (contact_resistance_ohm), mounting patterns (`mounting.json`: holes_mm, screw, outline_mm).
 - `data/parts/<role>/<name>.json`, one file per product, roles fc, esc, camera, companion, vtx, receiver, gps, servo: generic (true = typical stand-in), mass (g), dimensions l, w, h (mm), mount (mounting.json pattern or null), wiring_origin_mm [x, y, z] (from the box centre, part axes), notes; esc also curr, min_s, max_s. Checked when placed.
 - Motors and props: motorlib (`libs/motorlib`, copied from `dronebuildcalc`), used as published.
 - `rocket_motors/<Manufacturer>_<Designation>.eng`: solid rocket motors, one RASP file each (thrustcurve.org's format, read

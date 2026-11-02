@@ -1,5 +1,7 @@
 import { useSelection } from '../editor/selection'
-import { useEffect, useId, useRef, useState } from 'react'
+import { clearLog } from '../store'
+import { useRememberedState } from '../viewMemory'
+import { useEffect, useId, useRef } from 'react'
 import type { KeyboardEvent, ReactElement } from 'react'
 import type { ComponentSelection, LineLevel, LogEntry, ReportPages, ReportSection } from '../types'
 
@@ -12,6 +14,7 @@ const LEVEL_CLASS: Record<LineLevel, string> = {
 }
 const TABS = [
   { id: 'summary', label: 'Summary' },
+  { id: 'problems', label: 'Problems' },
   { id: 'mass', label: 'Mass' },
   { id: 'aero', label: 'Aero' },
   { id: 'propulsion', label: 'Propulsion' },
@@ -57,10 +60,11 @@ export function ReportSections({ sections, onInspect }: { sections: ReportSectio
 export function ReportPanel({ pages, log, inspectEnabled = true }: { pages: ReportPages | null; log: LogEntry[]; inspectEnabled?: boolean }): ReactElement {
   const { select } = useSelection()
   const inspect: InspectComponent = target => select(target.kind, target.index)
-  const [tab, setTab] = useState<ReportTab>('summary')
+  const [tab, setTab] = useRememberedState<ReportTab>('editor.report-tab', 'summary', value => TABS.some(item => item.id === value))
   const logLengthRef = useRef(0)
   const tabRefs = useRef<(HTMLButtonElement | null)[]>([])
   const id = useId()
+  const problemCount = pages?.problems.reduce((count, section) => count + section.notes.length, 0) ?? 0
 
   useEffect(() => {
     if (log.length > logLengthRef.current) setTab('log')
@@ -89,18 +93,22 @@ export function ReportPanel({ pages, log, inspectEnabled = true }: { pages: Repo
         ref={element => { tabRefs.current[index] = element }}
         className={tab === item.id ? 'tab active' : 'tab'}
         onClick={() => setTab(item.id)} onKeyDown={event => navigateTab(event, index)}>
-        {item.label}
+        {item.id === 'problems' && problemCount > 0 ? `${item.label} (${problemCount})` : item.id === 'log' && log.length > 0 ? `${item.label} (${log.length})` : item.label}
       </button>)}
     </div>
     {TABS.map(item => <div key={item.id} role="tabpanel" id={`${id}-${item.id}-panel`}
       aria-labelledby={`${id}-${item.id}-tab`} hidden={tab !== item.id} tabIndex={0}
       className={item.id === 'log' ? 'report-content report-log' : 'report-content'}>
       {item.id === 'log'
-        ? log.length === 0 ? <p className="report-empty">No errors logged.</p> : log.map((entry, index) =>
-            <div key={index} className="log-entry line-problem">
-              <div className="log-heading"><time>{entry.time}</time><strong>{entry.title}</strong></div>
-              <div className="log-text">{entry.text}</div>
-            </div>)
+        ? log.length === 0 ? <p className="report-empty">No errors logged.</p> : <>
+            <button type="button" className="log-clear" onClick={() => { void clearLog() }}>Clear</button>
+            {log.map((entry, index) =>
+              <div key={index} className="log-entry line-problem">
+                <div className="log-heading"><time>{entry.time}</time><strong>{entry.title}</strong></div>
+                <div className="log-text">{entry.text}</div>
+              </div>)}
+          </>
+        : item.id === 'problems' && pages && pages.problems.length === 0 ? <p className="report-empty">No problems.</p>
         : pages ? <ReportSections sections={pages[item.id]} onInspect={inspectEnabled ? inspect : undefined} /> : <p className="report-empty">No valid analysis yet. See Log for errors.</p>}
     </div>)}
   </div>

@@ -9,9 +9,10 @@ Exact mass, by the estimate each piece replaces and with the density that estima
 the section builds recorded as they fused and cut (libs.cad.SectionLedger) and the volumes of the separate parts: no
 solid is built only to be measured.
 - fuselage section n: its printable part S0n less the surface roots outside the fuselage skin, plus its hatch pieces.
-  Everything inside the skin is the section's. In a hollow section the material inside the bore (carry-through arms,
-  spigot roots) is print bulk density and the rest (the wall) material density; a solid section is bulk density
-  throughout. A body pod outside the skin is the section's too, at bulk density.
+  Everything inside the skin is the section's. In a printed hollow section the material inside the bore (carry-through
+  arms, spigot roots) is print bulk density and the wall material density; a printed solid section is bulk density
+  throughout. A section of another material (CNC-cut) is that material's solid density throughout, hatches included.
+  A body pod outside the skin is the section's too, at bulk density.
 - surface set: its roots outside the fuselage skin, its detached segments W.. and its controls CS.., bulk density.
 - coupler: C0n, material density.
 Volumes, centroids and inertia come from OpenCascade's volume properties of the solids themselves.
@@ -31,7 +32,7 @@ from libs.airframe import Airframe
 from libs.body_solids import section_bounds
 from libs.cad import Progress, airframe_pieces, build_printable_parts, fused_airframe, panel_attachments, section_build
 from libs.drawings import drawing_geometry
-from libs.geometry import ExactPiece, ExactStructure, ResolvedAirframe, resolve_airframe
+from libs.geometry import ExactPiece, ExactStructure, ResolvedAirframe, resolve_airframe, section_density, section_printed
 from libs.solid_cache import cached, design_digest, is_built
 from libs.volume_moments import NO_MOMENTS, Moments, volume_moments
 
@@ -39,9 +40,14 @@ EXACT_MASS_FILE = "exact_mass.json"
 EXACT_MASS_FORMAT = "exact_mass/1"
 
 
-def densities(resolved: ResolvedAirframe, parts_data: dict) -> tuple[float, float | None]:
-    """(print material density, print bulk density) in kg/m^3, as the analytic estimates use them."""
-    return parts_data["material"][resolved.airframe.print.material]["density_kg_m3"], resolved.airframe.print.bulk_density_kg_m3
+def densities(resolved: ResolvedAirframe, parts_data: dict) -> tuple[float, float | None, tuple[float, ...]]:
+    """(print material density, print bulk density, the solid densities of sections using another material) in kg/m^3,
+    as the analytic estimates use them: a measured design stays tied to every density its mass was measured with."""
+    airframe = resolved.airframe
+    others = tuple(sorted(parts_data["material"][row.material]["density_kg_m3"]
+                          for row in airframe.sections.per_section
+                          if row.material is not None and row.material != airframe.print.material))
+    return parts_data["material"][airframe.print.material]["density_kg_m3"], airframe.print.bulk_density_kg_m3, others
 
 
 def _bulk(bulk_density: float | None, what: str) -> float:
@@ -54,11 +60,12 @@ def exact_structure(resolved: ResolvedAirframe, parts_data: dict, *, progress: P
     """The printed structure measured on the built printable parts (built once per design and densities).
 
     progress (optional): "building <part>" while the printable parts are built, then "measuring <part>"."""
-    material, bulk = densities(resolved, parts_data)
-    return cached(resolved, ("exact structure", material, bulk), lambda: _measure(resolved, material, bulk, progress))
+    material, bulk, section_densities = densities(resolved, parts_data)
+    return cached(resolved, ("exact structure", material, bulk, section_densities),
+                  lambda: _measure(resolved, parts_data, material, bulk, progress))
 
 
-def _measure(resolved: ResolvedAirframe, material: float, bulk: float | None, progress: Progress | None) -> ExactStructure:
+def _measure(resolved: ResolvedAirframe, parts_data: dict, material: float, bulk: float | None, progress: Progress | None) -> ExactStructure:
     """The exact structure from the printable parts and their section ledgers (libs.cad.SectionLedger): sums and
     differences of volume moments the builds recorded, and the volumes of separate parts. No solid is built here."""
     airframe = resolved.airframe
@@ -74,6 +81,9 @@ def _measure(resolved: ResolvedAirframe, material: float, bulk: float | None, pr
         name = f"S{index + 1:02d}"
         if progress is not None:
             progress(f"measuring {name}", index + 1, count)
+        row = airframe.sections.per_section[index]
+        printed = section_printed(airframe, index)
+        density = section_density(airframe, parts_data, index)
         ledger = section_build(resolved, index).ledger
         roots = NO_MOMENTS
         for owner, moments in ledger.surfaces.items():
@@ -81,16 +91,19 @@ def _measure(resolved: ResolvedAirframe, material: float, bulk: float | None, pr
             roots = roots + moments
         rest = ledger.total - roots - ledger.pods
         sections[index] = ledger.pods.scaled(_bulk(bulk, f"the pod in {name}")) if ledger.pods.mass > 0.0 else NO_MOMENTS
-        if airframe.sections.per_section[index].solid:
+        if row.solid and printed:
             sections[index] = sections[index] + rest.scaled(_bulk(bulk, f"solid section {name}"))
-        else:
+        elif printed:  # hollow: the wall at the print material density, the spared carry-through at bulk density
             sections[index] = sections[index] + (rest - ledger.spared).scaled(material)
             if ledger.spared.mass > 0.0:
                 sections[index] = sections[index] + ledger.spared.scaled(_bulk(bulk, f"the carry-through in {name}"))
+        else:  # CNC-cut from the section's own material: all of its material at that material's solid density
+            sections[index] = sections[index] + rest.scaled(density)
     for name, shape in parts.items():
         if name.startswith("H"):
             index = hatches[name]
-            density = _bulk(bulk, f"hatch {name}") if airframe.sections.per_section[index].solid else material
+            row = airframe.sections.per_section[index]
+            density = _bulk(bulk, f"hatch {name}") if row.solid and section_printed(airframe, index) else section_density(airframe, parts_data, index)
             sections[index] = sections[index] + volume_moments(shape).scaled(density)
         elif name.startswith("C") and not name.startswith("CS"):
             couplers[int(name[1:]) - 1] = volume_moments(shape).scaled(material)
@@ -123,7 +136,7 @@ def compute_geometry(resolved: ResolvedAirframe, parts_data: dict, *, progress: 
 class MeasuredDesign:
     """An exact structure with the design digest and densities it was measured for (libs.solid_cache.design_digest)."""
     digest: str
-    densities: tuple[float, float | None]
+    densities: tuple[float, float | None, tuple[float, ...]]
     exact: ExactStructure
 
     def applies_to(self, resolved: ResolvedAirframe, parts_data: dict) -> bool:
@@ -150,6 +163,7 @@ def save_measured(cad_dir: Path, design: MeasuredDesign) -> Path:
     path.write_text(json.dumps({
         "format": EXACT_MASS_FORMAT, "digest": design.digest,
         "material_density_kg_m3": design.densities[0], "bulk_density_kg_m3": design.densities[1],
+        "section_material_densities_kg_m3": list(design.densities[2]),
         "sections": [_piece_json(piece) for piece in exact.sections],
         "surfaces": {name: _piece_json(piece) for name, piece in exact.surfaces.items()},
         "couplers": {str(index): _piece_json(piece) for index, piece in exact.couplers.items()},
@@ -165,7 +179,8 @@ def load_measured(cad_dir: Path) -> MeasuredDesign | None:
     data = json.loads(path.read_text())
     if data["format"] != EXACT_MASS_FORMAT:
         return None
-    return MeasuredDesign(data["digest"], (data["material_density_kg_m3"], data["bulk_density_kg_m3"]), ExactStructure(
+    return MeasuredDesign(data["digest"], (data["material_density_kg_m3"], data["bulk_density_kg_m3"],
+                                           tuple(data.get("section_material_densities_kg_m3", ()))), ExactStructure(
         sections=tuple(_piece(piece) for piece in data["sections"]),
         surfaces={name: _piece(piece) for name, piece in data["surfaces"].items()},
         couplers={int(index): _piece(piece) for index, piece in data["couplers"].items()},

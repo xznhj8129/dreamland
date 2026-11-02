@@ -93,6 +93,10 @@ def _apply(definition: dict, before: tuple[float, ...], lengths: list[float]) ->
         radial = entry.get("radial")
         if isinstance(radial, dict):
             radial["x_m"] = station(radial["x_m"])
+    # Ducts are hardware on the skin: like access, their lip follows the station map; their base dimensions and
+    # ratios are physical and stay as designed.
+    for duct in definition.get("ducts", []):
+        duct["x_m"] = station(duct["x_m"])
     # Surface mounts and spars follow their surface, nose/tail mounts follow the body ends.
     definition["sections"]["cuts_m"] = list(station.after[1:-1])
     fuselage["length_m"] = station.after[-1]

@@ -5,7 +5,7 @@ __pycache__/
 .pytest_cache/
 .venv/
 
-# Temporary in-repo checkouts of the INAV JSBSim bench and the INAV SITL fork (scripts/setup_vendor.sh)
+# Temporary in-repo checkouts of the INAV JSBSim bench and the INAV SITL fork (./setup.sh)
 vendor/
 
 # Web front-end

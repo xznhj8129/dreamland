@@ -54,6 +54,7 @@
             "chord_tip_m": 0.025,
             "sweep_le_deg": 37.87,
             "incidence_deg": 0.0,
+            "tip_incidence_deg": 0.0,
             "incidence_mode": "symmetric",
             "airfoil": "naca0006",
             "sections": {
@@ -92,6 +93,7 @@
     ],
     "parts": [],
     "access": [],
+    "ducts": [],
     "sections": {
         "cuts_m": [
             0.096

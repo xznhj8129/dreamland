@@ -68,11 +68,15 @@
         "mah": 6000,
         "c": 150,
         "connector": "AS150",
+        "ir_mohm_per_cell": 2.0,
+        "lead_awg": 10,
+        "lead_length_mm": 120.0,
         "dimensions": {
             "l": 161,
             "h": 45,
             "w": 61
-        }
+        },
+        "notes": "ir_mohm_per_cell is an estimated average for a 6000 mAh 150C pack; lead_awg and lead_length_mm are Tattu's published 10 AWG / 120 mm."
     },
     "Tattu-4500mah-6S": {
         "type": "lipo",

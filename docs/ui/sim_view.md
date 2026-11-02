@@ -206,7 +206,7 @@ FlightScene [fill]
       (no start/end markers)
     - the box starts 50 m either side of the start point east and north (one scale for both) and 0-50 m high, also
       before any data, and grows to fit the path; height runs from 0 (the ground) up (a path below the ground is clipped)
-    - the resolved airframe flies the path: external geometry only (fuselage, wing skins, control surfaces,
+    - the resolved airframe flies the path: external geometry only (fuselage, wing skins, hatch covers, control surfaces,
       propulsion), placed at each frame's position and attitude; each control surface follows its logged servo<N>
       output through the surface's deflection limits; each rocket motor shows a red flame cone from its nozzle,
       against the thrust, 0-1 m long in proportion to its logged rocket<N>_thrust_n over the motor's peak thrust

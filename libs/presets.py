@@ -18,8 +18,13 @@ from libs.airframe import PRESETS_DIR, AirframeError, load_presets
 DRIVEN_BLOCKS = ("section", "joints", "reinforcement")
 DRIVEN_JOINT_KEYS = ("type", "count", "screw", "insertion_depth_m", "coupler_wall_m", "fit_clearance_m", "socket_wall_m", "hole_edge_dist_m", "hole_diameter_m",
                      "hole_angle_offset_deg")
-ROD_PATTERN_KEYS = ("type", "material", "diameter_m", "radial_position_m", "polar_n", "polar_offset_angle", "polar_split", "polar_split_angle")
+ROD_PATTERN_KEYS = ("type", "material", "diameter_m", "radial_position_m", "polar_layout", "polar_n", "polar_offset_angle", "polar_split", "polar_split_angle")
 ROD_EXTENT_KEYS = ("from_x_m", "to_x_m")
+
+
+def rod_pattern_values(block: dict) -> dict:
+    """The rod-pattern values a preset drives, with the optional polar_layout filled in (quadrants when absent)."""
+    return {key: block.get(key, "quadrants") if key == "polar_layout" else block[key] for key in ROD_PATTERN_KEYS}
 
 
 def read_presets() -> dict[str, dict]:
@@ -47,7 +52,7 @@ def preset_blocks(definition: dict) -> dict:
     fuselage = definition["fuselage"]
     blocks = {"section": dict(fuselage["section"]), "joints": {key: definition["sections"]["joints"][key] for key in DRIVEN_JOINT_KEYS}}
     if "reinforcement" in fuselage:
-        blocks["reinforcement"] = {key: fuselage["reinforcement"][key] for key in ROD_PATTERN_KEYS}
+        blocks["reinforcement"] = rod_pattern_values(fuselage["reinforcement"])
     return blocks
 
 
@@ -59,7 +64,10 @@ def preset_status(definition: dict) -> str:
     stored = read_presets().get(name)
     if stored is None:
         return f"{name} (not in data/presets/)"
-    return name if preset_blocks(definition) == {key: stored[key] for key in DRIVEN_BLOCKS if key in stored} else f"{name} (modified)"
+    stored_blocks = {key: stored[key] for key in DRIVEN_BLOCKS if key in stored}
+    if "reinforcement" in stored_blocks:
+        stored_blocks["reinforcement"] = rod_pattern_values(stored_blocks["reinforcement"])
+    return name if preset_blocks(definition) == stored_blocks else f"{name} (modified)"
 
 
 def default_rod_extent(definition: dict) -> dict:

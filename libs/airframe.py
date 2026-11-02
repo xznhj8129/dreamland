@@ -18,8 +18,7 @@ from dataclasses import dataclass
 from functools import cache
 from pathlib import Path
 
-import aerosandbox as asb
-
+from libs.airfoils import airfoil
 from libs.motorlib import DataRepo
 from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS, check_profile, normalize_shape_name
 from libs.rocketmotors import RocketMotor, RocketMotorError, rocket_motor
@@ -62,6 +61,8 @@ MOUNT_TARGETS = ("nose", "tail", "surface")
 ROCKET_MOUNT_TARGETS = ("tail", "surface")  # a rocket motor fires aft: not from the nose
 ELECTRIC_MOUNT_KEYS = ("direction", "spin", "clearance_m", "pod", "holes")  # mount fields only an electric mount has
 THRUST_DIRECTIONS = ("tractor", "pusher")
+MOTOR_BASES = ("open", "closed")  # an open (cross, multirotor) or a closed (plane) motor base
+MOTOR_SHAFTS = ("up", "reverse")  # the shaft out of the bell top, or out through the base
 # Prop spin, seen from where the thrust points (from above in hover). A surface mount carries 2+ motors that spin in
 # pairs, props out or in; a nose or tail mount carries one motor, cw or ccw.
 SURFACE_PROP_SPINS = ("out", "in")
@@ -70,12 +71,14 @@ JOINT_TYPES = ("radial_screws",)
 CUT_JOINTS = ("coupler", "front_male", "rear_male", "none")  # at a cut: a separate coupler into both sections, the section ahead / behind carries the male end, or none (the sections butt with no coupler or spigot; reference the seam in CAD)
 REINFORCEMENT_TYPES = ("cf_rod",)
 POLAR_SPLITS = (0, 2)  # rods at each polar position: 0 = one, 2 = a pair either side of it
+POLAR_LAYOUTS = ("quadrants", "horizontal")  # quadrants: mirrored into all four; horizontal: one each side, none top/bottom
 CONTROL_KINDS = ("split", "all_moving")
 CONTROL_ROLES = ("pitch", "yaw", "roll", "flaps")  # for reference only
 SERVO_OUTPUTS = tuple(f"S{number}" for number in range(1, 13))
 ACCESS_KINDS = ("hole", "hatch")  # a hole subtracts material; a hatch keeps the original material inside an inset profile
 ACCESS_PROFILES = ("slot", "rounded_rectangle")  # a slot is a capsule (equal extents = a circle); a rounded rectangle gives its radius
 ACCESS_EXTENTS = ("depth", "wall", "all")  # depth_m along the local +Z; wall = into the first wall; all = through the whole body
+DUCT_TYPES = ("naca",)  # submerged inlets built by libs.ducts; ratios derive the throat width, ramp length and ramp angle
 
 
 class AirframeError(ValueError):
@@ -92,7 +95,7 @@ class OperatingPoint:
 @dataclass(frozen=True)
 class PrintSettings:
     material: str
-    bulk_density_kg_m3: float | None  # printed mass per solid volume; needed for surfaces without mass_kg and solid sections without empty_mass_kg
+    bulk_density_kg_m3: float | None  # printed mass per solid volume; needed for surfaces without mass_kg and printed solid sections without empty_mass_kg
     printer_bed_m: tuple[float, float, float]
 
 
@@ -152,14 +155,16 @@ class Joints:
 
 @dataclass(frozen=True)
 class RodPattern:
-    """Longitudinal rods round the fuselage axis, mirror-symmetric left/right and top/bottom: one rod position per
-    quadrant, polar_offset_angle (deg) up from the horizontal (+y), mirrored into the other three quadrants. polar_split 2
-    makes each position a pair at polar_offset_angle +/- polar_split_angle (deg); 0 keeps a single rod. polar_n counts
-    every rod. Every rod lies strictly inside its quadrant (0 < angle < 90)."""
+    """Longitudinal rods round the fuselage axis. quadrants (the default): one rod position per quadrant,
+    polar_offset_angle (deg) up from the horizontal (+y), mirrored into the other three quadrants; polar_split 2 makes
+    each position a pair at polar_offset_angle +/- polar_split_angle (deg), 0 keeps a single rod; every rod lies
+    strictly inside its quadrant (0 < angle < 90). horizontal: one rod each side at 0 and 180 deg, no top or bottom
+    rods. polar_n counts every rod (4 or 8 in quadrants, 2 horizontal)."""
     type: str  # REINFORCEMENT_TYPES
     material: str  # data/parts/material.json
     diameter_m: float
     radial_position_m: float  # rod centre from the axis
+    polar_layout: str  # POLAR_LAYOUTS
     polar_n: int  # rods in all
     polar_offset_angle: float
     polar_split: int  # POLAR_SPLITS: 0 = a single rod per position, 2 = a pair
@@ -174,7 +179,10 @@ class RodPattern:
         return (self.polar_offset_angle,)
 
     def angles_deg(self) -> tuple[float, ...]:
-        """Every rod, counter-clockwise from the horizontal (+y) seen from behind: quadrant by quadrant."""
+        """Every rod, counter-clockwise from the horizontal (+y) seen from behind: quadrant by quadrant, or the two
+        horizontal rods at 0 and 180 deg."""
+        if self.polar_layout == "horizontal":
+            return (0.0, 180.0)
         first = self.quadrant_angles_deg()
         return (*first, *(180.0 - angle for angle in reversed(first)), *(180.0 + angle for angle in first), *(360.0 - angle for angle in reversed(first)))
 
@@ -293,7 +301,8 @@ class Surface:
     chord_root_m: float
     chord_tip_m: float
     sweep_le_deg: float
-    incidence_deg: float
+    incidence_deg: float  # at the root
+    tip_incidence_deg: float  # at the tip, linear along the span (washout: below incidence_deg)
     incidence_mode: str  # see INCIDENCE_MODES
     airfoil: str
     mass_kg: float | None  # whole set; None = computed from geometry
@@ -421,9 +430,11 @@ class ElectricPropulsion:
     esc: str | None  # name of the placed ESC part (battery leads end and motor leads start there); None = none placed yet
                      # (saved as null or ""): the wiring, propulsion summary and simulation wait for one
     wiring: Wiring  # motors: one run per electric motor, in motor order
+    motor_base: str  # MOTOR_BASES
+    motor_shaft: str  # MOTOR_SHAFTS
     motor_mass_kg: float  # per motor, motorlib
-    bell_diameter_m: float  # stator diameter, motorlib
-    bell_length_m: float  # stator height, motorlib
+    stator_diameter_m: float  # motorlib; the motor body scales from it (libs/geometry.py motor_body)
+    stator_height_m: float  # motorlib
     prop_diameter_m: float
     prop_mass_kg: float  # per prop, from data/parts/prop.json sizes
 
@@ -527,11 +538,50 @@ class AccessEntry:
 
 
 @dataclass(frozen=True)
+class NacaDuct:
+    """One NACA submerged inlet on the fuselage surface (built by libs.ducts): the inlet lip sits at x_m on the
+    surface, clock_deg around the body from +y toward +z (the rod pattern's polar convention), and the duct runs aft
+    along the skin. The base dimensions are throat_depth_m, inlet_width_m, tunnel_length_m and wall_m; the ratios
+    derive the rest: throat_width_m = width_to_depth x throat_depth_m, ramp_length_m = length_to_width x the throat
+    width, and the ramp angle is the ramp's mean slope. No derived value is ever typed in the file."""
+    name: str
+    type: str  # DUCT_TYPES
+    x_m: float
+    clock_deg: float
+    throat_depth_m: float
+    inlet_width_m: float
+    tunnel_length_m: float
+    wall_m: float
+    width_to_depth: float
+    length_to_width: float
+    radial: int | None = None  # copies evenly spaced about the body axis from clock_deg; None/1 = the seed alone
+
+    @property
+    def throat_width_m(self) -> float:
+        return self.width_to_depth * self.throat_depth_m
+
+    @property
+    def ramp_length_m(self) -> float:
+        return self.length_to_width * self.throat_width_m
+
+    @property
+    def length_m(self) -> float:
+        """The inlet lip to the tunnel's aft end, along the body surface."""
+        return self.ramp_length_m + self.tunnel_length_m
+
+    @property
+    def ramp_angle_deg(self) -> float:
+        """The ramp's mean slope, degrees (its end tangent; 0 depth leaves no slope)."""
+        return math.degrees(math.atan2(self.throat_depth_m, self.ramp_length_m))
+
+
+@dataclass(frozen=True)
 class FuselageSection:
     solid: bool  # printed solid less the volumes inside it; False = hollow tube (shell wall)
     empty_mass_kg: float | None  # weighed printed mass; None = computed
     complete_mass_kg: float | None  # weighed printed mass + everything positioned in the section; None = itemised
     fixed_length: bool = False  # preserve this section's length during automatic editor resizing
+    material: str | None = None  # data/parts/material.json; None = the airframe's print material. Another material makes the section CNC-cut stock (solid sections at its density instead of the print bulk density)
 
 
 @dataclass(frozen=True)
@@ -586,6 +636,7 @@ class Airframe:
     volumes: tuple[Volume, ...]
     parts: tuple[PlacedPart, ...]
     access: tuple[AccessEntry, ...]  # named holes and hatches; resolved frames in libs.geometry.AccessInstance
+    ducts: tuple[NacaDuct, ...]  # NACA submerged inlets on the fuselage; resolved in libs.geometry.DuctInstance
     sections: Sections
 
 
@@ -704,11 +755,15 @@ def _check_joints_fit(joints: Joints, section: BodySection, path: str) -> None:
 
 def _rod_pattern(fields: _Fields, parts_data: dict) -> RodPattern:
     """Reads the pattern keys of a reinforcement block; the rods must be inside the outer surface."""
+    polar_layout = fields.optional("polar_layout", "quadrants")
+    if polar_layout not in POLAR_LAYOUTS:
+        raise AirframeError(f"{fields.at('polar_layout')}: {polar_layout!r} is not one of {POLAR_LAYOUTS}")
     pattern = RodPattern(
         type=fields.choice("type", REINFORCEMENT_TYPES),
         material=fields.text("material"),
         diameter_m=fields.positive("diameter_m"),
         radial_position_m=fields.positive("radial_position_m"),
+        polar_layout=polar_layout,
         polar_n=int(fields.number("polar_n", minimum=1)),
         polar_offset_angle=fields.number("polar_offset_angle"),
         polar_split=int(fields.choice("polar_split", POLAR_SPLITS)),
@@ -716,6 +771,12 @@ def _rod_pattern(fields: _Fields, parts_data: dict) -> RodPattern:
     )
     if pattern.material not in parts_data["material"]:
         raise AirframeError(f"{fields.at('material')}: {pattern.material!r} not in data/parts/material.json")
+    if pattern.polar_layout == "horizontal":
+        if pattern.polar_n != 2:
+            raise AirframeError(f"{fields.at('polar_n')}: horizontal rods are one each side (2), got {pattern.polar_n}")
+        if pattern.polar_offset_angle != 0.0 or pattern.polar_split != 0 or pattern.polar_split_angle != 0.0:
+            raise AirframeError(f"{fields.path}: horizontal rods use polar_offset_angle 0, polar_split 0 and polar_split_angle 0")
+        return pattern
     if pattern.polar_n != 4 * pattern.group_size():
         raise AirframeError(f"{fields.at('polar_n')}: {pattern.polar_n} rods is not one {'pair' if pattern.polar_split == 2 else 'rod'} per quadrant "
                             f"({4 * pattern.group_size()})")
@@ -924,6 +985,7 @@ def _surface(data: dict, path: str, fuselage_length_m: float, parts_data: dict) 
         chord_tip_m=fields.positive("chord_tip_m"),
         sweep_le_deg=fields.number("sweep_le_deg"),
         incidence_deg=fields.number("incidence_deg"),
+        tip_incidence_deg=fields.number("tip_incidence_deg"),
         incidence_mode=fields.choice("incidence_mode", INCIDENCE_MODES),
         airfoil=fields.text("airfoil"),
         mass_kg=None if mass is None else fields.number("mass_kg", minimum=0.0, exclusive=True, value=mass),
@@ -937,8 +999,12 @@ def _surface(data: dict, path: str, fuselage_length_m: float, parts_data: dict) 
         raise AirframeError(f"{path}.vertical_offset: {surface.vertical_offset} must be within [-1, 1]")
     if surface.x_root_le_m >= fuselage_length_m:
         raise AirframeError(f"{path}.x_root_le_m: {surface.x_root_le_m} is not on the fuselage (length {fuselage_length_m}); chords may overhang the tail, roots may not")
-    if asb.Airfoil(surface.airfoil).coordinates is None:
-        raise AirframeError(f"{path}.airfoil: {surface.airfoil!r} is not a known AeroSandbox airfoil")
+    try:
+        known_airfoil = airfoil(surface.airfoil).coordinates is not None
+    except ValueError:
+        known_airfoil = False
+    if not known_airfoil:
+        raise AirframeError(f"{path}.airfoil: {surface.airfoil!r} is not a known airfoil (data/airfoils.json or AeroSandbox)")
     return surface
 
 
@@ -1078,6 +1144,36 @@ def _access(data: dict, path: str) -> AccessEntry:
         gap_m=gap_m, position_m=(x_m, y_m, z_m), orientation_deg=orientation_deg, extent=extent,
         depth_m=depth_m, radial=radial,
     )
+
+
+def _duct(data: dict, path: str) -> NacaDuct:
+    """One saved duct: the base dimensions and the placement; the throat width, ramp length and ramp angle are
+    derived properties, never stored. radial (optional) repeats it evenly about the body axis."""
+    fields = _Fields(data, path)
+    radial = None
+    if "radial" in fields.data:
+        count = fields.number("radial", minimum=1)
+        if count != int(count):
+            raise AirframeError(f"{fields.at('radial')}: expected a whole number of copies, got {count!r}")
+        radial = int(count)
+    duct = NacaDuct(
+        name=fields.text("name"),
+        type=fields.choice("type", DUCT_TYPES),
+        x_m=fields.number("x_m", minimum=0.0),
+        clock_deg=fields.number("clock_deg"),
+        throat_depth_m=fields.positive("throat_depth_m"),
+        inlet_width_m=fields.positive("inlet_width_m"),
+        tunnel_length_m=fields.positive("tunnel_length_m"),
+        wall_m=fields.positive("wall_m"),
+        width_to_depth=fields.number("width_to_depth", minimum=0.0, exclusive=True),
+        length_to_width=fields.number("length_to_width", minimum=0.0, exclusive=True),
+        radial=radial,
+    )
+    fields.done()
+    if duct.inlet_width_m >= duct.throat_width_m:
+        raise AirframeError(f"{fields.at('inlet_width_m')}: the inlet ({duct.inlet_width_m}) must be narrower than the throat "
+                            f"({duct.throat_width_m:.4f} = width_to_depth {duct.width_to_depth:g} x throat_depth_m {duct.throat_depth_m})")
+    return duct
 
 
 @cache
@@ -1315,6 +1411,8 @@ def _electric(data: dict, path: str, mounts: tuple[Mount, ...], surfaces: tuple[
         raise AirframeError(f"{fields.at('motor')}: {error}") from error
     if motor_data.stator_diameter_mm is None or motor_data.stator_height_mm is None:
         raise AirframeError(f"{fields.at('motor')}: motorlib has no stator size for {motor.manufacturer} {motor.name}")
+    motor_base = fields.choice("motor_base", MOTOR_BASES)
+    motor_shaft = fields.choice("motor_shaft", MOTOR_SHAFTS)
     prop = fields.text("prop")
     if prop not in motor_repo().prop_by_name:
         raise AirframeError(f"{fields.at('prop')}: {prop!r} not in motorlib propellers")
@@ -1338,8 +1436,9 @@ def _electric(data: dict, path: str, mounts: tuple[Mount, ...], surfaces: tuple[
     wiring_fields.done()
     fields.done()
     return ElectricPropulsion(
-        motor=motor, prop=prop, battery=battery, esc=esc, wiring=wiring, motor_mass_kg=motor_data.weight_g / 1000.0,
-        bell_diameter_m=motor_data.stator_diameter_mm / 1000.0, bell_length_m=motor_data.stator_height_mm / 1000.0,
+        motor=motor, prop=prop, battery=battery, esc=esc, wiring=wiring, motor_base=motor_base, motor_shaft=motor_shaft,
+        motor_mass_kg=motor_data.weight_g / 1000.0,
+        stator_diameter_m=motor_data.stator_diameter_mm / 1000.0, stator_height_m=motor_data.stator_height_mm / 1000.0,
         prop_diameter_m=prop_data.diam_in * INCH_M, prop_mass_kg=prop_mass_kg(prop_data.diam_in, parts_data),
     )
 
@@ -1452,19 +1551,25 @@ def _loft_station(data: dict, path: str, default: BodySection) -> LoftStation:
     return LoftStation(x_m, _section_profile(fields.data, path, default))
 
 
-def _fuselage_section(data: dict, path: str) -> FuselageSection:
+def _fuselage_section(data: dict, path: str, parts_data: dict) -> FuselageSection:
     fields = _Fields(data, path)
+    material = None if "material" not in fields.data else fields.text("material")
+    if material is not None and material not in parts_data["material"]:
+        raise AirframeError(f"{fields.at('material')}: {material!r} not in data/parts/material.json")
     section = FuselageSection(
         solid=fields.flag("solid"),
         empty_mass_kg=None if "empty_mass_kg" not in fields.data else fields.positive("empty_mass_kg"),
         complete_mass_kg=None if "complete_mass_kg" not in fields.data else fields.positive("complete_mass_kg"),
         fixed_length=fields.flag("fixed_length") if "fixed_length" in fields.data else False,
+        material=material,
     )
     fields.done()
     return section
 
 
-def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airframe:
+def parse_airframe(data: dict, parts_data: dict, path: str = "airframe", *, duct_joints: bool = True) -> Airframe:
+    """Parse and check the whole airframe/2 definition. duct_joints=False is the drag path's adoption of an
+    intermediate position: the duct joint-band rule is left to the release's full recompute, so a drag never fails."""
     fields = _Fields(data, path)
     schema = fields.required("schema")
     if schema != SCHEMA:
@@ -1535,7 +1640,14 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
         _access(entry_data, f"{fields.at('access')}[{index}]")
         for index, entry_data in enumerate(access_list)
     )
-    for collection, label in ((surfaces, "surfaces"), (volumes, "volumes"), (parts, "parts"), (access, "access")):
+    ducts_list = fields.required("ducts")
+    if type(ducts_list) is not list:
+        raise AirframeError(f"{fields.at('ducts')}: expected a list, got {type(ducts_list).__name__}")
+    ducts = tuple(
+        _duct(entry_data, f"{fields.at('ducts')}[{index}]")
+        for index, entry_data in enumerate(ducts_list)
+    )
+    for collection, label in ((surfaces, "surfaces"), (volumes, "volumes"), (parts, "parts"), (access, "access"), (ducts, "ducts")):
         names = [item.name for item in collection]
         duplicates = sorted({item for item in names if names.count(item) > 1})
         if duplicates:
@@ -1565,7 +1677,7 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     rows = sections_fields.required("per_section")
     if type(rows) is not list or len(rows) != len(cuts) + 1:
         raise AirframeError(f"{sections_fields.at('per_section')}: needs one entry per section ({len(cuts) + 1})")
-    per_section = tuple(_fuselage_section(row, f"{sections_fields.at('per_section')}[{index}]") for index, row in enumerate(rows))
+    per_section = tuple(_fuselage_section(row, f"{sections_fields.at('per_section')}[{index}]", parts_data) for index, row in enumerate(rows))
     cut_joints = sections_fields.required("cut_joints")
     if type(cut_joints) is not list or len(cut_joints) != len(cuts) or any(joint not in CUT_JOINTS for joint in cut_joints):
         raise AirframeError(f"{sections_fields.at('cut_joints')}: needs one of {list(CUT_JOINTS)} per cut ({len(cuts)}), got {cut_joints!r}")
@@ -1573,14 +1685,23 @@ def parse_airframe(data: dict, parts_data: dict, path: str = "airframe") -> Airf
     if joints.socket_wall_m > fuselage.section.wall_radial_m:
         raise AirframeError(f"{sections_fields.at('joints')}.socket_wall_m exceeds the fuselage wall")
     sections_fields.done()
-    unweighed_solid = [f"section {index + 1}" for index, section in enumerate(per_section) if section.solid and section.empty_mass_kg is None]
+    unweighed_solid = [f"section {index + 1}" for index, section in enumerate(per_section)
+                       if section.solid and section.empty_mass_kg is None and section.material in (None, print_settings.material)]
     if unweighed_solid and print_settings.bulk_density_kg_m3 is None:
         raise AirframeError(f"{print_fields.at('bulk_density_kg_m3')}: required to compute the mass of solid {unweighed_solid}")
+    for index, duct in enumerate(ducts):
+        # A cut band is the socket/coupler plus the duct's own wall: a duct on or close to it cannot be built cleanly.
+        clearance = joints.insertion_depth_m + duct.wall_m
+        for cut_index, cut in enumerate(cuts):
+            if duct_joints and duct.x_m - clearance < cut < duct.x_m + duct.length_m + clearance:
+                raise AirframeError(f"{fields.at('ducts')}[{index}] {duct.name!r}: on or within {clearance * 1000:.1f} mm of the section cut at "
+                                    f"x {cut * 1000:.1f} mm (cut {cut_index + 1}); a duct must stay clear of the joint")
 
     fields.done()
     return Airframe(
         name=name, notes=notes, preset=preset, powered=powered, vtol=vtol, tailsitter=tailsitter, operating_point=operating_point, print=print_settings,
         fuselage=fuselage, surfaces=surfaces, propulsion=propulsion, volumes=volumes, parts=parts, access=access,
+        ducts=ducts,
         sections=Sections(cuts_m=cuts, per_section=per_section, cut_joints=tuple(cut_joints), joints=joints),
     )
 
@@ -1656,6 +1777,7 @@ def blank_definition(name: str) -> dict:
         "volumes": [],
         "parts": [],
         "access": [],
+        "ducts": [],
         "sections": {"cuts_m": [], "per_section": [{"solid": False}], "cut_joints": [],
                      "joints": {"type": "radial_screws", "count": 8, "screw": "M3", "insertion_depth_m": 0.01,
                        "coupler_wall_m": 0.0045, "fit_clearance_m": 0.0003, "socket_wall_m": 0.00125,

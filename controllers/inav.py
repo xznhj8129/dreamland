@@ -15,7 +15,7 @@ from libs.simrun import battery_power_w, build_vehicle, electrical_columns
 REPO_DIR = Path(__file__).resolve().parent.parent
 ANGLE_GAIN = 0.02
 RATE_GAIN = 0.002
-DEFAULT_SITL_PATH = REPO_DIR / "vendor" / "inav" / "build" / "build_SITL" / "bin" / "SITL.elf"  # scripts/setup_vendor.sh
+DEFAULT_SITL_PATH = REPO_DIR / "vendor" / "inav" / "build" / "build_SITL" / "bin" / "SITL.elf"  # ./setup.sh --inav
 INAV_TEMPLATES_DIR = REPO_DIR / "data" / "inav"
 TAILSITTER_TEMPLATE = INAV_TEMPLATES_DIR / "tailsitter.txt"  # switches and modes of a generated diff, after the design's mixer
 PLANE_TEMPLATE = INAV_TEMPLATES_DIR / "plane.txt"
@@ -141,7 +141,7 @@ def check_sitl_ports(base: int) -> None:
 def connect(project, resolved, export, args, state, hardware, log_path):
     sitl_path = args.sitl or DEFAULT_SITL_PATH
     if not sitl_path.is_file():
-        raise FileNotFoundError(f"INAV SITL build missing: {sitl_path}; run scripts/setup_vendor.sh (or pass --sitl)")
+        raise FileNotFoundError(f"INAV SITL build missing: {sitl_path}; run ./setup.sh --inav (or pass --sitl)")
     check_sitl_ports(args.sitl_port)
     diff = flown_diff(project, export, resolved.airframe.tailsitter, args.inav_config)
     project.sitl_dir.mkdir(parents=True, exist_ok=True)

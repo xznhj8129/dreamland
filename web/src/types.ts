@@ -2,7 +2,7 @@ import type { SceneItem } from './renderer'
 
 export type LineLevel = 'info' | 'warning' | 'problem'
 
-export type ComponentKind = 'surface' | 'part' | 'volume' | 'mount' | 'section' | 'battery' | 'fuselage' | 'loft' | 'access'
+export type ComponentKind = 'surface' | 'part' | 'volume' | 'mount' | 'section' | 'battery' | 'fuselage' | 'loft' | 'access' | 'duct'
 export interface ComponentSelection { kind: ComponentKind; index: number; label?: string }
 
 export interface ReportLine {
@@ -38,6 +38,8 @@ export interface ReportSection {
 
 export interface ReportPages {
   summary: ReportSection[]
+  /** Layout problems and propulsion alerts. */
+  problems: ReportSection[]
   mass: ReportSection[]
   aero: ReportSection[]
   propulsion: ReportSection[]
@@ -115,7 +117,7 @@ export interface ResolvedSnapshot {
 
 /** One movable element's screen outline from POST /api/draw (webapp/drawing.py _handles). */
 export interface DrawHandle {
-  target: 'cut' | 'loft' | 'surface' | 'spars' | 'volume' | 'part' | 'battery' | 'rod' | 'access'
+  target: 'cut' | 'loft' | 'surface' | 'spars' | 'volume' | 'part' | 'battery' | 'rod' | 'access' | 'duct'
   index: number
   kind: 'polygon' | 'line'
   /** Canvas px, flat x,y pairs: a closed loop for polygon, a polyline for line. */
@@ -245,7 +247,7 @@ export interface Model3DRocket {
 /** webapp/model3d.py build_model3d: one component as a flat triangle mesh in metres, airframe frame (x forward). */
 export interface Model3DMesh {
   name: string
-  kind: 'body' | 'pod' | 'panel' | 'control' | 'volume' | 'part' | 'motor' | 'prop' | 'rod' | 'spar' | 'section' | 'loft' | 'feature' | 'hatch'
+  kind: 'body' | 'pod' | 'panel' | 'control' | 'volume' | 'part' | 'motor' | 'prop' | 'rod' | 'spar' | 'section' | 'loft' | 'feature' | 'hatch' | 'duct'
   /** Flat x,y,z triples. */
   positions: number[]
   indices: number[]
@@ -334,6 +336,8 @@ export interface RocketMotorInfo {
 
 export interface EditorContext {
   parts_data: Record<string, Record<string, Record<string, unknown>>>
+  /** Names a surface airfoil can pick: data/airfoils.json plus AeroSandbox's UIUC database. */
+  airfoils: string[]
   preset_names: string[]
   mm_keys: string[]
   gram_keys: string[]
@@ -363,6 +367,7 @@ export interface EditorContext {
   /** Access (webapp/editor.py context()): the enum values for kind, profile and cut extent. */
   access_kinds: string[]
   access_profiles: string[]
+  duct_types: string[]
   access_extents: string[]
   part_categories: string[]
   layout_panel_counts: Record<string, number>
@@ -380,6 +385,7 @@ export interface EditorContext {
   /** Propulsion and wiring (webapp/editor.py context()): model labels, add templates and motorlib combo lists. */
   battery_model_labels: Record<string, string>
   new_motor: Record<string, unknown>
+  new_motor_body: Record<string, unknown>
   new_prop: string
   new_battery_run: Record<string, unknown>
   new_motor_run: Record<string, unknown>

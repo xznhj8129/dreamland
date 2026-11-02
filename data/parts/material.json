@@ -4,5 +4,17 @@
     },
     "carbon_rod": {
         "density_kg_m3": 1550.0
+    },
+    "aluminum_5150": {
+        "density_kg_m3": 2650.0
+    },
+    "textolite": {
+        "density_kg_m3": 1400.0
+    },
+    "fr6": {
+        "density_kg_m3": 1900.0
+    },
+    "t300_carbon_plate": {
+        "density_kg_m3": 1600.0
     }
 }

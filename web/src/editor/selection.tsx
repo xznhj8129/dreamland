@@ -1,6 +1,7 @@
 import { createContext, useContext, useEffect, useState } from 'react'
 import type { ReactElement, ReactNode } from 'react'
 import type { ComponentKind, ComponentSelection, DrawHandle } from '../types'
+import { readMemory, writeMemory } from '../viewMemory'
 
 export type { ComponentKind, ComponentSelection } from '../types'
 interface SelectionApi {
@@ -9,10 +10,18 @@ interface SelectionApi {
   select: (kind: ComponentKind, index: number) => void
 }
 const SelectionContext = createContext<SelectionApi | null>(null)
+const INDICES_MEMORY = 'editor.selection'  // the selected item of every kind, to return to (viewMemory)
+
+function rememberedIndices(): Partial<Record<ComponentKind, number>> {
+  const stored = readMemory(INDICES_MEMORY)
+  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return {}
+  return Object.fromEntries(Object.entries(stored).filter(([, index]) => Number.isInteger(index) && (index as number) >= 0))
+}
 
 export function SelectionProvider({ children }: { children: ReactNode }): ReactElement {
   const [active, setActive] = useState<ComponentSelection | null>(null)
-  const [indices, setIndices] = useState<Partial<Record<ComponentKind, number>>>({})
+  const [indices, setIndices] = useState<Partial<Record<ComponentKind, number>>>(rememberedIndices)
+  useEffect(() => { writeMemory(INDICES_MEMORY, indices) }, [indices])
   function select(kind: ComponentKind, index: number): void {
     setActive({ kind, index })
     setIndices(previous => ({ ...previous, [kind]: index }))

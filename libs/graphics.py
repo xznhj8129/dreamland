@@ -13,12 +13,9 @@ import math
 from typing import Any
 
 from libs.airframe import BOX_SHAPES
-from libs.geometry import PROP_SHAFT_LEN_M, ResolvedAirframe, body_half_extents, body_section_at, cross, deflected_outline, superellipse_radius, unit
+from libs.geometry import MotorPlacement, ResolvedAirframe, body_half_extents, body_section_at, body_surface_point, cross, deflected_outline, superellipse_radius, unit
 from libs.print_features import joint_holes, motor_mount_openings
 
-PROP_SHAFT_DIAM_M = 0.005
-MOTOR_BASE_DIAM_FACTOR = 0.5
-MOTOR_BASE_LEN_M = 0.005
 SECTION_OUTLINE_SAMPLES = 72
 ROUNDED_CORNER_SAMPLES = 8
 POINT_MASS_MARK_PX = 5
@@ -29,6 +26,8 @@ WIRE_DASH = (2, 3)  # dotted
 CUT_COLOR = "#33ccff"
 LOFT_COLOR = "#ffaa55"
 FEATURE_COLOR = "#ff6688"
+DUCT_COLOR = "#44ffd4"  # a duct's surface cut shape, as the 3D view's flow volume (webapp/model3d.DUCT_COLOR)
+DUCT_HANDLE_RADIUS_PX = 5  # a grip dot at the rim's centre: the side-view rim projects to a sliver
 SPAR_WIDTH_PX = 3
 SPAR_STOP_DASH = (6, 3)  # a spar that stops where it meets another; a through spar is solid
 CARRY_THROUGH_DASH = (3, 2)
@@ -37,6 +36,8 @@ ROD_SECTION_SAMPLES = 20
 ROD_SILHOUETTE_DASH = (2, 3)
 ROD_CENTRE_DOT_RADIUS_PX = 1.5  # fixed-pixel centre mark at each rod end: a thin rod stays locatable at any zoom
 ROD_DASH = (8, 4)
+PROP_SPIN_ARROW_PX = 5.5
+PROP_SPIN_ARROW_ANGLES_DEG = (45.0, 135.0, 225.0, 315.0)
 CUT_OVERHANG_PX = 14
 CONTROL_COLOR = "#cc66ff"
 ROCKET_COLOR = "#ff8a3d"
@@ -49,6 +50,27 @@ MARKER_LABELS = {"cg": "CG", "np": "Neutral point", "lift": "Lift @ AoA"}
 
 def longitudinal_transverse(y_value: float, z_value: float, roll_rad: float) -> float:
     return z_value * math.cos(roll_rad) + y_value * math.sin(roll_rad)
+
+
+def motor_base_projected_half(motor: MotorPlacement, roll_rad: float) -> float:
+    """Half extent of a motor base seen along the side-view direction at this roll: the disc, or the open base's hub
+    and arms."""
+    radius = motor.base.diameter_m / 2.0
+    if not motor.base_arms:
+        return radius
+    across = [longitudinal_transverse(arm[1], arm[2], roll_rad) for arm in motor.base_arms]
+    return max(motor.body.hub_diameter_m / 2.0, *(radius * abs(c) + motor.body.arm_width_m / 2.0 * math.sqrt(max(0.0, 1.0 - c * c)) for c in across))
+
+
+def base_arm_outline(motor: MotorPlacement, arm: tuple[float, float, float]) -> list[tuple[float, float, float]]:
+    """One open-base arm as four points across the motor axis at the base's mid plane, from the axis out to the base rim."""
+    base = motor.base
+    centre = tuple((a + b) / 2.0 for a, b in zip(base.start, base.end))
+    across = unit(cross(unit(tuple(b - a for a, b in zip(base.start, base.end))), arm))
+    half_width = motor.body.arm_width_m / 2.0
+    reach = base.diameter_m / 2.0
+    return [tuple(c + out * a + side * half_width * w for c, a, w in zip(centre, arm, across))
+            for out, side in ((0.0, 1.0), (reach, 1.0), (reach, -1.0), (0.0, -1.0))]
 
 
 def section_projected_half(half_width: float, half_height: float, shape: float, roll_rad: float) -> float:
@@ -170,6 +192,29 @@ def draw_projected_rod(canvas, start, end, diameter_m: float, project, color: st
                            fill=color, outline=color, tags=tags)
 
 
+def draw_prop_spin(canvas: Any, centre_x: float, centre_y: float, radius_px: float, spin: str, color: str = "red") -> None:
+    """Triangles on a prop circle pointing the way it turns, seen from the front. spin is cw/ccw seen from where the
+    thrust points; electric motor thrust is forward (-x), so that is this front view (looking aft). Screen y is down,
+    so an increasing screen angle is clockwise: cw uses the +angle tangent, ccw the opposite."""
+    if spin not in ("cw", "ccw") or radius_px < PROP_SPIN_ARROW_PX * 1.5:
+        return
+    direction = 1.0 if spin == "cw" else -1.0
+    size = PROP_SPIN_ARROW_PX
+    for angle_deg in PROP_SPIN_ARROW_ANGLES_DEG:
+        angle = math.radians(angle_deg)
+        px = centre_x + radius_px * math.cos(angle)
+        py = centre_y + radius_px * math.sin(angle)
+        tangent_x, tangent_y = -math.sin(angle) * direction, math.cos(angle) * direction
+        normal_x, normal_y = math.cos(angle), math.sin(angle)
+        tip_x, tip_y = px + tangent_x * size, py + tangent_y * size
+        base_x, base_y = px - tangent_x * size * 0.5, py - tangent_y * size * 0.5
+        side = size * 0.55
+        canvas.create_polygon(
+            [tip_x, tip_y, base_x + normal_x * side, base_y + normal_y * side, base_x - normal_x * side, base_y - normal_y * side],
+            fill=color, outline=color,
+        )
+
+
 def draw_surface_cut(canvas, points, project, tags=()) -> None:
     canvas.create_polygon([value for point in points for value in project(point)], outline=CUT_COLOR, fill="", width=2, dash=(6, 3), tags=tags)
 
@@ -220,6 +265,25 @@ def draw_access(canvas: Any, resolved: ResolvedAirframe, project) -> None:
         canvas.create_text(*start, text=instance.instance_id, anchor="sw", fill=FEATURE_COLOR, font=("TkDefaultFont", 8))
 
 
+def draw_ducts(canvas: Any, resolved: ResolvedAirframe, project) -> None:
+    """Each duct copy's surface cut shape: the closed rim where its flow volume meets the skin, tagged for the drag
+    path (a radial copy drags the seed) in both projections. A duct that does not fit the body (a layout problem) has
+    no rim and is skipped: a bad placement must never break the drawing."""
+    from libs.ducts import duct_surface_outline
+    for instance in resolved.ducts:
+        try:
+            ring = duct_surface_outline(instance, resolved.body)
+            anchor, _radius = body_surface_point(resolved.body, instance.entry.x_m + instance.entry.length_m / 2.0, math.radians(instance.clock_deg))
+        except ValueError:
+            continue
+        coords = [value for point in ring for value in project(point)]
+        canvas.create_polygon(coords, outline=DUCT_COLOR, fill="", width=2, tags=("drag", f"duct:{instance.index}"))
+        x_screen, y_screen = project(anchor)
+        radius = DUCT_HANDLE_RADIUS_PX
+        canvas.create_oval(x_screen - radius, y_screen - radius, x_screen + radius, y_screen + radius,
+                           fill=DUCT_COLOR, outline="", tags=("drag", f"duct:{instance.index}"))
+
+
 def draw_marker_guide(canvas: Any, positions: dict) -> None:
     """Legend; the CG, neutral point and lift centre with their x from the nose (marker_positions)."""
     guide = [(f"{MARKER_LABELS[key]}  x {positions[key] * 1000.0:.1f} mm" if not math.isnan(positions[key]) else f"{MARKER_LABELS[key]}  (aero pending)", color)
@@ -243,7 +307,7 @@ def measure_longitudinal_view(resolved: ResolvedAirframe, roll_deg: float, width
                 half_span = max(half_span, abs(longitudinal_transverse(y, z, roll_rad)))
     for motor in resolved.motors:
         half_span = max(half_span, abs(longitudinal_transverse(motor.position[1], motor.position[2], roll_rad)) + motor.prop_radius_m)
-        xs = [motor.position[0] - motor.bell_length_m, motor.prop_center[0]] + [x for x, _ in motor.pod_stations]
+        xs = [motor.mount_face[0], motor.shaft.end[0]] + [x for x, _ in motor.pod_stations]
         min_x = min(min_x, *xs)
         max_x = max(max_x, *xs)
     for rocket in resolved.rockets:
@@ -427,20 +491,13 @@ def draw_longitudinal_view(canvas: Any, resolved: ResolvedAirframe, aero, roll_d
                 pod_bottom.extend((x_to_screen(pod_x), t_screen + pod_radius * scale))
             canvas.create_line(pod_top, fill=ui_draw, width=2)
             canvas.create_line(pod_bottom, fill=ui_draw, width=2)
-        bell_half_len = motor.bell_length_m * scale / 2.0
-        bell_half_diam = motor.bell_diameter_m * scale / 2.0
-        canvas.create_rectangle(x_screen - bell_half_len, t_screen - bell_half_diam, x_screen + bell_half_len, t_screen + bell_half_diam, outline=ui_draw, width=2)
-        prop_side = 1.0 if motor.prop_center[0] > motor.position[0] else -1.0
-        shaft_half = PROP_SHAFT_DIAM_M * scale / 2.0
-        shaft_inner = x_screen + prop_side * bell_half_len
-        shaft_outer = x_screen + prop_side * (bell_half_len + PROP_SHAFT_LEN_M * scale)
-        canvas.create_rectangle(min(shaft_inner, shaft_outer), t_screen - shaft_half, max(shaft_inner, shaft_outer), t_screen + shaft_half, outline=ui_draw, width=2)
-        base_half = motor.bell_diameter_m * MOTOR_BASE_DIAM_FACTOR * scale / 2.0
-        base_inner = x_screen - prop_side * bell_half_len
-        base_outer = x_screen - prop_side * (bell_half_len + MOTOR_BASE_LEN_M * scale)
-        canvas.create_rectangle(min(base_inner, base_outer), t_screen - base_half, max(base_inner, base_outer), t_screen + base_half, outline=ui_draw, width=2)
+        for segment, half in ((motor.base, motor_base_projected_half(motor, roll_rad)), (motor.neck, motor.neck.diameter_m / 2.0),
+                              (motor.bell, motor.bell.diameter_m / 2.0), (motor.shaft, motor.shaft.diameter_m / 2.0)):
+            x0, x1 = sorted((x_to_screen(segment.start[0]), x_to_screen(segment.end[0])))
+            canvas.create_rectangle(x0, t_screen - half * scale, x1, t_screen + half * scale, outline=ui_draw, width=2)
+        prop_x = x_to_screen(motor.prop_center[0])
         prop_radius = motor.prop_radius_m * scale
-        canvas.create_line(shaft_outer, t_screen - prop_radius, shaft_outer, t_screen + prop_radius, fill="red", width=2)
+        canvas.create_line(prop_x, t_screen - prop_radius, prop_x, t_screen + prop_radius, fill="red", width=2)
         if abs(motor.thrust_dir[2]) > 1e-9:  # tilted thrust line, across the body length, to check it against the CG
             reach = [(motor.prop_center[0] - x) / -motor.thrust_dir[0] for x in (0.0, body.length_m)]
             ends = [tuple(c + t * d for c, d in zip(motor.prop_center, motor.thrust_dir)) for t in reach]
@@ -460,6 +517,8 @@ def draw_longitudinal_view(canvas: Any, resolved: ResolvedAirframe, aero, roll_d
                         transverse_to_screen(longitudinal_transverse(point[1], point[2], roll_rad))))
     draw_access(canvas, resolved, lambda point: (x_to_screen(point[0]),
                 transverse_to_screen(longitudinal_transverse(point[1], point[2], roll_rad))))
+    draw_ducts(canvas, resolved, lambda point: (x_to_screen(point[0]),
+               transverse_to_screen(longitudinal_transverse(point[1], point[2], roll_rad))))
     for key, x_value in marker_positions(resolved, aero).items():
         if math.isfinite(x_value):
             x_screen = x_to_screen(x_value)
@@ -544,9 +603,21 @@ def draw_front_view(canvas: Any, resolved: ResolvedAirframe, aero, ui_draw: str,
         x_screen = center_x + motor.position[1] * scale
         y_screen = center_y - motor.position[2] * scale
         pod_radius = max((radius for _x, radius in motor.pod_stations), default=0.0)
-        for radius, color, fill in ((pod_radius, ui_draw, ui_bg), (motor.bell_diameter_m / 2.0, ui_draw, ui_bg), (PROP_SHAFT_DIAM_M / 2.0, ui_draw, ui_bg), (motor.prop_radius_m, "red", "")):
-            if radius > 0.0:
-                canvas.create_oval(x_screen - radius * scale, y_screen - radius * scale, x_screen + radius * scale, y_screen + radius * scale, outline=color, fill=fill, width=2)
+        if pod_radius > 0.0:
+            canvas.create_oval(x_screen - pod_radius * scale, y_screen - pod_radius * scale, x_screen + pod_radius * scale, y_screen + pod_radius * scale,
+                               outline=ui_draw, fill=ui_bg, width=2)
+        for segment in sorted((motor.base, motor.neck, motor.bell, motor.shaft), key=lambda item: -(item.start[0] + item.end[0])):  # looking aft: far (aft) first
+            if segment is motor.base and motor.base_arms:
+                for arm in motor.base_arms:
+                    canvas.create_polygon([value for _x, y, z in base_arm_outline(motor, arm) for value in (center_x + y * scale, center_y - z * scale)],
+                                          outline=ui_draw, fill=ui_bg, width=2)
+                radius = motor.body.hub_diameter_m / 2.0 * scale
+            else:
+                radius = segment.diameter_m / 2.0 * scale
+            canvas.create_oval(x_screen - radius, y_screen - radius, x_screen + radius, y_screen + radius, outline=ui_draw, fill=ui_bg, width=2)
+        prop_radius = motor.prop_radius_m * scale
+        canvas.create_oval(x_screen - prop_radius, y_screen - prop_radius, x_screen + prop_radius, y_screen + prop_radius, outline="red", fill="", width=2)
+        draw_prop_spin(canvas, x_screen, y_screen, motor.prop_radius_m * scale, motor.spin)
     for rocket in resolved.rockets:
         x_screen, y_screen, radius = center_x + rocket.nozzle[1] * scale, center_y - rocket.nozzle[2] * scale, rocket.motor.diameter_m / 2.0 * scale
         canvas.create_oval(x_screen - radius, y_screen - radius, x_screen + radius, y_screen + radius, outline=ROCKET_COLOR, fill="", width=2, dash=ROCKET_DASH)
@@ -571,6 +642,7 @@ def draw_front_view(canvas: Any, resolved: ResolvedAirframe, aero, ui_draw: str,
                            text=f"C{control.number}", fill=CONTROL_COLOR, font=("TkDefaultFont", 8, "bold"))
     draw_print_features(canvas, resolved, lambda point: (center_x + point[1] * scale, center_y - point[2] * scale))
     draw_access(canvas, resolved, lambda point: (center_x + point[1] * scale, center_y - point[2] * scale))
+    draw_ducts(canvas, resolved, lambda point: (center_x + point[1] * scale, center_y - point[2] * scale))
     draw_marker_guide(canvas, marker_positions(resolved, aero))
     metrics["scale"] = scale
     metrics["zoom_scale"] = zoom_scale

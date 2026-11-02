@@ -3,6 +3,9 @@ import type { Model3DPayload } from './types'
 
 /** Marker sphere radius as a fraction of the model's largest dimension. */
 const MARKER_RADIUS_FRACTION = 0.02
+/** A panel or control's edge lines: only facet angles above this, darker than the lit surface (unlit lines read bright). */
+const PANEL_EDGE_CREASE_DEG = 30
+const PANEL_EDGE_SHADE = 0.55
 /** A rocket flame at the motor's peak thrust; it scales linearly down to nothing at 0 N. */
 export const FLAME_MAX_LENGTH_M = 1
 const FLAME_COLOR = '#ff2a1a'
@@ -132,7 +135,7 @@ export function buildAirframe(
     // A control mesh is hinge-relative and pivoted at its hinge; its edges must come from the translated geometry.
     const control = mesh.kind === 'control' ? mesh.control : undefined
     if (control !== undefined) geometry.translate(-control.hinge[0], -control.hinge[1], -control.hinge[2])
-    const doubleSided = mesh.kind === 'panel' || mesh.kind === 'control'
+    const doubleSided = mesh.kind === 'panel' || mesh.kind === 'control' || mesh.kind === 'duct'
     const seeThrough = mesh.kind === 'volume' || mesh.kind === 'prop'
     const skin = options.transparentSkin && ['body', 'pod', 'panel', 'control', 'hatch'].includes(mesh.kind)
     const material = new THREE.MeshStandardMaterial({
@@ -146,9 +149,12 @@ export function buildAirframe(
     })
     const object = new THREE.Mesh(geometry, material)
     object.userData.kind = mesh.kind
-    if (doubleSided) {
-      // A flat panel/control shell seen edge-on (the Side view) renders nothing; its edges stay visible.
-      object.add(new THREE.LineSegments(new THREE.EdgesGeometry(geometry), new THREE.LineBasicMaterial({ color: mesh.color })))
+    if (doubleSided && mesh.kind !== 'duct') {
+      // A flat panel/control shell seen edge-on (the Side view) renders nothing; its edges stay visible. A duct is a
+      // closed lit scoop instead: its facet edges would only stripe the opening and z-fight against the skin.
+      // Only creases (trailing edge, tips, root): the airfoil facet seams would draw the whole surface as a wireframe.
+      object.add(new THREE.LineSegments(new THREE.EdgesGeometry(geometry, PANEL_EDGE_CREASE_DEG),
+        new THREE.LineBasicMaterial({ color: new THREE.Color(mesh.color).multiplyScalar(PANEL_EDGE_SHADE) })))
     }
     if (control !== undefined) {
       const pivot = new THREE.Group()

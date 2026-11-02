@@ -23,11 +23,12 @@ from aiohttp.test_utils import TestClient, TestServer  # noqa: E402
 
 from libs.project import Project  # noqa: E402
 from webapp import drawing, editor  # noqa: E402
-from webapp.server import create_app  # noqa: E402
+from webapp.server import create_app, error_middleware  # noqa: E402
 from webapp.state import AppState  # noqa: E402
 
 EXAMPLE = ROOT / "aircraft" / "example"
 AXIS_X_TARGETS = ("loft", "cut", "spars", "surface", "rod")
+SIDE_X_TARGETS = (*AXIS_X_TARGETS, "duct")  # a duct lip moves along the body in the side view, around it in the front view
 
 
 def make_state(output: Path, name: str) -> AppState:
@@ -68,7 +69,7 @@ def check_handles(state: AppState) -> None:
         assert set(handle) == {"target", "index", "kind", "coords", "horizontal", "vertical", "order"}
         assert handle["kind"] in ("polygon", "line") and len(handle["coords"]) >= 4 and len(handle["coords"]) % 2 == 0
         axes = (handle["horizontal"], handle["vertical"])
-        assert axes == ("x", None) if handle["target"] in AXIS_X_TARGETS else axes == ("x", "z"), handle
+        assert axes == ("x", None) if handle["target"] in SIDE_X_TARGETS else axes == ("x", "z"), handle
     print("ok   side view: cut/spars/surface/volume/part handles (x, z axes; JSON-safe)")
 
     front = draw(state, "Front")
@@ -193,9 +194,50 @@ async def check_routes(state: AppState) -> None:
 
         response = await client.post("/api/recompute", json={"run_aero": False})
         assert response.status == 200, response.status
+
+        # A client that goes away mid-request is not a program error: 499, nothing in the Log; real failures still log.
+        from aiohttp import ClientPayloadError
+
+        class _Request:
+            method = "POST"
+            path = "/api/model3d"
+            app = {"state": state}
+
+        async def _disconnected(_request, error):
+            raise error
+
+        for error in (ConnectionResetError("Connection lost"), ClientPayloadError("Payload is not completed")):
+            before = len(state.log)
+            response = await error_middleware(_Request(), lambda _request, error=error: _disconnected(_request, error))
+            assert response.status == 499 and len(state.log) == before, (error, [entry.title for entry in state.log[before:]])
+
+        async def _broken(_request):
+            raise RuntimeError("boom")
+
+        before = len(state.log)
+        response = await error_middleware(_Request(), _broken)
+        assert response.status == 500 and state.log[-1].title == "Error" and "boom" in state.log[-1].text, state.log[before:]
     finally:
         await client.close()
-    print("ok   routes: stale move/draw 409, unknown target 400 with Log, move 200, draw echo, recompute body")
+    print("ok   routes: stale move/draw 409, unknown target 400 with Log, move 200, draw echo, recompute body; a client disconnect is a silent 499, other failures still log")
+
+
+def check_never_breaks(state: AppState) -> None:
+    """A feature that raises mid-record leaves the scene drawn so far: the drawing never breaks."""
+    from libs import graphics
+
+    original = graphics.draw_ducts
+
+    def broken(*args: object, **kwargs: object) -> None:
+        raise RuntimeError("drawing feature failed")
+
+    graphics.draw_ducts = broken
+    try:
+        payload = draw(state, "Longitudinal")
+        assert payload["scene"] and payload["handles"], "a failing feature wiped the drawing"
+    finally:
+        graphics.draw_ducts = original
+    print("ok   drawing never breaks: a feature that raises mid-record keeps the scene drawn before it and its handles")
 
 
 def main() -> None:
@@ -204,6 +246,7 @@ def main() -> None:
     assert state.definition_valid and not state.log, "the example project did not start clean"
     check_handles(state)
     check_moves(state)
+    check_never_breaks(state)
     asyncio.run(check_routes(make_state(output, "http")))
     print("draw/drag suite OK")
 

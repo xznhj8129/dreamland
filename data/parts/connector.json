@@ -4,7 +4,13 @@
     "XT60": {
         "contact_resistance_ohm": 0.0005
     },
+    "XT90": {
+        "contact_resistance_ohm": 0.0004
+    },
     "MR60": {
         "contact_resistance_ohm": 0.0006
+    },
+    "AS150": {
+        "contact_resistance_ohm": 0.0002
     }
 }

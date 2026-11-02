@@ -16,6 +16,7 @@ from collections.abc import Callable
 from pathlib import Path
 
 from libs.airframe import Airframe, Mount, Surface
+from libs.geometry import motor_body
 
 M_TO_MM = 1000.0
 AIRFRAME_VARSET = "Airframe"
@@ -81,14 +82,17 @@ def airframe_varset(airframe: Airframe) -> dict:
         rods = fuselage.reinforcement
         pattern = rods.pattern
         groups["Rods"] = {"Material": text(pattern.material), "Diameter": length(pattern.diameter_m), "RadialPosition": length(pattern.radial_position_m),
-                          "Count": integer(pattern.polar_n), "OffsetAngle": angle(pattern.polar_offset_angle), "Split": integer(pattern.polar_split),
-                          "SplitAngle": angle(pattern.polar_split_angle), "FromX": length(rods.from_x_m), "ToX": length(rods.to_x_m)}
+                          "Layout": text(pattern.polar_layout), "Count": integer(pattern.polar_n), "OffsetAngle": angle(pattern.polar_offset_angle),
+                          "Split": integer(pattern.polar_split), "SplitAngle": angle(pattern.polar_split_angle),
+                          "FromX": length(rods.from_x_m), "ToX": length(rods.to_x_m)}
     sections = airframe.sections
     groups["Sections"] = {"CutCount": integer(len(sections.cuts_m))}
     for index, (cut, joint) in enumerate(zip(sections.cuts_m, sections.cut_joints), start=1):
         groups["Sections"] |= {f"Cut{index}": length(cut), f"Cut{index}Joint": text(joint)}
     for index, row in enumerate(sections.per_section, start=1):
         groups["Sections"][f"Section{index}Solid"] = flag(row.solid)
+        if row.material is not None:  # nothing when the section is printed: it is Print_Material
+            groups["Sections"][f"Section{index}Material"] = text(row.material)
     for index, guide in enumerate(fuselage.loft_stations, start=1):
         group = {"X": length(guide.x_m)}
         for key, value in (("Width", guide.section.width_m), ("Height", guide.section.height_m), ("Shape", guide.section.shape)):
@@ -112,6 +116,14 @@ def airframe_varset(airframe: Airframe) -> dict:
                       "PatternX": length(entry.radial.position_m[0]), "PatternY": distance(entry.radial.position_m[1]),
                       "PatternZ": distance(entry.radial.position_m[2])}
         groups[f"Access{index:02d}"] = group
+    for index, duct in enumerate(airframe.ducts, start=1):  # one group per saved duct; ratios are bare numbers
+        groups[f"Duct{index:02d}"] = {
+            "Name": text(duct.name), "Type": text(duct.type),
+            "X": length(duct.x_m), "Clock": angle(duct.clock_deg),
+            "ThroatDepth": length(duct.throat_depth_m), "InletWidth": length(duct.inlet_width_m),
+            "TunnelLength": length(duct.tunnel_length_m), "Wall": length(duct.wall_m),
+            "WidthToDepth": number(duct.width_to_depth), "LengthToWidth": number(duct.length_to_width),
+        }
     return groups
 
 
@@ -120,7 +132,7 @@ def surface_varset(surface: Surface) -> dict:
         "Planform": {"XRootLE": length(surface.x_root_le_m), "Layout": text(surface.layout), "FinPosition": text(surface.fin_position),
                      "Root": text(surface.root), "VerticalOffset": number(surface.vertical_offset), "Span": length(surface.span_m),
                      "ChordRoot": length(surface.chord_root_m), "ChordTip": length(surface.chord_tip_m), "SweepLE": angle(surface.sweep_le_deg),
-                     "Dihedral": angle(surface.dihedral_deg), "Incidence": angle(surface.incidence_deg), "IncidenceMode": text(surface.incidence_mode)},
+                     "Dihedral": angle(surface.dihedral_deg), "Incidence": angle(surface.incidence_deg), "TipIncidence": angle(surface.tip_incidence_deg), "IncidenceMode": text(surface.incidence_mode)},
         "Airfoil": {"Name": text(surface.airfoil)},
         "Sections": {"CutCount": integer(len(surface.sections.cuts_m)),
                      **{f"Cut{index + 1}": length(cut) for index, cut in enumerate(surface.sections.cuts_m)}},
@@ -151,9 +163,14 @@ def surface_varset(surface: Surface) -> dict:
 
 def propulsion_varset(airframe: Airframe) -> dict:
     electric = airframe.propulsion.electric
+    body = motor_body(electric)
     return {
         "Motor": {"Manufacturer": text(electric.motor.manufacturer), "Name": text(electric.motor.name),
-                  "BellDiameter": length(electric.bell_diameter_m), "BellLength": length(electric.bell_length_m)},
+                  "Base": text(electric.motor_base), "Shaft": text(electric.motor_shaft),
+                  "BellDiameter": length(body.bell_diameter_m), "BellLength": length(body.bell_length_m),
+                  "BaseDiameter": length(body.base_diameter_m), "BaseThickness": length(body.base_thickness_m),
+                  "NeckDiameter": length(body.neck_diameter_m), "NeckLength": length(body.neck_length_m),
+                  "ShaftDiameter": length(body.shaft_diameter_m), "ShaftOut": length(body.shaft_out_m)},
         "Prop": {"Name": text(electric.prop), "Diameter": length(electric.prop_diameter_m)},
     }
 

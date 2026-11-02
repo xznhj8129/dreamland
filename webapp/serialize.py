@@ -72,7 +72,7 @@ def snapshot(state: AppState) -> dict[str, Any]:
         "pack_summary": pack_payload(state),
         "report": lines_payload(state.report),
         "report_pages": None if state.resolved is None else dataclasses.asdict(build_report_pages(state.resolved, state.aero, state.problems, state.propulsion, state.status)),
-        "log": [dataclasses.asdict(entry) for entry in state.log],
+        "log": [dataclasses.asdict(entry) for entry in state.visible_log()],
         "status": state.status,
         "aero_pending": state.aero is None,
         "geometry": state.geometry_status,  # Compute Geometry: none | stale | exact | current | computing (AppState.geometry_status)

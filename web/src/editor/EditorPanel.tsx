@@ -21,7 +21,7 @@ import { useRememberedState } from '../viewMemory'
 const DESIGN_TABS = ['Airframe', 'Fuselage', 'Sections', 'Surfaces', 'Access', 'Volumes', 'Motor mounts', 'Optimization'] as const
 const BUILD_TABS = ['Propulsion', 'Parts', 'Wiring'] as const
 
-const SELECTION_TABS = { surface: 'Surfaces', volume: 'Volumes', mount: 'Motor mounts', section: 'Sections', fuselage: 'Fuselage', loft: 'Fuselage', access: 'Access' } as const
+const SELECTION_TABS = { surface: 'Surfaces', volume: 'Volumes', mount: 'Motor mounts', section: 'Sections', fuselage: 'Fuselage', loft: 'Fuselage', access: 'Access', duct: 'Access' } as const
 type Group = 'Design' | 'Build'
 
 /** Aircraft forms grouped into Design and Build; Optimization is a planned evaluator view. */

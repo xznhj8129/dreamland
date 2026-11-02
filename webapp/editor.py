@@ -11,19 +11,20 @@ import copy
 import math
 from typing import Any
 
+from libs.airfoils import airfoil_names
 from libs.airframe import (
     ACCESS_EXTENTS, ACCESS_KINDS, ACCESS_PROFILES,
-    AXES, BATTERY_PART_NAME, CONTROL_KINDS, CONTROL_ROLES, CUT_JOINTS, ELECTRIC_MOUNT_KEYS, FIN_POSITIONS, INCIDENCE_MODES,
-    JOINT_TYPES, LAYOUT_PANEL_COUNTS, LAYOUTS, MOUNT_HOLE_TYPES, MOUNT_TARGETS, MOUNT_TYPES, ORIENTATION_KEYS, PART_CATEGORIES,
-    REINFORCEMENT_TYPES, ROCKET_MOUNT_TARGETS, SERVO_OUTPUTS, SINGLE_PROP_SPINS, SURFACE_PROP_SPINS, SURFACE_ROOTS,
+    AXES, BATTERY_PART_NAME, CONTROL_KINDS, CONTROL_ROLES, CUT_JOINTS, DUCT_TYPES, ELECTRIC_MOUNT_KEYS, FIN_POSITIONS, INCIDENCE_MODES,
+    JOINT_TYPES, LAYOUT_PANEL_COUNTS, LAYOUTS, MOTOR_BASES, MOTOR_SHAFTS, MOUNT_HOLE_TYPES, MOUNT_TARGETS, MOUNT_TYPES, ORIENTATION_KEYS, PART_CATEGORIES,
+    POLAR_LAYOUTS, REINFORCEMENT_TYPES, ROCKET_MOUNT_TARGETS, SERVO_OUTPUTS, SINGLE_PROP_SPINS, SURFACE_PROP_SPINS, SURFACE_ROOTS,
     THRUST_DIRECTIONS, VOLUME_SHAPES, AirframeError, cell_format, motor_count, motor_repo,
 )
-from libs.geometry import body_section_at, loft_section_at
+from libs.geometry import body_section_at, body_surface_point, loft_section_at
 from libs.pointed_shapes import POINTED_SHAPE_PARAM_KEYS
 from libs.rocketmotors import rocket_motor, rocket_motor_names
 from libs.presets import (
     ROD_EXTENT_KEYS, ROD_PATTERN_KEYS, apply_preset, preset_carry_through, preset_names, preset_spars, read_presets,
-    save_preset,
+    rod_pattern_values, save_preset,
 )
 from webapp.state import AppState
 from webapp.resizing import resize_airframe, resize_section
@@ -35,6 +36,7 @@ MM_KEYS = {
     "from_x_m", "to_x_m", "x_root_le_m", "span_m", "chord_root_m", "chord_tip_m", "span_position_m",
     "x_offset_m", "y_offset_m", "z_offset_m", "x_m", "y_m", "z_m", "lead_length_m", "flat_length_m", "curve_length_m", "nose_radius", "size_m", "printer_bed_m", "cuts_m",
     "corner_radius_m", "stem_width_m", "flare_radius_m", "root_length_m", "wall_fillet_m", "coupler_wall_m", "fit_clearance_m", "socket_wall_m", "hole_edge_dist_m", "hole_diameter_m", "spacing_m", "forward_offset_m", "leading_cut_m", "trailing_cut_m", "gap_m", "depth_m", "rod_diameter_m", "rod_x_offset_m", "rod_y_offset_m",
+    "throat_depth_m", "inlet_width_m", "tunnel_length_m", "wall_m",
 }
 # editor_view.py 43
 GRAM_KEYS = {"mass_kg", "coupler_mass_kg", "empty_mass_kg", "complete_mass_kg"}
@@ -49,16 +51,20 @@ CHOICES = {
     "axis": list(AXES),
     "on": list(MOUNT_TARGETS),
     "direction": list(THRUST_DIRECTIONS),
+    "motor_base": list(MOTOR_BASES),
+    "motor_shaft": list(MOTOR_SHAFTS),
     "kind": list(CONTROL_KINDS),
     "shape": list(VOLUME_SHAPES),
     "spin": list(SINGLE_PROP_SPINS),  # a surface mount uses SURFACE_PROP_SPINS instead (build_mounts_tab 1039)
     "type": list(JOINT_TYPES),
     "profile": sorted(POINTED_SHAPE_PARAM_KEYS),
+    "polar_layout": list(POLAR_LAYOUTS),
 }
 # editor_view.py 57
 PROFILE_PARAM_DEFAULTS = {"k_prime": 1.0, "nose_radius": 0.00465, "break_fraction": 0.5, "break_radius_fraction": 0.5, "rho_factor": 1.25, "exponent": 0.66, "c": 0.0}
 # editor_view.py 79
-NEW_ROD_PATTERN = {"type": "cf_rod", "material": "carbon_rod", "diameter_m": 0.0025, "polar_n": 4, "polar_offset_angle": 45.0, "polar_split": 0, "polar_split_angle": 0.0}
+NEW_ROD_PATTERN = {"type": "cf_rod", "material": "carbon_rod", "diameter_m": 0.0025, "polar_layout": "quadrants", "polar_n": 4, "polar_offset_angle": 45.0,
+                   "polar_split": 0, "polar_split_angle": 0.0}
 # editor_view.py 80
 NO_PRESET = "(none)"
 # editor_view.py 98
@@ -78,7 +84,7 @@ VOLUME_SHAPE_FIELDS = {
 # editor_view.py 65-68
 NEW_SURFACE = {
     "name": "wing", "x_root_le_m": 0.2, "layout": "H", "fin_position": "top", "dihedral_deg": 0.0, "vertical_offset": 0.0,
-    "root": "body", "span_m": 0.12, "chord_root_m": 0.1, "chord_tip_m": 0.07, "sweep_le_deg": 10.0, "incidence_deg": 0.0, "incidence_mode": "symmetric", "airfoil": "naca2412",
+    "root": "body", "span_m": 0.12, "chord_root_m": 0.1, "chord_tip_m": 0.07, "sweep_le_deg": 10.0, "incidence_deg": 0.0, "tip_incidence_deg": 0.0, "incidence_mode": "symmetric", "airfoil": "naca2412",
     "sections": {"cuts_m": []},
 }
 NEW_SURFACE_ROOT_LENGTH_M = 0.015  # initial root stub when adding the first print cut
@@ -106,9 +112,12 @@ NEW_ROOT_BASE = {"length_m": 0.096, "width_m": 0.018, "height_m": 0.0, "forward_
 # chosen kind, profile or extent owns, keeping existing values otherwise.
 NEW_ACCESS = {"kind": "hole", "profile": "slot", "width_m": 0.02, "length_m": 0.04, "extent": "wall"}
 NEW_ACCESS_GAP_M = 0.0003
+NEW_DUCT = {"type": "naca", "clock_deg": 90.0, "throat_depth_m": 0.007, "inlet_width_m": 0.003,
+            "tunnel_length_m": 0.03, "wall_m": 0.002, "width_to_depth": 4, "length_to_width": 2}
 NEW_ACCESS_CORNER_RADIUS_M = 0.003
 NEW_ACCESS_DEPTH_M = 0.002
 NEW_ACCESS_RADIAL = {"count": 8, "axis": "x"}
+NEW_DUCT_RADIAL = {"count": 2}  # a pair, e.g. right and left
 # editor_view.add_mount 1115-1118
 NEW_MOUNT_CLEARANCE_M = 0.001  # added to the bell diameter for the mount clearance cut
 NEW_MOUNT = {"type": "electric", "on": "nose", "x_offset_m": 0.0, "direction": "tractor", "spin": SINGLE_PROP_SPINS[0], "thrust_axis_tilt_deg": 0.0,
@@ -120,6 +129,7 @@ NEW_PART = {"name": "part", "part": ""}
 # editor_view.py 76-93: propulsion and wiring defaults. new_propulsion (597-609) is built client-side from these and
 # the definition (its place names a volume or the fuselage midpoint, and the ESC is the first placed esc part).
 NEW_MOTOR = {"manufacturer": "DYS", "name": "X2807-1300"}  # motorlib
+NEW_MOTOR_BODY = {"motor_base": "open", "motor_shaft": "up"}  # libs/airframe.py MOTOR_BASES, MOTOR_SHAFTS
 NEW_PROP = "APC E 7x5"  # motorlib
 NEW_BATTERY_RUN = {"gauge_awg": 14, "conductors": 2, "plugs": ["XT60", "XT60"]}  # after the battery's own connector
 NEW_MOTOR_RUN = {"gauge_awg": 18, "conductors": 3, "plugs": ["MR60"]}
@@ -134,7 +144,7 @@ WIRING_COLUMNS = ("run", "length mm", "AWG", "wires", "plugs, along the run")
 NO_VOLUME = "(none)"
 PLACEMENT_KEYS = ("volume", "x_offset_m", "y_offset_m", "z_offset_m", "x_m", "y_m", "z_m")
 # editor_view.py 99-100
-MOVE_TARGETS = ("cut", "loft", "spars", "surface", "volume", "part", "battery", "rod", "access")  # the drag handle targets
+MOVE_TARGETS = ("cut", "loft", "spars", "surface", "volume", "part", "battery", "rod", "access", "duct")  # the drag handle targets
 MOVE_QUANTUM_M = 1e-5  # 0.01 mm: dragged dimensions snap to this grid and are rounded to this accuracy
 
 
@@ -190,12 +200,13 @@ def context(state: AppState) -> dict[str, Any]:
     save/delete bumps the snapshot's library_revision, which invalidates the cache the same way.
     """
     rods = {
-        name: {key: preset["reinforcement"][key] for key in ROD_PATTERN_KEYS}
+        name: rod_pattern_values(preset["reinforcement"])
         for name, preset in read_presets().items()
         if "reinforcement" in preset
     }
     return {
         "parts_data": state.parts_data,
+        "airfoils": list(airfoil_names()),
         "preset_names": preset_names(),
         "mm_keys": sorted(MM_KEYS),
         "gram_keys": sorted(GRAM_KEYS),
@@ -225,6 +236,7 @@ def context(state: AppState) -> dict[str, Any]:
         "volume_shape_fields": VOLUME_SHAPE_FIELDS,
         # Access (webapp.editor.add_access and the access ops): the enum values and the creation defaults.
         "access_kinds": list(ACCESS_KINDS),
+        "duct_types": list(DUCT_TYPES),
         "access_profiles": list(ACCESS_PROFILES),
         "access_extents": list(ACCESS_EXTENTS),
         "part_categories": list(PART_CATEGORIES),
@@ -241,6 +253,7 @@ def context(state: AppState) -> dict[str, Any]:
         # labels and the add templates, plus the global motorlib lists the combos read (motorlib_lists).
         "battery_model_labels": BATTERY_MODEL_LABELS,
         "new_motor": NEW_MOTOR,
+        "new_motor_body": NEW_MOTOR_BODY,
         "new_prop": NEW_PROP,
         "new_battery_run": NEW_BATTERY_RUN,
         "new_motor_run": NEW_MOTOR_RUN,
@@ -323,8 +336,8 @@ def _valid_preset_name(name: str) -> bool:
 
 
 def delete_cut(definition: dict, index: int) -> None:
-    """editor_view.delete_cut (836-847): merge the sections either side of a cut: the left one's solid flag,
-    each weighed mass summed when both have one."""
+    """editor_view.delete_cut (836-847): merge the sections either side of a cut: the left one's solid flag, the
+    common material (both must share it), each weighed mass summed when both have one."""
     sections = definition["sections"]
     if not 0 <= index < len(sections["cuts_m"]):
         raise ValueError(f"cut index {index} is out of range")
@@ -332,9 +345,14 @@ def delete_cut(definition: dict, index: int) -> None:
     for key in ("empty_mass_kg", "complete_mass_kg"):
         if (key in left) != (key in right):
             raise ValueError(f"Cannot merge a measured and automatic {key}; clear or measure both before merging")
+    left_material, right_material = left.get("material"), right.get("material")
+    if left_material is not None and right_material is not None and left_material != right_material:
+        raise ValueError("Cannot merge sections of different materials; give both the same material before merging")
     sections["cuts_m"].pop(index)
     sections["cut_joints"].pop(index)
     merged = {"solid": left["solid"]}
+    if left_material is not None or right_material is not None:
+        merged["material"] = left_material or right_material
     if left.get("fixed_length", False) and right.get("fixed_length", False):
         merged["fixed_length"] = True
     for key in ("empty_mass_kg", "complete_mass_kg"):
@@ -722,6 +740,39 @@ def add_access(state: AppState, kind: str = "hole") -> None:
     definition["access"].append(entry)
 
 
+def _duct_home(state: AppState, length_m: float, clearance_m: float) -> float:
+    """The lip station for a new duct: the middle of the fuselage section with the most room for it plus the joint
+    clearance at both ends (the parse error libs.airframe keeps ducts clear of the cuts at all times)."""
+    definition = state.definition
+    bounds = [0.0, *definition["sections"]["cuts_m"], definition["fuselage"]["length_m"]]
+    best: tuple[float, float] | None = None
+    for low, high in zip(bounds, bounds[1:]):
+        usable = high - low - length_m - 2.0 * clearance_m
+        if usable > 0.0 and (best is None or usable > best[0]):
+            best = (usable, low + clearance_m + usable / 2.0)
+    if best is None:
+        raise ValueError(f"no fuselage section is long enough for a duct of {length_m * 1000:.0f} mm plus "
+                         f"{clearance_m * 1000:.1f} mm joint clearance at each end; shorten the duct or the sections")
+    return best[1]
+
+
+def add_duct(state: AppState) -> None:
+    """A new NACA duct with the default dimensions, on top of the roomiest section it fits (a cut's joint clearance
+    kept at both ends), named uniquely. Moving and resizing it are plain sets, ops or drags."""
+    definition = state.definition
+    duct = {"name": "", **copy.deepcopy(NEW_DUCT)}
+    names = {row.get("name") for row in definition["ducts"]}
+    number = len(definition["ducts"]) + 1
+    while f"Duct {number}" in names:
+        number += 1
+    duct["name"] = f"Duct {number}"
+    throat_width = NEW_DUCT["width_to_depth"] * NEW_DUCT["throat_depth_m"]
+    length = NEW_DUCT["length_to_width"] * throat_width + NEW_DUCT["tunnel_length_m"]
+    clearance = definition["sections"]["joints"]["insertion_depth_m"] + NEW_DUCT["wall_m"]
+    duct["x_m"] = _duct_home(state, length, clearance)
+    definition["ducts"].append(duct)
+
+
 def add_part(definition: dict, parts_data: dict) -> None:
     """editor_view.add_part (1227-1234): `part n`, the first library entry that has a mass, into the first volume or at
     the middle of the fuselage."""
@@ -968,6 +1019,18 @@ def apply_op(state: AppState, body: dict[str, Any]) -> None:
     elif op == "access.delete":
         _indexed(definition["access"], body.get("index"), "access entry")
         definition["access"].pop(body["index"])
+    # Ducts: NACA inlets; add, delete and the field sets (the radial count is an optional plain field).
+    elif op == "duct.add":
+        add_duct(state)
+    elif op == "duct.delete":
+        _indexed(definition["ducts"], body.get("index"), "duct")
+        definition["ducts"].pop(body["index"])
+    elif op == "duct.radial":
+        duct = _indexed(definition["ducts"], body.get("index"), "duct")
+        if body.get("enabled") is True:
+            duct["radial"] = NEW_DUCT_RADIAL["count"]
+        else:
+            duct.pop("radial", None)
     elif op == "access.kind":
         entry = _indexed(definition["access"], body.get("index"), "access entry")
         kind = body.get("kind")
@@ -1077,8 +1140,10 @@ def apply_move(state: AppState, body: dict[str, Any], notify: bool = True) -> No
 
     The delta is in metres (the client divided the screen pixels by metrics["scale"]) rather than screen pixels.
     target and index name the movable element; unknown ones raise ValueError before anything is mutated (the
-    handler answers 400 with a Log entry). A delta with no component for the target is a no-op. An applied move
-    recomputes geometry only and pushes, exactly as the Tk motion does; the release runs the full /api/recompute.
+    handler answers 400 with a Log entry). A delta with no component for the target is a no-op. A motion adopts the
+    position for the live drawing with no checks at all (state.set_definition_drag): intermediate drag positions may
+    violate placement rules, and only the release's full /api/recompute flags them. notify=True also pushes the
+    snapshot for a caller that gets no drawing back.
     notify=False skips the websocket push for the fast drag path, which answers with the drawing instead.
     """
     check_session(state, body)
@@ -1153,6 +1218,16 @@ def apply_move(state: AppState, body: dict[str, Any], notify: bool = True) -> No
             raise ValueError("the definition has no propulsion battery")
         if not _move_placement(battery, dx, dy, dz, "battery"):
             return
+    elif target == "duct":
+        duct = _indexed(definition["ducts"], index, "duct")
+        if dx:
+            duct["x_m"] = _quantize(max(0.0, duct["x_m"] + dx))
+        if (dy or dz) and state.resolved is not None:
+            # Front view: the lip is dragged around the body; its clock follows the aimed skin point.
+            point, _radius = body_surface_point(state.resolved.body, duct["x_m"], math.radians(duct.get("clock_deg", 90.0)))
+            y, z = point[1] + dy, point[2] + dz
+            if math.hypot(y, z) > 1e-9:
+                duct["clock_deg"] = round(math.degrees(math.atan2(z, y)) % 360.0, 1)
     else:  # rod
         reinforcement = definition["fuselage"].get("reinforcement")
         if not isinstance(reinforcement, dict):
@@ -1164,4 +1239,6 @@ def apply_move(state: AppState, body: dict[str, Any], notify: bool = True) -> No
         from_x = min(max(_quantize(reinforcement["from_x_m"] + dx), 0.0), max(length - span, 0.0))
         reinforcement["from_x_m"] = from_x
         reinforcement["to_x_m"] = min(_quantize(from_x + span), length)
-    state.set_definition(state.definition, run_aero=False, notify=notify)  # on_view_drag_motion 372: geometry only; the release does the full recompute. The revision bump lets the 3D view refresh when shown.
+    state.set_definition_drag(state.definition)  # a drag adopts the position for the drawing only: every check runs on release (the full /api/recompute)
+    if notify:
+        state.notify()

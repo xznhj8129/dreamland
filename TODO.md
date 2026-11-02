@@ -6,33 +6,28 @@ User added TODOs (do not remove/change unless done)
 **SIM**
     * MSP/Mavlink commands (maybe complicated, not right now)
     * SIM priority: flexibility and realism; editor stability estimate versus JSBSim flight response.
-    * Performance flash card: efficiency, stall speed, sustained turn rate, acceleration/speed per axis, range, maximum altitude.
-    * Hatch not showing in 3d sim
-        
+
 **INAV**
     * Current default configs bad to configure
 
 **Editor**
     - changing xyz positions entry (which specifically, some must stay mm) from abs mm to relative frac to allow scaling without one-by-one mm adjustment
-    - Add direction arrow triangles to prop circle to show direction of spin (from front)
-    - "plain ass plate" as airfoil, with or without thickness-diameter rounded edges
-    - ducts, NACA ducts and intake ducts
-    * Optimization tab: optimize for X within user ranges on part values; big outlines and features first.
+    * Optimization tab: optimize for X within user ranges on part values; big outlines and features first. (calculators tab?)
+    * Performance flash card: efficiency, stall speed, sustained turn rate, acceleration/speed per axis, range, maximum altitude.
+
+**Aero**
+    - Let surfaces use imported DAT airfoils (data/airfoils.json); they take AeroSandbox names only.
+    - flow5 integration
 
 **Wiring**
     * Wire placement (straight horizontal/vertical, only 90deg bends for now)
     * Auto-conduits from wires
 
 **UI/Styling**
-    - left pane buttons (Summary, Mass, Aero, etc) are wider apart than on the right pane; create one consistent universal "button row" element
     - Look for visual weirdness and inconsistencies, create consistent universal styling/functional elements for reuse across UI
-    - Remember open tab/section in editor to return to
-    - CAD tab sections: "Fuselage sections S01…, couplers C01…, fixed wing segments W… and controls CS… as STEP into cad/sections/. Independent of the STEP mode above." Who the fuck writes like this
     
 **Construction**
-    - Rocket motor mount an actual cylindrical opening
     - Allow non 3D-printed shell construction methods (such as fiberglass or carbon fiber molding), different materials (what that excludes TBD)
-    - Allow one section to be considered a monolithic carbon fiber, fiberglass or metal plate, allowing different material for CNC rather than 3D print. This would be used for thin (1-10mm) reinforcement sections
     - Actual real wing, hatch, section joint/closure mechanisms
     
 **CAD**
@@ -40,20 +35,8 @@ User added TODOs (do not remove/change unless done)
     - Hatches start under by default, should be on top and pointing down
     - Make hatches/holes automatically position clear above skin surface, they always point outside-in
     - Why do them CAD exports have all these loft lines anyway?
-    - Swifting off CAD tab interrupts
     - Thicken fuselage line on xray export
-    - actual progress box with per-part progress (like sim build box), all i see is "Sections…", thanks, very useful (???)
-    - Tell me we're not exporting parts (ie: cam) in CAD
     - [open defect, 2026-10-15] CNC-order section build (libs/cad.py build_section_solid): example S02 has 16.6 cm^3 more material than the committed build (57.06 vs 40.47 cm^3; nothing missing), suspect the bore tool (bore less arms/spigots) or access tool boolean. Locate it (bbox of new.cut(committed)) and fix before relying on S02 or committing. Every other part of swagger, minirocket, m62v2 and example matches the committed build.
-
-**3D view**
-    - turn Cuts & Holes off by default
-    - Show/hide motors
-    - Show/hide propellers
-    
-**Motors**
-    - show actual parametric motor (open or closed (plane) base; up or reverse shaft) (/media/anon/WD2TB/DataVault/TechProjects/CAD/my_drones/std_parts/parametric motor.FCStd)
-
 
 **MCP**
     - Most of it already exists as HTTP routes in webapp/server.py
@@ -62,18 +45,6 @@ User added TODOs (do not remove/change unless done)
 ---
 Agent added TODOs, freeform, remove done ones
 
-- Motors need a template as physical objects with the following physical modeling characteristics:
-        mount_height (the part that is bolted onto a drone, this is the motor's x=0, height adds to it)
-        mount_diameter 
-        base_diameter (the stator cylinder base from the mount end to the start of the motor rotor bell, ie the exposed part) (default 20mm)
-        base_height (default 5mm)
-        rotor_diameter (motor bell, this is often provided, default 28mm)
-        rotot_height (as above, default 8mm)
-        shaft_diameter (default 5mm)
-        shaft_height (starting at bell) (default 16mm)
-        mass (g)
-        Everything else is relevant more to propulsion, not display
-
 
 - Geometry, verify on the plane-first model (found on the old module model):
         - Incidence on unpaired vertical fins opposite in CAD vs ASB (bottom fin chord y -0.086 CAD, +0.087 ASB).
@@ -81,9 +52,6 @@ Agent added TODOs, freeform, remove done ones
 
 - Physics:
         - Check total motor current against the pack's C rating (motorlib only warns on motor max current).
-
-- Aero:
-        - Let surfaces use imported DAT airfoils (data/airfoils.json); they take AeroSandbox names only.
 
 - JSBSim export (libs/jsbsim.py, sim_flight.py), INAV SITL via inav_development/inav-jsbsim-bench:
         - FC part position and orientation not used in INAV SITL yet (the script controller's IMU uses them): bench change to read sensors at the FC (lever arm, axes) and matching board alignment in the generated diff.
@@ -123,7 +91,6 @@ Agent added TODOs, freeform, remove done ones
 - Found designing and flying aircraft/albatross (2026-10-14); [decide] = needs owner input:
         - [decide] In-flight battery power (libs/simrun.py motor_electrics) is I = (throttle x V - rpm / Kv) / R, after the fact: no no-load current (Io; libs/propulsion.py has it, 0.5 A = ~8 W on this motor) and not coupled to the shaft power the JSBSim prop absorbs. At 38 m/s battery 117 W vs drag power ~112 W (overall efficiency ~96 %); efficiency.py range/endurance (343 km, 5.8 h) are therefore optimistic. Which model the flight power should come from.
         - [decide] Drag looks optimistic for printed airframes: glide 18:1 (lifting line + AeroBuildup, no roughness/joint/interference drag). Whether to model an allowance, and from what data (no fudge fits; real logs). {owner: good point, we can look at how OpenRocket does it}
-        - [decide] Wing twist/washout: no field. A tapered wing without washout departs at the stall (Albatross rolls 14-20 deg below ~13 m/s in glide.py). Schema field (tip incidence or washout_deg)? {yeah we should add that, different incidence for tip}
         - [decide] Parts in wings: aileron servos placed in the wing stick out of it (9 g servo 28.5 mm tall, wing ~13 mm); part_checks only test fuselage volumes; no servo bays, pockets, wire channels or covers in printed wings.
         - [decide] Printed surface construction: estimate = solid airfoil x bulk density (Albatross wing 431 g for 0.16 m^2); exact CAD mass is solid too. Shell + ribs / spar web / infill choice per surface? {slicers provide estimation code?}
         - [decide] efficiency.py starts its sweep at the aero grid top (48 m/s); any aircraft that cannot hold it ends with no data. Start from the full-throttle level speed instead? (Albatross uses a project override, sweep_from 38.) {definitely needs adjustment}

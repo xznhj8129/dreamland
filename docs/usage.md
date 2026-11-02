@@ -2,10 +2,9 @@
 
 ## Running it
 
-Install with `scripts/setup_vendor.sh` and `uv sync` (README, Getting started). Run the commands below with `uv run` (e.g. `uv run python webbuilder.py aircraft/example`) or with `.venv` activated.
+Start with `./run.sh [webbuilder args]`: it installs on the first run (`./setup.sh`; re-run that after a vendor pin changes; `./setup.sh --inav` adds INAV SITL, `--docker` builds it in Docker, `--px4` and `--ardupilot` do nothing yet), then catches up the venv and rebuilds `web/` when its sources changed. Run the commands below with `uv run` (e.g. `uv run python webbuilder.py aircraft/example`) or with `.venv` activated.
 
 ```
-cd web && npm install && npm run build                        # once, and after front-end edits
 python webbuilder.py aircraft/example                         # web UI
 python webbuilder.py aircraft/example --host 0.0.0.0 --no-browser # phone/LAN access on port 8765
 python webbuilder.py aircraft/quadlancer62
@@ -41,7 +40,7 @@ aircraft/<project>/
     aircraft.json   the definition (airframe/2)
     inav/           INAV diffs: real FC dumps, and SITL diffs flown as written
       generated/    the diff a run flies, written from the design or a real FC dump (templates in data/inav/); copy into inav/ to edit
-    sitl/           eeprom.bin, sitl.log; firmware is shared: vendor/inav/build/build_SITL/bin/SITL.elf from scripts/setup_vendor.sh (--sitl overrides it)
+    sitl/           eeprom.bin, sitl.log; firmware is shared: vendor/inav/build/build_SITL/bin/SITL.elf from ./setup.sh --inav (--sitl overrides it)
     jsbsim/         JSBSim export
     logs/           SITL and script flight logs and plots
     cad/            STEP / STL exports, blueprint drawings: cutaway, threeview, xray (.svg / .png)

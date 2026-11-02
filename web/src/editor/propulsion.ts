@@ -24,7 +24,7 @@ export function placedPartsOf(definition: Definition, category: string): string[
 }
 
 /**
- * editor_view.new_propulsion (597-609), electric part: NEW_MOTOR, NEW_PROP, the first library pack (in the first
+ * editor_view.new_propulsion (597-609), electric part: NEW_MOTOR, NEW_MOTOR_BODY, NEW_PROP, the first library pack (in the first
  * volume, else at mid-fuselage), the first ESC part (empty until placed and picked), one motor run per electric motor.
  */
 export function newElectric(definition: Definition, context: EditorContext, motorCount: number): Record<string, unknown> {
@@ -36,6 +36,7 @@ export function newElectric(definition: Definition, context: EditorContext, moto
   const battery = { model: 'commercial', part: firstBatteryPart(context), ...place }
   return {
     motor: deepCopy(context.new_motor),
+    ...context.new_motor_body,
     prop: context.new_prop,
     battery,
     esc: placedPartsOf(definition, 'esc')[0] ?? '',

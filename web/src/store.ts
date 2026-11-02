@@ -144,6 +144,11 @@ export function recompute(): Promise<CommandResult> {
   return enqueue(() => post('/api/recompute'))
 }
 
+/** Clear the Log tab; a current definition error comes back with the next recompute. */
+export function clearLog(): Promise<CommandResult> {
+  return enqueue(() => post('/api/log/clear'))
+}
+
 export function saveProject(): Promise<CommandResult> {
   return enqueue(() => post('/api/save'))
 }

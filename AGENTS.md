@@ -62,7 +62,7 @@ Primary files:
 - Keep web-specific engine adapters in `webapp/`; prefer adapter code there over changing `libs/` (change `libs/` only when the shared engine itself changes). The retired Tk sources live in git history; `webapp/editor.py` and `webapp/library.py` cite them, and `docs/ui/` documents the behavior those ports follow.
 - The 2D scene is recorded from `libs/graphics.py` unchanged and enriched in `webapp/drawing_enrich.py`; do not fork a second drawing implementation in JS.
 - Web mutations go through the browser store's queued editor calls; element drags use the move-with-draw fast path (geometry-only recompute, no snapshot/WS push per motion; the release syncs the full state).
-- Run everything in the uv venv (`scripts/setup_vendor.sh`, then `uv sync`): `cd web && npm install && npm run build`, then `uv run python webbuilder.py aircraft/example`. Rebuild `web/` after front-end edits and restart the server after `webapp/` edits.
+- Run everything in the uv venv: `./run.sh` starts the web UI (first run: `./setup.sh`: bench checkout, `uv sync`, web build; `./setup.sh --inav` adds INAV SITL; later: `uv sync` and a web rebuild when `web/` sources changed). Rebuild `web/` after front-end edits and restart the server after `webapp/` edits.
 - Keep the headless suites (`webapp/test_draw_drag.py`, `webapp/test_editor_sync.py`, `webapp/test_library.py`) passing when touching drawing, editor or library paths.
 - NEVER add live CAD recomputation in the Editor. Anything computational goes behind an explicit button (Compute Geometry, the CAD exports); the editor has zero lag.
 - CAD solids are built once per design through `libs/solid_cache.py` and reused by every consumer; never rebuild a solid another consumer already built, and never read CAD geometry files back.
@@ -82,7 +82,7 @@ Primary files:
 - Aero Analysis is ported: `web/src/views/AeroAnalysisView.tsx` with `webapp/airfoils.py` (library plus session imports, seeded from the airframe surfaces) runs the NeuralFoil-backed 2D airfoil comparison over the `libs/airfoil_analysis.py` functions; the same functions still run headless through `airfoil_analysis_example.py`.
 - SIM is ported: `web/src/views/SimView.tsx` with `webapp/sim.py` runs the same engines as a server-owned subprocess (one run at a time, shared by every tab), streams stdout and tails the flight log for the plots and 3D path. The shared scheduler runs headless through `sim_flight.py`; `experiment` is an example scenario.
 - Orthographic drawing starts from `libs/graphics.py`, recorded server-side into plain draw data and enriched for the web (`webapp/drawing_enrich.py`): airfoil sections, projected spar geometry, front-view thickness. It is not CAD geometry.
-- Motor geometry uses motorlib stator dimensions plus explicit shaft/base drawing constants.
+- Motor geometry (`libs/geometry.py` `motor_body`) is a reference 2807 drawing scaled by the motorlib stator size: representative, not the real motor.
 
 ## Remember
 

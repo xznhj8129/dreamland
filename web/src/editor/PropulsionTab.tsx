@@ -3,6 +3,7 @@ import { useId, useState } from 'react'
 import type { ReactElement } from 'react'
 import type { RocketMotorInfo, Snapshot } from '../types'
 import { editorOp } from '../store'
+import { useRememberedState } from '../viewMemory'
 import { Card, ChoiceField, EntryField, OptionalBlock, PlacementFields, ValueList, HelpNote } from './fields'
 import { deepCopy, electricMotorCount, firstBatteryPart, newElectric, placedPartsOf } from './propulsion'
 import { MotorChart } from './MotorChart'
@@ -17,7 +18,8 @@ export function PropulsionTab({ snapshot }: { snapshot: Snapshot }): ReactElemen
   const api = useFormApi()
   const propulsion = isObject(api.definition.propulsion) ? api.definition.propulsion : null
   const mounts = propulsion !== null && Array.isArray(propulsion.mounts) ? propulsion.mounts.filter(isObject) : []
-  const [kind, setKind] = useState<string>(mounts.length > 0 && mounts.every((mount) => mount.type === 'rocket') ? 'Rocket' : 'Electric')
+  const [kind, setKind] = useRememberedState<string>('editor.propulsion-kind', mounts.length > 0 && mounts.every((mount) => mount.type === 'rocket') ? 'Rocket' : 'Electric',
+    (value) => value === 'Electric' || value === 'Rocket')
 
   if (propulsion === null) {
     // 946-949: a hint until the Airframe tab's type flags add the propulsion block.
@@ -258,7 +260,7 @@ interface MotorCardProps {
   electric: Record<string, unknown>
 }
 
-/** editor_view.build_propulsion_tab (952-965): manufacturer, motor (the first of the manufacturer), prop and ESC. */
+/** editor_view.build_propulsion_tab (952-965): manufacturer, motor (the first of the manufacturer), its base and shaft, prop and ESC. */
 function MotorCard({ electric }: MotorCardProps): ReactElement {
   const api = useFormApi()
   const context = api.context
@@ -279,6 +281,8 @@ function MotorCard({ electric }: MotorCardProps): ReactElement {
         }}
       />
       <ChoiceField label="motor" path={['propulsion', 'electric', 'motor', 'name']} value={motor.name} options={names} searchable />
+      <ChoiceField label="base" path={['propulsion', 'electric', 'motor_base']} value={electric.motor_base} options={context.choices.motor_base} />
+      <ChoiceField label="shaft" path={['propulsion', 'electric', 'motor_shaft']} value={electric.motor_shaft} options={context.choices.motor_shaft} />
       <ChoiceField path={['propulsion', 'electric', 'prop']} value={electric.prop} options={context.props} searchable />
       <ChoiceField label="ESC" path={['propulsion', 'electric', 'esc']} value={electric.esc} options={placedPartsOf(definition, 'esc')} />
     </Card>

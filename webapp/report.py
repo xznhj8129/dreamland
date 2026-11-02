@@ -89,6 +89,7 @@ class ReportSection:
 @dataclass(frozen=True)
 class ReportPages:
     summary: list[ReportSection]
+    problems: list[ReportSection]  # layout problems and propulsion alerts, out of the summary
     mass: list[ReportSection]
     aero: list[ReportSection]
     propulsion: list[ReportSection]
@@ -213,16 +214,18 @@ def mass_sections(resolved: ResolvedAirframe) -> list[ReportSection]:
                     ReportLine(
                         "Measured on the built CAD solids."
                         if exact
-                        else "Hollow sections: shell wall × material density. Solid sections: less their volumes; surfaces: solid airfoil volume × print.bulk_density_kg_m3."
+                        else "Hollow sections: shell wall × material density. Solid sections: less their volumes; surfaces: solid airfoil volume × print.bulk_density_kg_m3. A section of another material: its solid density."
                     )
                 ],
             )
         )
     for index, section in enumerate(resolved.sections):
+        row = resolved.airframe.sections.per_section[index]
+        material = "" if row.material is None else f" · {row.material}"
         metrics = [
             ReportMetric(
                 "Extent",
-                f"{section.x0_m * 1000:.0f}–{section.x1_m * 1000:.0f} mm · {'solid' if section.solid else 'hollow'}",
+                f"{section.x0_m * 1000:.0f}–{section.x1_m * 1000:.0f} mm · {'solid' if section.solid else 'hollow'}{material}",
             ),
             ReportMetric("Empty, as used", f"{section.empty_kg * 1000:.1f} g"),
             ReportMetric(
@@ -669,8 +672,9 @@ def build_report_pages(
             ReportMetric("Thrust / weight", f"{propulsion.thrust_to_weight:.2f}")
         )
     summary = [ReportSection(airframe.name, metrics)]
+    problem_sections = []
     if problems:
-        summary.append(
+        problem_sections.append(
             ReportSection(
                 "Layout problems",
                 notes=[
@@ -682,7 +686,7 @@ def build_report_pages(
     if propulsion is not None:
         warnings = [line for line in summary_lines(propulsion) if line.level != "info"]
         if warnings:
-            summary.append(ReportSection("Propulsion alerts", notes=warnings))
+            problem_sections.append(ReportSection("Propulsion alerts", notes=warnings))
     if aero is not None:
         summary.append(
             ReportSection(
@@ -704,6 +708,7 @@ def build_report_pages(
     )
     return ReportPages(
         summary,
+        problem_sections,
         mass_sections(resolved),
         aero_sections(resolved, aero, status),
         propulsion_sections(resolved, propulsion),

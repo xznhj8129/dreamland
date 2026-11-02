@@ -8,7 +8,7 @@ import traceback
 from pathlib import Path
 from typing import Any, Callable, TypeGuard
 
-from aiohttp import WSCloseCode, WSMsgType, web
+from aiohttp import ClientPayloadError, WSCloseCode, WSMsgType, web
 
 from libs.airframe import SCHEMA, AirframeError, blank_definition, parse_airframe
 from libs.geometry import resolve_airframe
@@ -35,11 +35,15 @@ async def error_middleware(request: web.Request, handler):
     The browser's 500 body then carries the state and the Log entry, instead of an HTML error page
     (guibuilder's report_callback_exception equivalent). Nothing recomputes here, so the push is explicit:
     the Log entry must reach the open websockets too, not just the request that failed.
+    A client that goes away mid-request (an aborted fetch, a reload, a closed tab, a switched view) is not a
+    program failure: connection errors answer the standard 499 without touching the Log.
     """
     try:
         return await handler(request)
     except web.HTTPException:
         raise  # deliberate refusals keep their own status
+    except (ConnectionError, ClientPayloadError):
+        return web.Response(status=499)  # client closed request
     except Exception:
         state: AppState = request.app["state"]
         state.log_error("Error", f"{request.method} {request.path}\n{traceback.format_exc()}")
@@ -54,6 +58,7 @@ def create_app(state: AppState, dist_dir: Path) -> web.Application:
     app["websockets"] = set()  # open /ws/events responses, closed on shutdown so cleanup cannot wait on them
     app.router.add_get("/api/state", handle_state)
     app.router.add_post("/api/recompute", handle_recompute)
+    app.router.add_post("/api/log/clear", handle_log_clear)
     app.router.add_post("/api/save", handle_save)
     app.router.add_get("/api/projects", handle_projects)
     app.router.add_post("/api/projects/open", handle_projects_open)
@@ -135,6 +140,14 @@ async def handle_recompute(request: web.Request) -> web.Response:
             raise web.HTTPBadRequest(text="run_aero must be a boolean")
         run_aero = value
     state.recompute(run_aero=run_aero)
+    return web.json_response(snapshot(state))
+
+
+async def handle_log_clear(request: web.Request) -> web.Response:
+    """Clear the Log tab (the entries stay in AppState.log)."""
+    state = _state(request)
+    state.clear_log()
+    state.notify()
     return web.json_response(snapshot(state))
 
 

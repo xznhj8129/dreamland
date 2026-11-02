@@ -11,8 +11,8 @@ const PLANNED_VIEWS: readonly string[] = ['VLM']
 
 type DialogKind = 'new' | 'load' | 'saveAs'
 
-/** The main views, in order (App renders the matching one). */
-export const VIEWS = ['Editor', 'Aero Analysis', 'VLM', 'SIM', 'CAD', 'Part Editor'] as const
+/** The main views, in order (App renders the matching one; an unmatched one renders PlaceholderView). */
+export const VIEWS = ['Editor', 'Aero Analysis', 'VLM', 'SIM', 'CAD', 'Part Editor', 'Calculators'] as const
 export type View = (typeof VIEWS)[number]
 
 interface TopBarProps {

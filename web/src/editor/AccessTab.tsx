@@ -15,20 +15,30 @@ const EXTENT_HINTS: Record<string, string> = {
   wall: 'Through the selected skin into its cavity.',
   all: 'Through the entire fuselage, including the opposite wall.',
 }
+const DUCT_TYPE_LABELS: Record<string, string> = { naca: 'NACA' }
 
-/** Saved holes and hatches (definition access[]): profile, placement, cut extent and radial pattern. The live preview uses triangle geometry; CAD runs only on export; every edit goes through the queued editor set/op handlers. */
+/** Saved holes, hatches and ducts (definition access[] and ducts[]): profile/placement/cuts and the duct inlets' curves and patterns. The live preview uses triangle geometry; CAD runs only on export; every edit goes through the queued editor set/op handlers. */
 export function AccessTab(): ReactElement {
   const api = useFormApi()
   const definition = api.definition
   const entries = Array.isArray(definition.access) ? definition.access.filter(isObject) : []
+  const ducts = Array.isArray(definition.ducts) ? definition.ducts.filter(isObject) : []
   const [notice, setNotice] = useState('')
+  const [ductNotice, setDuctNotice] = useState('')
   const selected = useComponentIndex('access', entries.length)
+  const ductSelected = useComponentIndex('duct', ducts.length)
   const { select } = useSelection()
 
   const run = async (body: Record<string, unknown>): Promise<void> => {
     const result = await editorOp(api.sessionId, body)
     setNotice(result.ok ? '' : result.message)
     if (result.ok && body.op === 'access.add') select('access', entries.length)
+  }
+
+  const runDuct = async (body: Record<string, unknown>): Promise<void> => {
+    const result = await editorOp(api.sessionId, body)
+    setDuctNotice(result.ok ? '' : result.message)
+    if (result.ok && body.op === 'duct.add') select('duct', ducts.length)
   }
 
   return (
@@ -58,6 +68,31 @@ export function AccessTab(): ReactElement {
       {entries.map((entry, index) => (
         <div key={index} hidden={index !== selected}>
           <AccessCard index={index} entry={entry} onOp={run} />
+        </div>
+      ))}
+      <Card title="Ducts">
+        <HelpNote>
+          NACA cooling inlets on the fuselage skin. The lip sits at X, Clock turns it around the body (+y = 0°, +z = 90° on top), and the
+          ratios derive the throat width, ramp length and ramp angle. The Simple view shows the surface cut rim; 3D shows the wrapped flow
+          volume. A duct on or close to a section cut is a definition error; rods and interior volumes it reaches are flagged.
+        </HelpNote>
+        <div className="button-row">
+          <button type="button" onClick={() => void runDuct({ op: 'duct.add' })}>
+            Add Duct
+          </button>
+        </div>
+        {ductNotice !== '' && <div className="field-error">{ductNotice}</div>}
+      </Card>
+      <ComponentPicker
+        kind="duct"
+        items={ducts.map((duct, index) => ({
+          name: String(duct.name ?? `duct ${index + 1}`),
+          detail: `${typeof duct.type === 'string' ? DUCT_TYPE_LABELS[duct.type] ?? duct.type : 'naca'}${typeof duct.radial === 'number' ? ` ×${duct.radial}` : ''}`,
+        }))}
+      />
+      {ducts.map((duct, index) => (
+        <div key={index} hidden={index !== ductSelected}>
+          <DuctCard index={index} duct={duct} onOp={runDuct} />
         </div>
       ))}
     </>
@@ -156,6 +191,62 @@ function AccessCard({ index, entry, onOp }: AccessCardProps): ReactElement {
           ]}
         />
         <HelpNote>Axis position locates a point on the rotation axis. Copies are evenly spaced around a full circle; position and orientation rotate together.</HelpNote>
+      </OptionalBlock>
+    </Card>
+  )
+}
+
+interface DuctCardProps {
+  index: number
+  duct: Record<string, unknown>
+  onOp: (body: Record<string, unknown>) => Promise<void>
+}
+
+/** One NACA duct: placement, base sizes, ratios (derived values shown as text) and the radial pattern count. */
+function DuctCard({ index, duct, onOp }: DuctCardProps): ReactElement {
+  const api = useFormApi()
+  const path = ['ducts', index]
+  const type = typeof duct.type === 'string' ? duct.type : 'naca'
+  const radial = typeof duct.radial === 'number' ? duct.radial : null
+  const throatDepth = typeof duct.throat_depth_m === 'number' ? duct.throat_depth_m : 0.007
+  const widthToDepth = typeof duct.width_to_depth === 'number' ? duct.width_to_depth : 4
+  const lengthToWidth = typeof duct.length_to_width === 'number' ? duct.length_to_width : 2
+  const throatWidth = widthToDepth * throatDepth
+  const rampLength = lengthToWidth * throatWidth
+  const rampAngle = rampLength > 0 ? (Math.atan2(throatDepth, rampLength) * 180) / Math.PI : 0
+
+  return (
+    <Card title={typeof duct.name === 'string' ? duct.name : `duct ${index + 1}`} onDelete={() => void onOp({ op: 'duct.delete', index })}>
+      <EntryField path={[...path, 'name']} unitKey="name" label="Name" />
+      <ChoiceField
+        label="Type"
+        path={[...path, 'type']}
+        value={type}
+        options={api.context.duct_types}
+        optionLabels={DUCT_TYPE_LABELS}
+      />
+      <Group label="Placement">
+        <EntryField path={[...path, 'x_m']} unitKey="x_m" label="Lip X (mm)" />
+        <EntryField path={[...path, 'clock_deg']} unitKey="clock_deg" label="Clock (deg)" />
+        <HelpNote>Clock runs around the body from +y (0°) toward +z (90°, top). In the Simple view, drag the rim along the body (Longitudinal) or around it (Front).</HelpNote>
+      </Group>
+      <Group label="Base sizes">
+        <EntryField path={[...path, 'throat_depth_m']} unitKey="throat_depth_m" label="Throat depth (mm)" />
+        <EntryField path={[...path, 'inlet_width_m']} unitKey="inlet_width_m" label="Inlet width (mm)" />
+        <EntryField path={[...path, 'tunnel_length_m']} unitKey="tunnel_length_m" label="Tunnel length (mm)" />
+        <EntryField path={[...path, 'wall_m']} unitKey="wall_m" label="Wall (mm)" />
+      </Group>
+      <Group label="Ratios">
+        <EntryField path={[...path, 'width_to_depth']} unitKey="width_to_depth" label="Width : depth" />
+        <EntryField path={[...path, 'length_to_width']} unitKey="length_to_width" label="Length : width" />
+        <HelpNote>
+          Derived: throat {`${(throatWidth * 1000).toFixed(1)} mm`}, ramp {`${(rampLength * 1000).toFixed(1)} mm`}, ramp angle {rampAngle.toFixed(2)}°.
+          The inlet must be narrower than the throat.
+        </HelpNote>
+      </Group>
+      <OptionalBlock label="Radial pattern" present={radial !== null} onToggle={(enabled) => void onOp({ op: 'duct.radial', index, enabled })}>
+        <EntryField path={[...path, 'radial']} unitKey="count" label="Count (including original)" />
+        <HelpNote>Copies are evenly spaced a full circle about the body axis from the clock angle; they share the lip station and dimensions.</HelpNote>
       </OptionalBlock>
     </Card>
   )

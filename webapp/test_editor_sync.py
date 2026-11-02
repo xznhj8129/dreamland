@@ -22,7 +22,7 @@ if str(ROOT) not in sys.path:  # runnable from anywhere
 from libs.airframe import AirframeError, blank_definition, motor_count, parse_airframe  # noqa: E402
 from libs.geometry import body_section_at, resolve_airframe  # noqa: E402
 from libs.project import Project  # noqa: E402
-from webapp import editor  # noqa: E402
+from webapp import drawing, editor  # noqa: E402
 from webapp.state import AppState  # noqa: E402
 
 EXAMPLE = ROOT / "aircraft" / "example"
@@ -161,13 +161,23 @@ def check_resizing(state: AppState) -> None:
     run_set(state, ["fuselage", "length_m"], length)
     before = copy.deepcopy(state.definition)
     cuts = before["sections"]["cuts_m"]
-    run_op(state, {"op": "section.length", "index": 1, "value": (cuts[1] - cuts[0]) * 1.2})
+    longer = (cuts[1] - cuts[0]) * 1.2
+    # This resize pushes cut 4 into the duct's clearance: a duct cannot move with a cut, so it is flagged as a
+    # definition error (not refused), and resizing back clears it again.
+    log_before = len(state.log)
+    editor.apply_op(state, {"session_id": state.session_id, "op": "section.length", "index": 1, "value": longer})
+    assert not state.definition_valid, "a cut pushed into a duct's clearance must be flagged"
+    new = [entry for entry in state.log[log_before:] if entry.title == "Definition error"]
+    assert len(new) == 1 and "ducts[0]" in new[0].text and "section cut" in new[0].text, [entry.text for entry in new]
     assert math.isclose(state.definition["fuselage"]["length_m"], length)
     assert state.definition["sections"]["cuts_m"][0] == cuts[0]
     assert state.definition["sections"]["cuts_m"][1] > cuts[1]
     assert state.definition["parts"][1] == before["parts"][1], "part ahead of edit moved"
     assert state.definition["parts"] == before["parts"], "cut edit moved components"
     assert state.definition["fuselage"] == before["fuselage"], "cut edit changed the fuselage"
+    run_op(state, {"op": "section.length", "index": 1, "value": cuts[1] - cuts[0]})
+    assert state.definition_valid, "resizing the section back must clear the duct's definition error"
+    assert state.definition["sections"]["cuts_m"][1] == cuts[1]
     run_op(state, {"op": "section.length", "index": len(cuts), "value": 0.1})
     assert math.isclose(state.definition["fuselage"]["length_m"] - state.definition["sections"]["cuts_m"][-1], 0.1)
     assert math.isclose(state.definition["fuselage"]["length_m"], length)
@@ -280,6 +290,87 @@ def check_section_insertion(state: AppState) -> None:
     print("ok   section insertion before/after at first, middle and last spans: body and existing data preserved; invalid/measured splits refused atomically")
 
 
+def check_section_material(state: AppState) -> None:
+    """A section's own material: priced at its solid density, inherited across cuts, merging guarded."""
+    original = copy.deepcopy(state.definition)
+    rows = state.definition["sections"]["per_section"]
+    for row in rows:
+        row.pop("empty_mass_kg", None)
+        row.pop("complete_mass_kg", None)
+    state.set_definition(state.definition)
+    index = 1
+    printed = state.resolved.sections[index].empty_kg
+    run_set(state, ["sections", "per_section", index, "material"], "aluminum_5150")
+    assert state.resolved.airframe.sections.per_section[index].material == "aluminum_5150"
+    assert math.isclose(state.resolved.sections[index].empty_kg / printed, 2650.0 / 1300.0, rel_tol=1e-9)
+    run_op(state, {"op": "section.add_cut", "index": index})
+    added = index + 1
+    assert state.definition["sections"]["per_section"][added]["material"] == "aluminum_5150", "a new cut lost the material"
+    run_set(state, ["sections", "per_section", added, "material"], "textolite")
+    before = copy.deepcopy(state.definition)
+    try:
+        editor.apply_op(state, {"session_id": state.session_id, "op": "section.delete_cut", "index": index})
+    except ValueError:
+        pass
+    else:
+        raise AssertionError("sections of different materials merged")
+    assert state.definition == before, "a refused merge changed the definition"
+    run_set(state, ["sections", "per_section", added, "material"], "aluminum_5150")
+    run_op(state, {"op": "section.delete_cut", "index": index})
+    assert state.definition["sections"]["per_section"][index]["material"] == "aluminum_5150"
+    state.set_definition(copy.deepcopy(original))
+    print("ok   section material: another material prices the section at its solid density, a cut inherits it, mixed merges refuse")
+
+
+def check_ducts(state: AppState) -> None:
+    """Duct ops: add picks a cut-clear home, radial copies resolve, the Simple view handle drags along x, delete restores."""
+    original = copy.deepcopy(state.definition)
+    # The duct's lengths display and parse in mm (webapp.editor.MM_KEYS).
+    assert {"throat_depth_m", "inlet_width_m", "tunnel_length_m", "wall_m"} <= set(editor.context(state)["mm_keys"])
+    run_op(state, {"op": "duct.add"})
+    added = len(original["ducts"])
+    assert len(state.definition["ducts"]) == added + 1, state.definition["ducts"]
+    duct = state.definition["ducts"][added]
+    assert state.definition_valid and duct["name"] == f"Duct {added + 1}" and duct["type"] == "naca"
+    # The home keeps the joint clearance: the duct and its clearance band sit inside one printed section.
+    cuts = state.definition["sections"]["cuts_m"]
+    length = 2 * 4 * duct["throat_depth_m"] + duct["tunnel_length_m"]
+    bounds = [0.0, *cuts, state.definition["fuselage"]["length_m"]]
+    section = next((low, high) for low, high in zip(bounds, bounds[1:]) if low <= duct["x_m"] and duct["x_m"] + length <= high)
+    clearance = state.definition["sections"]["joints"]["insertion_depth_m"] + duct["wall_m"]
+    assert duct["x_m"] - clearance >= section[0] - 1e-9 and duct["x_m"] + length + clearance <= section[1] + 1e-9
+    run_set(state, ["ducts", added, "clock_deg"], 45.0)
+    run_set(state, ["ducts", added, "radial"], 2)
+    copies = [instance.instance_id for instance in state.resolved.ducts if instance.entry.name == duct["name"]]
+    assert copies == [f"{duct['name']} 1/2", f"{duct['name']} 2/2"], copies
+    payload = drawing.draw(state, 900, 400, {})
+    assert any(handle["target"] == "duct" for handle in payload["handles"]), [handle["target"] for handle in payload["handles"]]
+    # The grip dot is sorted to the end: it must hit-test above the spar outlines that cross it at the wing root.
+    assert payload["handles"][-1]["target"] == "duct" and len(payload["handles"][-1]["coords"]) == 48
+    x_before = state.definition["ducts"][added]["x_m"]
+    editor.apply_move(state, {"session_id": state.session_id, "target": "duct", "index": added, "delta": {"x": 0.005}})
+    assert abs(state.definition["ducts"][added]["x_m"] - x_before - 0.005) < 2e-5
+    editor.apply_move(state, {"session_id": state.session_id, "target": "duct", "index": added, "delta": {"x": -0.005}})
+    assert abs(state.definition["ducts"][added]["x_m"] - x_before) < 2e-5
+    # A drag has no checks at all: crossing a joint band is allowed while dragging, and only the release flags it.
+    log_before = len(state.log)
+    cut = min(state.definition["sections"]["cuts_m"], key=lambda value: abs(value - x_before))
+    editor.apply_move(state, {"session_id": state.session_id, "target": "duct", "index": added, "delta": {"x": cut + 0.005 - state.definition["ducts"][added]["x_m"]}})
+    assert state.definition_valid and len(state.log) == log_before, "a drag motion ran a check"
+    state.recompute(run_aero=False)
+    assert not state.definition_valid and any(entry.title == "Definition error" and "section cut" in entry.text for entry in state.log[log_before:])
+    # The drawing always shows the current setup: the flagged position still resolves leniently for the picture.
+    assert state.resolved is not None and abs(state.resolved.airframe.ducts[0].x_m - state.definition["ducts"][0]["x_m"]) < 1e-12
+    assert any(handle["target"] == "duct" for handle in drawing.draw(state, 900, 400, {})["handles"])
+    editor.apply_move(state, {"session_id": state.session_id, "target": "duct", "index": added, "delta": {"x": x_before - state.definition["ducts"][added]["x_m"]}})
+    state.recompute(run_aero=False)
+    assert state.definition_valid, [(entry.title, entry.text) for entry in state.log[log_before:]]
+    run_op(state, {"op": "duct.delete", "index": added})
+    assert state.definition["ducts"] == original["ducts"]
+    state.set_definition(original)
+    print("ok   ducts: add picks a cut-clear home, radial copies resolve, the Simple view handle drags along x, delete restores")
+
+
 def check_local_end_radius(state: AppState) -> None:
     definition = blank_definition("local-end-radius")
     definition["fuselage"]["section"]["width_m"] = 0.08
@@ -371,6 +462,8 @@ def main() -> None:
     check_section_loft(state)
     check_local_end_radius(state)
     check_section_insertion(state)
+    check_section_material(state)
+    check_ducts(state)
     check_surface_sections(make_state(output / "surface-sections"))
     check_rocket_mounts(make_state(output / "rocket-mounts"))
     print("editor sync suite OK")
